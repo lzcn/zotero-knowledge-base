@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<?xml-stylesheet
+href="chrome://zettel-knowledge-base/content/manager.css?v=__styleVersion__"
+type="text/css"?>
+<window
+  id="zettel-knowledge-base-graph"
+  windowtype="zettel-knowledge-base:graph"
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  xmlns:svg="http://www.w3.org/2000/svg"
+  width="1100"
+  height="760"
+  persist="width height screenX screenY"
+>
+  <script src="chrome://zotero/content/include.js" />
+  <script src="chrome://zettel-knowledge-base/content/graph.js" />
+  <html:div id="zettel-knowledge-base-graph-root">
+    <html:header id="zettel-knowledge-base-graph-toolbar">
+      <html:input id="graph-search" type="search" />
+      <html:div id="graph-scope" role="group">
+        <html:button id="graph-all" type="button" data-scope="all" />
+        <html:button id="graph-local-one" type="button" data-scope="1" />
+        <html:button id="graph-local-two" type="button" data-scope="2" />
+      </html:div>
+      <html:label
+        ><html:input id="graph-sources" type="checkbox" /><html:span
+          id="graph-sources-label"
+      /></html:label>
+      <html:label
+        ><html:input
+          id="graph-unresolved"
+          type="checkbox"
+          checked="checked" /><html:span id="graph-unresolved-label"
+      /></html:label>
+      <html:button id="graph-fit" />
+      <html:button id="graph-refresh" />
+      <html:span id="graph-stats" class="muted" />
+    </html:header>
+    <html:main id="zettel-knowledge-base-graph-main">
+      <html:div id="graph-canvas">
+        <svg:svg id="graph-svg" aria-label="Zettel graph" />
+        <html:div id="graph-empty" class="muted" hidden="hidden" />
+      </html:div>
+      <html:aside id="graph-inspector">
+        <html:p id="graph-hint" class="muted" />
+        <html:div id="graph-selection" hidden="hidden">
+          <html:h2 id="graph-node-title" />
+          <html:div id="graph-node-kind" class="muted" />
+          <html:p id="graph-node-snippet" />
+          <html:button id="graph-node-open" />
+          <html:button id="graph-node-focus" />
+          <html:h3 id="graph-connections-title" />
+          <html:ul id="graph-connections" class="refs" />
+        </html:div>
+      </html:aside>
+    </html:main>
+    <html:footer id="graph-legend">
+      <html:span id="graph-legend-cards" /><html:span
+        id="graph-legend-sources"
+      /><html:span id="graph-legend-unresolved" />
+      <html:span id="graph-error" class="error" role="status" />
+    </html:footer>
+  </html:div>
+</window>

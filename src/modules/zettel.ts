@@ -1,0 +1,490 @@
+/**
+ * Zettel data model: timestamp IDs, [[wiki-link]] parsing, CRUD, backlinks.
+ */
+
+import { exec, getAll, getOne, transaction, type ZettelRow } from "./db";
+import { parseCardLinks } from "./markdown";
+import { notifyDataChange } from "./events";
+
+export interface Zettel extends ZettelRow {
+  outgoing: number;
+  incoming: number;
+}
+
+export interface ParsedLink {
+  /** raw text inside [[...]], e.g. "20260909120000" or "某个标题" */
+  ref: string;
+  /** display text after "|", defaults to ref */
+  display: string;
+}
+
+export interface ResolvedLink extends ParsedLink {
+  /** target zettel id when resolvable, null for unresolved refs */
+  targetId: string | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* ID generation                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Zettel ID: local timestamp "YYYYMMDDHHMMSS", e.g. 20260909122345.
+ * If two cards are created within the same second, a numeric suffix
+ * is appended: 20260909122345-2.
+ */
+export function newZettelID(existing: Set<string>): string {
+  const base = formatTimestamp(new Date());
+  if (!existing.has(base)) return base;
+  let n = 2;
+  while (existing.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
+}
+
+function formatTimestamp(d: Date): string {
+  const p = (x: number, w = 2) => String(x).padStart(w, "0");
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  );
+}
+
+export function isZettelID(s: string): boolean {
+  return /^\d{14}(-\d+)?$/.test(s);
+}
+
+/* ------------------------------------------------------------------ */
+/* Link parsing                                                         */
+/* ------------------------------------------------------------------ */
+
+export function parseLinks(body: string): ParsedLink[] {
+  return parseCardLinks(body);
+}
+
+export async function resolveRefs(
+  refs: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!refs.length) return map;
+  const placeholders = refs.map(() => "?").join(",");
+  // by id
+  const byId = await getAll<{ id: string; title: string }>(
+    `SELECT id, title FROM zettels WHERE id IN (${placeholders})`,
+    refs,
+  );
+  for (const r of byId) map.set(r.id, r.id);
+  // by exact title
+  const byTitle = await getAll<{ id: string; title: string }>(
+    `SELECT id, title FROM zettels WHERE title IN (${placeholders})`,
+    refs,
+  );
+  for (const r of byTitle) if (!map.has(r.title)) map.set(r.title, r.id);
+  // by title, case-insensitive fallback
+  const lower = new Map<string, string>();
+  const all = await getAll<{ id: string; title: string }>(
+    `SELECT id, title FROM zettels`,
+  );
+  for (const r of all) if (r.title) lower.set(r.title.toLowerCase(), r.id);
+  for (const ref of refs) {
+    if (!map.has(ref)) {
+      const hit = lower.get(ref.toLowerCase());
+      if (hit) map.set(ref, hit);
+    }
+  }
+  return map;
+}
+
+/* ------------------------------------------------------------------ */
+/* CRUD                                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Copies a database row into a plain Zettel.
+ *
+ * Deliberately field-by-field rather than `{ ...row }`: query rows are Proxy
+ * wrappers around mozStorage rows (see db.ts) and carry no enumerable own
+ * properties, so spreading one silently yields `{}`. Listing the fields also
+ * keeps the mapping type-checked.
+ */
+function rowToZettel(row: ZettelRow, outgoing = 0, incoming = 0): Zettel {
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    item_key: row.item_key,
+    library_id: row.library_id,
+    annotation_key: row.annotation_key,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+    outgoing,
+    incoming,
+  };
+}
+
+export async function getZettel(id: string): Promise<Zettel | null> {
+  const row = await getOne<ZettelRow>(`SELECT * FROM zettels WHERE id = ?`, [
+    id,
+  ]);
+  if (!row) return null;
+  const counts = await getOne<{ outgoing: number; incoming: number }>(
+    `SELECT
+       (SELECT COUNT(*) FROM links WHERE source_id = ? AND target_id IS NOT NULL) AS outgoing,
+       (SELECT COUNT(*) FROM links WHERE target_id = ?) AS incoming`,
+    [id, id],
+  );
+  return rowToZettel(row, counts?.outgoing ?? 0, counts?.incoming ?? 0);
+}
+
+export async function listZettels(query = ""): Promise<Zettel[]> {
+  const q = query.trim();
+  let rows: ZettelRow[];
+  if (q) {
+    const like = `%${q}%`;
+    rows = await getAll<ZettelRow>(
+      `SELECT * FROM zettels
+       WHERE title LIKE ? OR body LIKE ? OR id LIKE ?
+       ORDER BY updated_at DESC LIMIT 500`,
+      [like, like, like],
+    );
+  } else {
+    rows = await getAll<ZettelRow>(
+      `SELECT * FROM zettels ORDER BY updated_at DESC LIMIT 500`,
+    );
+  }
+  const counts = await getAll<{
+    source_id: string;
+    outgoing: number;
+    incoming: number;
+  }>(
+    `SELECT source_id,
+       SUM(CASE WHEN target_id IS NOT NULL THEN 1 ELSE 0 END) AS outgoing,
+       0 AS incoming
+     FROM links GROUP BY source_id`,
+  );
+  const incoming = await getAll<{ target_id: string; incoming: number }>(
+    `SELECT target_id, COUNT(*) AS incoming FROM links
+     WHERE target_id IS NOT NULL GROUP BY target_id`,
+  );
+  const outMap = new Map(counts.map((c) => [c.source_id, c.outgoing]));
+  const inMap = new Map(
+    incoming.map((c) => [c.target_id as string, c.incoming]),
+  );
+  return rows.map((r) =>
+    rowToZettel(r, outMap.get(r.id) ?? 0, inMap.get(r.id) ?? 0),
+  );
+}
+
+/** All zettels whose source is the given Zotero item, newest first. */
+export async function listByItem(itemKey: string): Promise<Zettel[]> {
+  const rows = await getAll<ZettelRow>(
+    `SELECT * FROM zettels WHERE item_key = ? ORDER BY updated_at DESC`,
+    [itemKey],
+  );
+  return rows.map((r) => rowToZettel(r));
+}
+
+export async function countByItem(itemKey: string): Promise<number> {
+  const row = await getOne<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM zettels WHERE item_key = ?`,
+    [itemKey],
+  );
+  return row?.n ?? 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Annotation provenance                                                */
+/* ------------------------------------------------------------------ */
+
+/** Newest card created from the given Zotero annotation, if any. */
+export async function getZettelByAnnotationKey(
+  annotationKey: string,
+): Promise<Zettel | null> {
+  const row = await getOne<ZettelRow>(
+    `SELECT * FROM zettels WHERE annotation_key = ?
+     ORDER BY created_at DESC LIMIT 1`,
+    [annotationKey],
+  );
+  return row ? rowToZettel(row) : null;
+}
+
+/** Card count per annotation key, for the given keys only. */
+export async function countByAnnotationKeys(
+  keys: string[],
+): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (!keys.length) return map;
+  const placeholders = keys.map(() => "?").join(",");
+  const rows = await getAll<{ annotation_key: string; n: number }>(
+    `SELECT annotation_key, COUNT(*) AS n FROM zettels
+     WHERE annotation_key IN (${placeholders})
+     GROUP BY annotation_key`,
+    keys,
+  );
+  for (const r of rows) map.set(r.annotation_key, r.n);
+  return map;
+}
+
+/* ------------------------------------------------------------------ */
+/* In-memory count indexes                                             */
+/*                                                                     */
+/* The item tree column provider and the reader menu handlers are all  */
+/* synchronous entry points - Zotero's Reader._dispatchEvent does not  */
+/* await handlers, and an appending handler must call append() in the  */
+/* same tick. So counts are mirrored into memory instead of queried.   */
+/* ------------------------------------------------------------------ */
+
+/** Zotero item key -> number of cards sourced from it. */
+const itemCounts = new Map<string, number>();
+
+/** Annotation key -> number of cards created from it. */
+const annotationCounts = new Map<string, number>();
+
+export async function rebuildCounts(): Promise<void> {
+  const indexVersion = await getOne<{ value: string }>(
+    "SELECT value FROM meta WHERE key = 'linkIndexVersion'",
+  );
+  if (indexVersion?.value !== "2") {
+    await transaction(async () => {
+      const cards = await getAll<{ id: string; body: string }>(
+        "SELECT id, body FROM zettels",
+      );
+      for (const card of cards) await reindexLinks(card.id, card.body);
+      await exec(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('linkIndexVersion', '2')",
+      );
+    });
+  }
+  await resolveUnresolvedLinks();
+  const items = await getAll<{ item_key: string; n: number }>(
+    `SELECT item_key, COUNT(*) AS n FROM zettels
+     WHERE item_key IS NOT NULL GROUP BY item_key`,
+  );
+  itemCounts.clear();
+  for (const r of items) itemCounts.set(r.item_key, r.n);
+
+  const annotations = await getAll<{ annotation_key: string; n: number }>(
+    `SELECT annotation_key, COUNT(*) AS n FROM zettels
+     WHERE annotation_key IS NOT NULL GROUP BY annotation_key`,
+  );
+  annotationCounts.clear();
+  for (const r of annotations) annotationCounts.set(r.annotation_key, r.n);
+}
+
+export function getItemCountSync(itemKey: string): number {
+  return itemCounts.get(itemKey) ?? 0;
+}
+
+export function getAnnotationCountSync(annotationKey: string): number {
+  return annotationCounts.get(annotationKey) ?? 0;
+}
+
+async function refreshItemCount(itemKey: string | null): Promise<void> {
+  if (!itemKey) return;
+  itemCounts.set(itemKey, await countByItem(itemKey));
+}
+
+async function refreshAnnotationCount(
+  annotationKey: string | null,
+): Promise<void> {
+  if (!annotationKey) return;
+  const row = await getOne<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM zettels WHERE annotation_key = ?`,
+    [annotationKey],
+  );
+  annotationCounts.set(annotationKey, row?.n ?? 0);
+}
+
+/**
+ * Create or update a zettel. Re-indexes its [[links]] afterwards.
+ * Returns the final zettel id.
+ *
+ * `annotationKey` links the card back to the Zotero annotation it was created
+ * from; it is used for de-duplication and for the "has card" indicators.
+ * On update, omitting it preserves the stored value.
+ */
+export async function saveZettel(input: {
+  id?: string;
+  title: string;
+  body: string;
+  itemKey?: string | null;
+  libraryID?: number | null;
+  annotationKey?: string | null;
+}): Promise<string> {
+  const now = Date.now();
+  const title = input.title.trim();
+  const body = input.body;
+
+  const result = await transaction(async () => {
+    let id: string;
+    let previousItemKey: string | null = null;
+    let effectiveAnnotationKey: string | null = input.annotationKey ?? null;
+    if (input.id && (await exists(input.id))) {
+      id = input.id;
+      const old = await getOne<{
+        item_key: string | null;
+        annotation_key: string | null;
+      }>(`SELECT item_key, annotation_key FROM zettels WHERE id = ?`, [id]);
+      previousItemKey = old?.item_key ?? null;
+      effectiveAnnotationKey =
+        input.annotationKey === undefined
+          ? (old?.annotation_key ?? null)
+          : input.annotationKey;
+      await exec(
+        `UPDATE zettels
+         SET title = ?, body = ?, item_key = ?, library_id = ?,
+             annotation_key = ?, updated_at = ?
+         WHERE id = ?`,
+        [
+          title,
+          body,
+          input.itemKey ?? null,
+          input.libraryID ?? null,
+          effectiveAnnotationKey,
+          now,
+          id,
+        ],
+      );
+    } else {
+      const allIds = await getAll<{ id: string }>(`SELECT id FROM zettels`);
+      id =
+        input.id && !allIds.some((r) => r.id === input.id)
+          ? input.id
+          : newZettelID(new Set(allIds.map((r) => r.id)));
+      await exec(
+        `INSERT INTO zettels (id, title, body, item_key, library_id, annotation_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          title,
+          body,
+          input.itemKey ?? null,
+          input.libraryID ?? null,
+          effectiveAnnotationKey,
+          now,
+          now,
+        ],
+      );
+    }
+    await reindexLinks(id, body);
+    await resolveUnresolvedLinks();
+    return { id, previousItemKey, effectiveAnnotationKey };
+  });
+
+  await refreshItemCount(input.itemKey ?? null);
+  if (result.previousItemKey && result.previousItemKey !== input.itemKey) {
+    await refreshItemCount(result.previousItemKey);
+  }
+  await refreshAnnotationCount(result.effectiveAnnotationKey);
+  notifyDataChange();
+  return result.id;
+}
+
+export async function deleteZettel(id: string): Promise<void> {
+  const row = await getOne<{
+    item_key: string | null;
+    annotation_key: string | null;
+  }>(`SELECT item_key, annotation_key FROM zettels WHERE id = ?`, [id]);
+  await transaction(async () => {
+    await exec(`DELETE FROM links WHERE source_id = ?`, [id]);
+    await exec(`UPDATE links SET target_id = NULL WHERE target_id = ?`, [id]);
+    await exec(`DELETE FROM tags WHERE zettel_id = ?`, [id]);
+    await exec(`DELETE FROM zettels WHERE id = ?`, [id]);
+    await resolveUnresolvedLinks();
+  });
+  await refreshItemCount(row?.item_key ?? null);
+  await refreshAnnotationCount(row?.annotation_key ?? null);
+  notifyDataChange();
+}
+
+async function exists(id: string): Promise<boolean> {
+  const row = await getOne<{ id: string }>(
+    `SELECT id FROM zettels WHERE id = ?`,
+    [id],
+  );
+  return !!row;
+}
+
+async function reindexLinks(zettelId: string, body: string): Promise<void> {
+  await exec(`DELETE FROM links WHERE source_id = ?`, [zettelId]);
+  const parsed = parseLinks(body);
+  if (!parsed.length) return;
+  const resolved = await resolveRefs(parsed.map((p) => p.ref));
+  for (const p of parsed) {
+    await exec(
+      `INSERT OR IGNORE INTO links (source_id, target_id, ref) VALUES (?, ?, ?)`,
+      [zettelId, resolved.get(p.ref) ?? null, p.ref],
+    );
+  }
+}
+
+/** Resolve forward references when their target is created later. */
+async function resolveUnresolvedLinks(): Promise<void> {
+  const rows = await getAll<{ ref: string }>(
+    `SELECT DISTINCT ref FROM links WHERE target_id IS NULL`,
+  );
+  const resolved = await resolveRefs(rows.map((r) => r.ref));
+  for (const [ref, id] of resolved) {
+    await exec(
+      `UPDATE links SET target_id = ? WHERE ref = ? AND target_id IS NULL`,
+      [id, ref],
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Links & backlinks                                                    */
+/* ------------------------------------------------------------------ */
+
+export async function getOutgoing(id: string): Promise<ResolvedLink[]> {
+  const zettel = await getZettel(id);
+  const displays = new Map(
+    parseLinks(zettel?.body ?? "").map((link) => [link.ref, link.display]),
+  );
+  const rows = await getAll<{
+    ref: string;
+    target_id: string | null;
+    title: string;
+  }>(
+    `SELECT l.ref, l.target_id, t.title
+     FROM links l LEFT JOIN zettels t ON t.id = l.target_id
+     WHERE l.source_id = ? ORDER BY l.ref`,
+    [id],
+  );
+  return rows.map((r) => ({
+    ref: r.ref,
+    display: displays.get(r.ref) || r.title || r.ref,
+    targetId: r.target_id,
+  }));
+}
+
+export interface Backlink {
+  sourceId: string;
+  sourceTitle: string;
+  ref: string;
+}
+
+export async function getBacklinks(id: string): Promise<Backlink[]> {
+  const rows = await getAll<Backlink>(
+    `SELECT l.source_id AS sourceId, z.title AS sourceTitle, l.ref
+     FROM links l JOIN zettels z ON z.id = l.source_id
+     WHERE l.target_id = ? ORDER BY z.updated_at DESC`,
+    [id],
+  );
+  // Mapped explicitly rather than returned as-is: query rows are Proxy
+  // wrappers (see db.ts) and must not leak out of the data layer.
+  return rows.map((r) => ({
+    sourceId: r.sourceId,
+    sourceTitle: r.sourceTitle,
+    ref: r.ref,
+  }));
+}
+
+/** Zettels referenced by [[ref]] but not yet created (click → create). */
+export async function getUnresolvedRefs(): Promise<
+  { ref: string; count: number }[]
+> {
+  const rows = await getAll<{ ref: string; count: number }>(
+    `SELECT ref, COUNT(*) AS count FROM links
+     WHERE target_id IS NULL GROUP BY ref ORDER BY count DESC, ref LIMIT 100`,
+  );
+  return rows.map((r) => ({ ref: r.ref, count: r.count }));
+}

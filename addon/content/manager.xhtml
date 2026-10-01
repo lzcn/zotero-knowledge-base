@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<?xml-stylesheet
+href="chrome://zettel-knowledge-base/content/manager.css?v=__styleVersion__"
+type="text/css"?>
+<window
+  id="zettel-knowledge-base-manager"
+  windowtype="zettel-knowledge-base:manager"
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  width="980"
+  height="640"
+  persist="width height screenX screenY"
+>
+  <script src="chrome://zotero/content/include.js" />
+  <script src="chrome://zettel-knowledge-base/content/markdown.js" />
+  <script src="chrome://zettel-knowledge-base/content/manager.js" />
+  <html:div id="zettel-knowledge-base-root">
+    <html:header id="zettel-knowledge-base-toolbar">
+      <html:button
+        id="zettel-knowledge-base-btn-new"
+        class="primary"
+      ></html:button>
+      <html:button id="zettel-knowledge-base-btn-graph" />
+      <html:input id="zettel-knowledge-base-search" type="search" />
+      <html:div class="spacer" />
+      <html:span id="zettel-knowledge-base-stats" class="muted"></html:span>
+    </html:header>
+    <html:main id="zettel-knowledge-base-main">
+      <html:section id="zettel-knowledge-base-list-pane">
+        <html:ul id="zettel-knowledge-base-list"></html:ul>
+      </html:section>
+      <html:div id="zettel-knowledge-base-splitter" />
+      <html:section id="zettel-knowledge-base-detail-pane">
+        <html:div
+          id="zettel-knowledge-base-detail-empty"
+          class="muted"
+        ></html:div>
+        <html:div id="zettel-knowledge-base-detail" hidden="hidden">
+          <html:h1 id="zettel-knowledge-base-detail-title"></html:h1>
+          <html:div
+            id="zettel-knowledge-base-detail-meta"
+            class="muted"
+          ></html:div>
+          <html:div
+            id="zettel-knowledge-base-detail-source"
+            class="refs"
+          ></html:div>
+          <html:h2 id="zettel-knowledge-base-outgoing-head"></html:h2>
+          <html:div
+            id="zettel-knowledge-base-outgoing"
+            class="chips"
+          ></html:div>
+          <html:h2 id="zettel-knowledge-base-backlinks-head"></html:h2>
+          <html:ul id="zettel-knowledge-base-backlinks" class="refs"></html:ul>
+          <html:h2 id="zettel-knowledge-base-preview-head"></html:h2>
+          <html:div
+            id="zettel-knowledge-base-preview"
+            class="markdown-body"
+          ></html:div>
+          <html:footer>
+            <html:button id="zettel-knowledge-base-btn-edit"></html:button>
+            <html:button id="zettel-knowledge-base-btn-local-graph" />
+            <html:button
+              id="zettel-knowledge-base-btn-delete"
+              class="danger"
+            ></html:button>
+          </html:footer>
+        </html:div>
+        <html:div id="zettel-knowledge-base-unresolved">
+          <html:h2 id="zettel-knowledge-base-unresolved-head"></html:h2>
+          <html:ul
+            id="zettel-knowledge-base-unresolved-list"
+            class="refs"
+          ></html:ul>
+        </html:div>
+      </html:section>
+    </html:main>
+    <html:div id="zettel-knowledge-base-error" hidden="hidden"></html:div>
+  </html:div>
+</window>

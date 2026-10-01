@@ -1,0 +1,18 @@
+Zettel Knowledge Base
+
+Includes code adapted from Zotero Plugin Template by windingwind and
+contributors (AGPL-3.0-or-later):
+https://github.com/windingwind/zotero-plugin-template
+
+Changes include the independent card database, Markdown editor, source
+integration, images, relationship graph, plugin identifiers and tests.
+Modified by Zhi Lu and contributors, 2026.
+
+Bundled libraries retain their own licenses, included in this directory:
+- zotero-plugin-toolkit: MIT
+- marked: MIT
+- d3-force, d3-dispatch, d3-quadtree, d3-timer: ISC
+- DOMPurify: Apache-2.0 OR MPL-2.0 (distributed under Apache-2.0)
+
+Corresponding project source:
+https://github.com/lzcn/zotero-knowledge-base

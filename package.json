@@ -1,0 +1,71 @@
+{
+  "name": "zotero-knowledge-base",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Connected idea cards for Zotero",
+  "config": {
+    "addonName": "Zettel Knowledge Base",
+    "addonID": "zettel-knowledge-base@lzcn",
+    "addonRef": "zettel-knowledge-base",
+    "addonInstance": "ZettelKnowledgeBase",
+    "prefsPrefix": "extensions.zotero.zettel-knowledge-base"
+  },
+  "author": "Zhi Lu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lzcn/zotero-knowledge-base.git"
+  },
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "start": "zotero-plugin serve",
+    "build": "node scripts/build.mjs && tsc --noEmit",
+    "lint:check": "prettier --check . && eslint .",
+    "lint:fix": "prettier --write . && eslint . --fix",
+    "verify:db": "npm run test:db",
+    "release": "npm run check && node scripts/package-release.mjs",
+    "test": "node --test tests/run.test.mjs",
+    "update-deps": "npm update --save",
+    "test:db": "node tests/database.mjs",
+    "test:ui": "node tests/ui.mjs",
+    "test:pane": "node tests/item-pane.mjs",
+    "check": "npm test && npm run build && npm run lint:check"
+  },
+  "dependencies": {
+    "d3-force": "^3.0.0",
+    "dompurify": "^3.4.16",
+    "marked": "^18.0.14",
+    "zotero-plugin-toolkit": "^4.1.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/node": "^22.13.10",
+    "eslint": "^9.22.0",
+    "jsdom": "^30.1.1",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.1",
+    "zotero-plugin-scaffold": "^0.3.5",
+    "zotero-types": "^3.1.9"
+  },
+  "prettier": {
+    "printWidth": 80,
+    "tabWidth": 2,
+    "endOfLine": "lf",
+    "overrides": [
+      {
+        "files": [
+          "*.xhtml"
+        ],
+        "options": {
+          "htmlWhitespaceSensitivity": "css"
+        }
+      }
+    ]
+  },
+  "allowScripts": {
+    "esbuild@0.25.1": true
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}
