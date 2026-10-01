@@ -1,12 +1,18 @@
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
- * through `Zotero.ZettelKnowledgeBase.api.*` - only plain data crosses the boundary.
+ * through `Zotero.ZoteroKnowledgeBase.api.*` - only plain data crosses the boundary.
  */
 
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { cardRefFromURL, renderMarkdown } from "./markdown";
-import { importImage, pickImage, resolveAssetURL } from "./assets";
+import {
+  importImage,
+  pickImage,
+  resolveAssetURL,
+  updateImageDraft,
+  releaseImageDraft,
+} from "./assets";
 import { getGraphData } from "./graph";
 import { onDataChange } from "./events";
 import {
@@ -50,6 +56,8 @@ export type HighlightWithCards = HighlightInfo & { cards: number };
 export interface EditorArgs {
   zettelId?: string | null;
   prefillTitle?: string;
+  prefillBody?: string;
+  imageDraftId?: string;
   /** preselect this Zotero item as the card's source */
   sourceItem?: { key: string; libraryID: number };
   onSaved?: (id: string) => void;
@@ -71,7 +79,7 @@ function mainWindow(): Window {
 }
 
 export const api = {
-  loc(key: string, args?: Record<string, unknown>): string {
+  loc(key: string, args?: Record<string, string | number | null>): string {
     return getString(key, { args });
   },
 
@@ -85,19 +93,21 @@ export const api = {
 
   importImage,
   pickImage,
+  updateImageDraft,
+  releaseImageDraft,
   getGraph: getGraphData,
   onDataChange,
 
   openImage(url: string): void {
     if (
-      !/^(https?:\/\/|resource:\/\/zettel-knowledge-base-assets\/[a-zA-Z0-9-]+\.(?:png|jpg|gif|webp|avif)$|data:image\/(?:png|jpeg|gif|webp|avif);base64,)/i.test(
+      !/^(https?:\/\/|resource:\/\/knowledge-base-assets\/[a-zA-Z0-9-]+\.(?:png|jpg|gif|webp|avif)$|data:image\/(?:png|jpeg|gif|webp|avif);base64,)/i.test(
         url,
       )
     )
       return;
     mainWindow().openDialog(
-      `chrome://${config.addonRef}/content/imageViewer.xhtml`,
-      "zettel-knowledge-base:image",
+      `chrome://${config.addonRef}/content/image-viewer.xhtml`,
+      "knowledge-base:image",
       "chrome,centerscreen,resizable=yes,width=900,height=700",
       { url },
     );
@@ -240,19 +250,19 @@ export const api = {
 
   openManager(args: ManagerArgs = {}): void {
     const existing = Services.wm.getMostRecentWindow(
-      "zettel-knowledge-base:manager",
+      "knowledge-base:manager",
     ) as
-      | (Window & { ZettelKnowledgeBase_selectZettel?: (id: string) => void })
+      | (Window & { ZoteroKnowledgeBase_selectZettel?: (id: string) => void })
       | null;
     if (existing) {
       existing.focus();
       if (args.selectId)
-        existing.ZettelKnowledgeBase_selectZettel?.(args.selectId);
+        existing.ZoteroKnowledgeBase_selectZettel?.(args.selectId);
       return;
     }
     mainWindow().openDialog(
       MANAGER_URL,
-      "zettel-knowledge-base:manager",
+      "knowledge-base:manager",
       "chrome,centerscreen,resizable=yes,width=980,height=640",
       args,
     );
@@ -261,26 +271,24 @@ export const api = {
   openEditor(args: EditorArgs = {}): void {
     mainWindow().openDialog(
       EDITOR_URL,
-      "zettel-knowledge-base:editor",
+      "knowledge-base:editor",
       "chrome,centerscreen,resizable=yes,width=1000,height=720",
       args,
     );
   },
 
   openGraph(args: { centerId?: string } = {}): void {
-    const existing = Services.wm.getMostRecentWindow(
-      "zettel-knowledge-base:graph",
-    ) as
-      | (Window & { ZettelKnowledgeBase_showGraph?: (id?: string) => void })
+    const existing = Services.wm.getMostRecentWindow("knowledge-base:graph") as
+      | (Window & { ZoteroKnowledgeBase_showGraph?: (id?: string) => void })
       | null;
     if (existing) {
       existing.focus();
-      existing.ZettelKnowledgeBase_showGraph?.(args.centerId);
+      existing.ZoteroKnowledgeBase_showGraph?.(args.centerId);
       return;
     }
     mainWindow().openDialog(
       `chrome://${config.addonRef}/content/graph.xhtml`,
-      "zettel-knowledge-base:graph",
+      "knowledge-base:graph",
       "chrome,centerscreen,resizable=yes,width=1100,height=760",
       args,
     );
@@ -288,7 +296,7 @@ export const api = {
 
   openAnnotationPicker(args: AnnotationPickerArgs): void {
     const existing = Services.wm.getMostRecentWindow(
-      "zettel-knowledge-base:annotations",
+      "knowledge-base:annotations",
     );
     if (existing) {
       (existing as unknown as Window).focus();
@@ -296,9 +304,11 @@ export const api = {
     }
     mainWindow().openDialog(
       ANNOTATIONS_URL,
-      "zettel-knowledge-base:annotations",
+      "knowledge-base:annotations",
       "chrome,centerscreen,resizable=yes,width=720,height=600",
       args,
     );
   },
 };
+
+export type KnowledgeBaseAPI = typeof api;

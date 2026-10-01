@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-stylesheet
-href="chrome://zettel-knowledge-base/content/manager.css?v=__styleVersion__"
+href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
 <window
-  id="zettel-knowledge-base-editor"
-  windowtype="zettel-knowledge-base:editor"
+  id="knowledge-base-editor"
+  windowtype="knowledge-base:editor"
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
   width="1000"
@@ -12,43 +12,28 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
-  <script src="chrome://zettel-knowledge-base/content/markdown.js" />
-  <script src="chrome://zettel-knowledge-base/content/editor.js" />
-  <html:div id="zettel-knowledge-base-editor-root">
-    <html:div id="zettel-knowledge-base-editor-toolbar">
-      <html:span id="zettel-knowledge-base-src-label" class="lbl"></html:span>
-      <html:span
-        id="zettel-knowledge-base-src-display"
-        class="muted"
-      ></html:span>
-      <html:button id="zettel-knowledge-base-src-pick"></html:button>
-      <html:button
-        id="zettel-knowledge-base-src-jump"
-        hidden="hidden"
-      ></html:button>
-      <html:button
-        id="zettel-knowledge-base-src-anno"
-        hidden="hidden"
-      ></html:button>
-      <html:button
-        id="zettel-knowledge-base-src-clear"
-        class="icon"
-        hidden="hidden"
+  <script src="chrome://knowledge-base/content/markdown.js" />
+  <script src="chrome://knowledge-base/content/editor-formatting.js" />
+  <script src="chrome://knowledge-base/content/editor.js" />
+  <html:div id="knowledge-base-editor-root">
+    <html:div id="knowledge-base-editor-toolbar">
+      <html:span id="knowledge-base-src-label" class="lbl"></html:span>
+      <html:span id="knowledge-base-src-display" class="muted"></html:span>
+      <html:button id="knowledge-base-src-pick"></html:button>
+      <html:button id="knowledge-base-src-jump" hidden="hidden"></html:button>
+      <html:button id="knowledge-base-src-anno" hidden="hidden"></html:button>
+      <html:button id="knowledge-base-src-clear" class="icon" hidden="hidden"
         >&#10005;</html:button
       >
     </html:div>
-    <html:div id="zettel-knowledge-base-src-drop" hidden="hidden">
-      <html:input id="zettel-knowledge-base-src-search" type="search" />
-      <html:button id="zettel-knowledge-base-src-selected"></html:button>
-      <html:div
-        id="zettel-knowledge-base-src-status"
-        class="muted"
-        role="status"
-      />
-      <html:ul id="zettel-knowledge-base-src-results" class="refs"></html:ul>
+    <html:div id="knowledge-base-src-drop" hidden="hidden">
+      <html:input id="knowledge-base-src-search" type="search" />
+      <html:button id="knowledge-base-src-selected"></html:button>
+      <html:div id="knowledge-base-src-status" class="muted" role="status" />
+      <html:ul id="knowledge-base-src-results" class="refs"></html:ul>
     </html:div>
-    <html:input id="zettel-knowledge-base-editor-title" type="text" />
-    <html:div id="zettel-knowledge-base-markdown-toolbar">
+    <html:input id="knowledge-base-editor-title" type="text" />
+    <html:div id="knowledge-base-markdown-toolbar">
       <html:button data-format="heading" title="Heading">H</html:button>
       <html:button data-format="bold" title="Bold (Ctrl/Cmd+B)">B</html:button>
       <html:button data-format="italic" title="Italic (Ctrl/Cmd+I)"
@@ -59,74 +44,65 @@ type="text/css"?>
       <html:button data-format="task" title="Task list">☑</html:button>
       <html:button data-format="code" title="Code">&lt;/&gt;</html:button>
       <html:button data-format="table" title="Markdown table">▦</html:button>
-      <html:button id="zettel-knowledge-base-link-pick"></html:button>
-      <html:button id="zettel-knowledge-base-url-insert" />
-      <html:button id="zettel-knowledge-base-image-insert" />
+      <html:button id="knowledge-base-link-pick"></html:button>
+      <html:button id="knowledge-base-url-insert" />
+      <html:button id="knowledge-base-image-insert" />
       <html:button
-        id="zettel-knowledge-base-src-insert"
+        id="knowledge-base-src-insert"
         disabled="disabled"
       ></html:button>
       <html:div class="spacer" />
       <html:button
-        id="zettel-knowledge-base-preview-toggle"
+        id="knowledge-base-preview-toggle"
         aria-pressed="true"
       ></html:button>
     </html:div>
-    <html:div id="zettel-knowledge-base-link-drop" hidden="hidden">
-      <html:input id="zettel-knowledge-base-link-search" type="search" />
-      <html:div
-        id="zettel-knowledge-base-link-status"
-        class="muted"
-        role="status"
-      />
-      <html:ul id="zettel-knowledge-base-link-results" class="refs" />
+    <html:div id="knowledge-base-link-drop" hidden="hidden">
+      <html:input id="knowledge-base-link-search" type="search" />
+      <html:div id="knowledge-base-link-status" class="muted" role="status" />
+      <html:ul id="knowledge-base-link-results" class="refs" />
     </html:div>
-    <html:div id="zettel-knowledge-base-editor-content">
-      <html:div id="zettel-knowledge-base-editor-workspace">
+    <html:div id="knowledge-base-editor-content">
+      <html:div id="knowledge-base-editor-workspace">
         <html:textarea
-          id="zettel-knowledge-base-editor-body"
+          id="knowledge-base-editor-body"
           wrap="soft"
           spellcheck="true"
         />
-        <html:div
-          id="zettel-knowledge-base-editor-preview"
-          class="markdown-body"
-        />
+        <html:div id="knowledge-base-editor-preview" class="markdown-body" />
       </html:div>
-      <html:aside id="zettel-knowledge-base-editor-relations">
-        <html:button id="zettel-knowledge-base-editor-graph" />
-        <html:h3 id="zettel-knowledge-base-editor-outgoing-label" />
-        <html:ul id="zettel-knowledge-base-editor-outgoing" class="refs" />
-        <html:h3 id="zettel-knowledge-base-editor-backlinks-label" />
-        <html:ul id="zettel-knowledge-base-editor-backlinks" class="refs" />
-      </html:aside>
+      <html:details id="knowledge-base-editor-relations">
+        <html:summary id="knowledge-base-editor-relations-summary" />
+        <html:button id="knowledge-base-editor-graph" />
+        <html:h3 id="knowledge-base-editor-outgoing-label" />
+        <html:ul id="knowledge-base-editor-outgoing" class="refs" />
+        <html:h3 id="knowledge-base-editor-backlinks-label" />
+        <html:ul id="knowledge-base-editor-backlinks" class="refs" />
+      </html:details>
     </html:div>
-    <html:footer id="zettel-knowledge-base-editor-footer">
-      <html:span
-        id="zettel-knowledge-base-editor-status"
-        class="muted"
-      ></html:span>
+    <html:footer id="knowledge-base-editor-footer">
+      <html:span id="knowledge-base-editor-status" class="muted"></html:span>
       <html:div class="spacer" />
-      <html:button id="zettel-knowledge-base-editor-cancel"></html:button>
+      <html:button id="knowledge-base-editor-cancel"></html:button>
       <html:button
-        id="zettel-knowledge-base-editor-save"
+        id="knowledge-base-editor-save"
         class="primary"
       ></html:button>
     </html:footer>
-    <html:div id="zettel-knowledge-base-anno-layer" hidden="hidden">
-      <html:div id="zettel-knowledge-base-anno-box">
-        <html:h2 id="zettel-knowledge-base-anno-head"></html:h2>
-        <html:ul id="zettel-knowledge-base-anno-list"></html:ul>
+    <html:div id="knowledge-base-anno-layer" hidden="hidden">
+      <html:div id="knowledge-base-anno-box">
+        <html:h2 id="knowledge-base-anno-head"></html:h2>
+        <html:ul id="knowledge-base-anno-list"></html:ul>
         <html:div
-          id="zettel-knowledge-base-anno-empty"
+          id="knowledge-base-anno-empty"
           class="muted"
           hidden="hidden"
         ></html:div>
         <html:footer>
           <html:div class="spacer" />
-          <html:button id="zettel-knowledge-base-anno-cancel"></html:button>
+          <html:button id="knowledge-base-anno-cancel"></html:button>
           <html:button
-            id="zettel-knowledge-base-anno-insert"
+            id="knowledge-base-anno-insert"
             class="primary"
           ></html:button>
         </html:footer>

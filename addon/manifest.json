@@ -5,14 +5,14 @@
   "description": "__description__",
   "author": "__author__",
   "icons": {
-    "48": "content/icons/favicon@0.5x.png",
-    "96": "content/icons/favicon.png"
+    "48": "content/icons/icon-48.png",
+    "96": "content/icons/icon-96.png"
   },
   "applications": {
     "zotero": {
       "id": "__addonID__",
-      "update_url": "__updateURL__",
-      "strict_min_version": "6.999",
+      "update_url": "https://github.com/lzcn/zotero-knowledge-base/releases/latest/download/updates.json",
+      "strict_min_version": "7.0",
       "strict_max_version": "10.*"
     }
   }

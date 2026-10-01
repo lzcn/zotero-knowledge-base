@@ -1,13 +1,10 @@
-.DS_Store
-
-# Node.js
-node_modules
-pnpm-lock.yaml
-yarn.lock
-
-# Scaffold
-.env
-.scaffold
-build
-logs
+node_modules/
+dist/
+build/
 release/
+logs/
+.scaffold/
+.env
+.DS_Store
+*.xpi
+.local-backups/

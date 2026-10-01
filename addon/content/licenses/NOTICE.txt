@@ -1,4 +1,4 @@
-Zettel Knowledge Base
+Zotero Knowledge Base
 
 Includes code adapted from Zotero Plugin Template by windingwind and
 contributors (AGPL-3.0-or-later):
@@ -16,3 +16,5 @@ Bundled libraries retain their own licenses, included in this directory:
 
 Corresponding project source:
 https://github.com/lzcn/zotero-knowledge-base
+
+Turndown and turndown-plugin-gfm: MIT. See their included license texts.

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "strict": false,
+    "moduleDetection": "force",
+    "types": ["zotero-types"]
+  },
+  "include": ["src", "typings", "addon/content/*.js"],
+  "exclude": ["build", "dist"]
+}

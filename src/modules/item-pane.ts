@@ -9,20 +9,26 @@ import { getString } from "../utils/locale";
 import { getItemCountSync, listByItem } from "./zettel";
 import { onDataChange } from "./events";
 
-const subscriptions = new WeakMap<HTMLElement, () => void>();
+const subscriptions = new Map<HTMLElement, () => void>();
 
 let sectionID: string | undefined;
+let columnID: string | false;
 
 export function unregisterItemPaneUI(): void {
   if (sectionID) Zotero.ItemPaneManager.unregisterSection(sectionID);
   sectionID = undefined;
+  if (columnID) Zotero.ItemTreeManager.unregisterColumn(columnID);
+  columnID = false;
+  for (const unsubscribe of subscriptions.values()) unsubscribe();
+  subscriptions.clear();
 }
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
-const ICON = `chrome://${config.addonRef}/content/icons/zettel.svg`;
+const ICON_ROOT = `chrome://${config.addonRef}/content/icons`;
 
 export async function registerItemPaneUI(): Promise<void> {
-  Zotero.ItemTreeManager.registerColumns({
+  if (sectionID) return;
+  columnID = Zotero.ItemTreeManager.registerColumn({
     pluginID: config.addonID,
     dataKey: "zettelCount",
     label: "Zettel",
@@ -33,25 +39,17 @@ export async function registerItemPaneUI(): Promise<void> {
     },
   });
 
-  // Recreate any section left behind by an older hot-updated version.
-  const manager = Zotero.ItemPaneManager as typeof Zotero.ItemPaneManager & {
-    customSectionData?: { options: { pluginID: string; paneID: string }[] };
-  };
-  for (const previous of manager.customSectionData?.options || []) {
-    if (previous.pluginID === config.addonID)
-      manager.unregisterSection(previous.paneID);
-  }
   sectionID =
     Zotero.ItemPaneManager.registerSection({
       pluginID: config.addonID,
       paneID: `${config.addonRef}-zettel-section`,
       header: {
         l10nID: `${config.addonRef}-pane-header`,
-        icon: ICON,
+        icon: `${ICON_ROOT}/icon-16.svg`,
       },
       sidenav: {
         l10nID: `${config.addonRef}-pane-sidenav`,
-        icon: ICON,
+        icon: `${ICON_ROOT}/icon-20.svg`,
       },
       onInit: ({
         body,
@@ -78,7 +76,7 @@ export async function registerItemPaneUI(): Promise<void> {
 }
 
 function renderSection(body: HTMLElement, item?: Zotero.Item): void {
-  body.classList.add("zettel-knowledge-base-section");
+  body.classList.add("knowledge-base-section");
   body.textContent = "";
 
   if (!item || !item.isRegularItem?.()) {
@@ -117,14 +115,14 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   container.textContent = "";
 
   const head = el(container, "div");
-  head.className = "zettel-knowledge-base-count";
+  head.className = "knowledge-base-count";
   head.textContent = getString("section-count", {
     args: { count: zettels.length },
   });
   container.appendChild(head);
 
   const list = el(container, "ul");
-  list.className = "zettel-knowledge-base-section-list";
+  list.className = "knowledge-base-section-list";
   for (const z of zettels) {
     const li = el(list, "li");
     li.textContent = z.title || getString("manager-untitled");
@@ -145,9 +143,9 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   container.appendChild(list);
 
   const footer = el(container, "div");
-  footer.className = "zettel-knowledge-base-section-footer";
+  footer.className = "knowledge-base-section-footer";
   const newBtn = el(footer, "button");
-  newBtn.className = "zettel-knowledge-base-mini-btn";
+  newBtn.className = "knowledge-base-mini-btn";
   newBtn.textContent = getString("section-new");
   newBtn.addEventListener("click", () =>
     addon.api.openEditor({
@@ -160,7 +158,7 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   const pending = highlights.filter((h) => !h.cards).length;
   if (highlights.length) {
     const importBtn = el(footer, "button");
-    importBtn.className = "zettel-knowledge-base-mini-btn";
+    importBtn.className = "knowledge-base-mini-btn";
     importBtn.textContent = pending
       ? getString("section-import-highlights", { args: { count: pending } })
       : getString("section-import-highlights-all-done");
@@ -185,7 +183,7 @@ function el(parent: HTMLElement, tag: string): HTMLElement {
 
 function muted(parent: HTMLElement, text: string): HTMLElement {
   const div = el(parent, "div");
-  div.className = "zettel-knowledge-base-muted";
+  div.className = "knowledge-base-muted";
   div.textContent = text;
   return div;
 }

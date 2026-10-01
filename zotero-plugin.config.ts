@@ -1,5 +1,6 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
+import { buildOptions } from "./scripts/build-options.mjs";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
@@ -11,10 +12,12 @@ const styleVersion = `${pkg.version}-${createHash("sha256")
 
 export default defineConfig({
   source: ["src", "addon"],
-  dist: "build",
+  dist: "dist",
   name: pkg.config.addonName,
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
+  xpiName: pkg.name,
+  updateURL: `https://github.com/lzcn/${pkg.name}/releases/latest/download/updates.json`,
 
   build: {
     assets: ["addon/**/*.*"],
@@ -24,25 +27,8 @@ export default defineConfig({
       description: pkg.description,
       buildVersion: pkg.version,
       styleVersion,
-      buildTime: "{{buildTime}}",
     },
-    esbuildOptions: [
-      {
-        entryPoints: ["src/ui/graph.js"],
-        bundle: true,
-        target: "firefox115",
-        outfile: "build/addon/content/graph.js",
-      },
-      {
-        entryPoints: ["src/index.ts"],
-        define: {
-          __env__: `"${process.env.NODE_ENV}"`,
-        },
-        bundle: true,
-        target: "firefox115",
-        outfile: `build/addon/content/scripts/${pkg.config.addonRef}.js`,
-      },
-    ],
+    esbuildOptions: buildOptions(pkg, process.env.NODE_ENV ?? "development"),
   },
 
   // If you need to see a more detailed log, uncomment the following line:

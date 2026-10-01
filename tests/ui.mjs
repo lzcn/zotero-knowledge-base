@@ -7,9 +7,7 @@ import { build } from "esbuild";
 import { JSDOM } from "jsdom";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
-const workspace = await mkdtemp(
-  path.join(tmpdir(), "zettel-knowledge-base-ui-"),
-);
+const workspace = await mkdtemp(path.join(tmpdir(), "knowledge-base-ui-"));
 const entry = path.join(workspace, "entry.ts");
 await writeFile(
   entry,
@@ -45,7 +43,7 @@ function check(label, fn) {
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const sample =
-  "# Idea\n\n**Strong** and *emphasis* and ~~removed~~\n\n- [x] Task\n\n> Quote\n\n```js\nconst x = 1;\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n[[中文概念|别名]] [stable](zkb://zettel/20261001000000)\n\n![image](zkb-asset:abc.png)\n\n[source](zotero://select/library/items/ABCD1234)\n\n<script>bad()</script><img src=x onerror=bad()><a href=javascript:bad()>bad</a>";
+  "# Idea\n\n**Strong** and *emphasis* and ~~removed~~\n\n- [x] Task\n\n> Quote\n\n```js\nconst x = 1;\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n[[中文概念|别名]] [stable](knowledge-base://card/20261001000000)\n\n![image](knowledge-base-asset:abc.png)\n\n[source](zotero://select/library/items/ABCD1234)\n\n<script>bad()</script><img src=x onerror=bad()><a href=javascript:bad()>bad</a>";
 const rendered = markdown.renderMarkdown(
   sample,
   htmlWindow,
@@ -72,7 +70,9 @@ check(
   "Wiki links, Markdown card links, Zotero sources and managed images render",
   () => {
     assert.ok(
-      renderedDoc.querySelector('a[href="zkb://zettel/20261001000000"]'),
+      renderedDoc.querySelector(
+        'a[href="knowledge-base://card/20261001000000"]',
+      ),
     );
     assert.equal(
       renderedDoc.querySelector("a.zettel-link").textContent,
@@ -80,7 +80,7 @@ check(
     );
     assert.ok(
       renderedDoc.querySelector(
-        'img[src="resource://zettel-knowledge-base-assets/abc.png"]',
+        'img[src="resource://knowledge-base-assets/abc.png"]',
       ),
     );
     assert.ok(renderedDoc.querySelector('a[href^="zotero://"]'));
@@ -97,7 +97,7 @@ check(
   () => {
     assert.deepEqual(
       markdown.parseCardLinks(
-        "[[Idea|Alias]] [Stable](zkb://zettel/20261001000000) `[[Code]]`\n\n```\n[[Fence]]\n```\n\n\\[\\[Escaped]]",
+        "[[Idea|Alias]] [Stable](knowledge-base://card/20261001000000) `[[Code]]`\n\n```\n[[Fence]]\n```\n\n\\[\\[Escaped]]",
       ),
       [
         { ref: "Idea", display: "Alias" },
@@ -116,6 +116,7 @@ const makeItem = (id, libraryID, key, title) => ({
   libraryID,
   key,
   loaded: false,
+  isNote: () => false,
   isRegularItem: () => true,
   getField(field) {
     assert.notEqual(
@@ -136,6 +137,7 @@ const items = new Map([
 items.set(20, {
   id: 20,
   parentItemID: 1,
+  isNote: () => false,
   isRegularItem: () => false,
   isFileAttachment: () => true,
   getAnnotations: () => [
@@ -214,15 +216,36 @@ check(
     );
   },
 );
+const existingNote = {
+  ...makeItem(30, 1, "NOTE1234", "Existing note"),
+  isNote: () => true,
+  isRegularItem: () => false,
+  getNoteTitle: () => "Existing note",
+};
+items.set(30, existingNote);
+const noteSummary = await zotero.getItemSummary("NOTE1234", 1);
+check("Existing notes are linked by identity without importing content", () => {
+  assert.equal(noteSummary.title, "Existing note");
+  assert.equal(noteSummary.selectURL, "zotero://select/library/items/NOTE1234");
+  assert.ok(
+    searches.every(
+      (search) =>
+        !search.conditions.some(
+          (c) =>
+            c[0] === "noChildren" || (c[0] === "itemType" && c[2] === "note"),
+        ),
+    ),
+  );
+});
 await zotero.selectItem("GROUP123", 7);
 check("Source navigation awaits selection and switches to library root", () => {
   assert.deepEqual(selection, { id: 7, options: { inLibraryRoot: true } });
   assert.equal(focusCount, 2);
 });
-check("Legacy source keys recover missing library IDs", () =>
+check("Source keys require an explicit library identity", () =>
   assert.ok(zotero.getItemSummary),
 );
-assert.equal((await zotero.getItemSummary("ABCD1234", null)).libraryID, 1);
+assert.equal(await zotero.getItemSummary("ABCD1234", null), null);
 check("Selected attachment resolves to its reference", () =>
   assert.ok(zotero.getSelectedSource),
 );
@@ -246,22 +269,29 @@ const imageURL = await assets.importImage([137, 80, 78, 71], "image/png");
 check(
   "Imported images are stored independently and have stable Markdown URLs",
   () => {
-    assert.equal(imageURL, "zkb-asset:image-test.png");
+    assert.equal(imageURL, "knowledge-base-asset:image-test.png");
     assert.equal(
       writes[0].file,
-      "/disposable-data/zettel-knowledge-base-assets/image-test.png",
+      "/disposable-data/knowledge-base/assets/image-test.png",
     );
     assert.equal(
       assets.resolveAssetURL(imageURL),
-      "resource://zettel-knowledge-base-assets/image-test.png",
+      "resource://knowledge-base-assets/image-test.png",
     );
     assert.equal(
-      assets.resolveAssetURL("zkb-asset:../../private.png"),
-      "zkb-asset:../../private.png",
+      assets.resolveAssetURL("knowledge-base-asset:../../private.png"),
+      "knowledge-base-asset:../../private.png",
     );
   },
 );
 
+const formattingBundle = path.join(workspace, "editor-formatting.js");
+await build({
+  entryPoints: [path.join(ROOT, "src/ui/editor-formatting.ts")],
+  bundle: true,
+  outfile: formattingBundle,
+});
+const formattingScript = await readFile(formattingBundle, "utf8");
 const editorScript = await readFile(
   path.join(ROOT, "addon/content/editor.js"),
   "utf8",
@@ -309,21 +339,24 @@ async function editor(args = {}, overrides = {}) {
     openGraph: (options) => calls.graphs.push(options),
     getItemSummary: async () => sources[0],
     importImage: assets.importImage,
+    updateImageDraft: assets.updateImageDraft,
+    releaseImageDraft: async () => {},
     pickImage: async () => ({
-      url: "zkb-asset:image-test.png",
+      url: "knowledge-base-asset:image-test.png",
       name: "Figure.png",
     }),
     selectItem: async (...values) => calls.open.push(values),
     ...overrides,
   };
   dom.window.Zotero = {
-    ZettelKnowledgeBase: { api },
+    ZoteroKnowledgeBase: { api },
     logError: (error) => {
       throw error;
     },
   };
   dom.window.arguments = [args];
   dom.window.eval(previewScript);
+  dom.window.eval(formattingScript);
   dom.window.eval(
     editorScript + "\nwindow.__editorEval = (source) => eval(source);",
   );
@@ -337,77 +370,72 @@ async function editor(args = {}, overrides = {}) {
 }
 const ed = await editor({ prefillTitle: "New concept" });
 check("Editor prefills concept titles in its real XML document", () =>
-  assert.equal(ed.$("zettel-knowledge-base-editor-title").value, "New concept"),
+  assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
 );
-ed.$("zettel-knowledge-base-editor-body").value = sample;
+ed.$("knowledge-base-editor-body").value = sample;
 ed.win.__editorEval("updatePreview()");
 check(
   "HTML Markdown including task checkbox renders in a Zotero XML window",
   () => {
     assert.ok(
       ed
-        .$("zettel-knowledge-base-editor-preview")
+        .$("knowledge-base-editor-preview")
         .querySelector("input[type=checkbox]"),
     );
-    assert.ok(
-      ed.$("zettel-knowledge-base-editor-preview").querySelector("table"),
-    );
+    assert.ok(ed.$("knowledge-base-editor-preview").querySelector("table"));
     assert.equal(
-      ed.$("zettel-knowledge-base-editor-preview").querySelector("input")
-        .namespaceURI,
+      ed.$("knowledge-base-editor-preview").querySelector("input").namespaceURI,
       "http://www.w3.org/1999/xhtml",
     );
   },
 );
 ed.win.__editorEval("toggleSourceDrop()");
 await ed.win.__editorEval("searchSources()");
-ed.$("zettel-knowledge-base-src-results").firstElementChild.click();
+ed.$("knowledge-base-src-results").firstElementChild.click();
 check(
   "Selecting a source fills its association and enables jump and insertion",
   () => {
     assert.ok(
-      ed
-        .$("zettel-knowledge-base-src-display")
-        .textContent.includes("Atomic idea"),
+      ed.$("knowledge-base-src-display").textContent.includes("Atomic idea"),
     );
-    assert.equal(ed.$("zettel-knowledge-base-src-insert").disabled, false);
+    assert.equal(ed.$("knowledge-base-src-insert").disabled, false);
   },
 );
-ed.$("zettel-knowledge-base-editor-body").setSelectionRange(0, 0);
-ed.$("zettel-knowledge-base-src-insert").click();
+ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
+ed.$("knowledge-base-src-insert").click();
 check("Source insertion creates an actual Zotero Markdown link", () =>
   assert.match(
-    ed.$("zettel-knowledge-base-editor-body").value,
+    ed.$("knowledge-base-editor-body").value,
     /^\[Atomic idea\]\(zotero:\/\/select\/library\/items\/ABCD1234\)/,
   ),
 );
-ed.$("zettel-knowledge-base-editor-body").value = "";
-ed.$("zettel-knowledge-base-editor-body").setSelectionRange(0, 0);
+ed.$("knowledge-base-editor-body").value = "";
+ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
 ed.win.__editorEval("openCardPicker()");
 await ed.win.__editorEval("searchCards()");
-ed.$("zettel-knowledge-base-link-results").firstElementChild.click();
+ed.$("knowledge-base-link-results").firstElementChild.click();
 check("Card picker inserts a stable standard Markdown link", () =>
   assert.equal(
-    ed.$("zettel-knowledge-base-editor-body").value,
-    "[Target card](zkb://zettel/20261001000000)",
+    ed.$("knowledge-base-editor-body").value,
+    "[Target card](knowledge-base://card/20261001000000)",
   ),
 );
 await ed.win.__editorEval("refreshRelations()");
 check("Connected cards appear while editing unsaved Markdown", () =>
   assert.match(
-    ed.$("zettel-knowledge-base-editor-outgoing").textContent,
+    ed.$("knowledge-base-editor-outgoing").textContent,
     /Target card/,
   ),
 );
-ed.$("zettel-knowledge-base-editor-body").value = "word";
-ed.$("zettel-knowledge-base-editor-body").setSelectionRange(0, 4);
+ed.$("knowledge-base-editor-body").value = "word";
+ed.$("knowledge-base-editor-body").setSelectionRange(0, 4);
 ed.win.__editorEval('formatSelection("bold")');
 check("Formatting toolbar edits the actual selected Markdown text", () =>
-  assert.equal(ed.$("zettel-knowledge-base-editor-body").value, "**word**"),
+  assert.equal(ed.$("knowledge-base-editor-body").value, "**word**"),
 );
-ed.$("zettel-knowledge-base-editor-body").value = "- [x] done";
-ed.$("zettel-knowledge-base-editor-body").setSelectionRange(10, 10);
-ed.$("zettel-knowledge-base-editor-body").dispatchEvent(
+ed.$("knowledge-base-editor-body").value = "- [x] done";
+ed.$("knowledge-base-editor-body").setSelectionRange(10, 10);
+ed.$("knowledge-base-editor-body").dispatchEvent(
   new ed.win.KeyboardEvent("keydown", {
     key: "Enter",
     bubbles: true,
@@ -415,10 +443,7 @@ ed.$("zettel-knowledge-base-editor-body").dispatchEvent(
   }),
 );
 check("Markdown list editing continues a new unchecked task", () =>
-  assert.equal(
-    ed.$("zettel-knowledge-base-editor-body").value,
-    "- [x] done\n- [ ] ",
-  ),
+  assert.equal(ed.$("knowledge-base-editor-body").value, "- [x] done\n- [ ] "),
 );
 await ed.win.__editorEval("save(false)");
 check(
@@ -429,22 +454,22 @@ check(
     assert.equal(ed.saved().libraryID, 1);
   },
 );
-ed.$("zettel-knowledge-base-editor-body").value = "";
-ed.$("zettel-knowledge-base-editor-body").setSelectionRange(0, 0);
-ed.$("zettel-knowledge-base-image-insert").click();
+ed.$("knowledge-base-editor-body").value = "";
+ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
+ed.$("knowledge-base-image-insert").click();
 await wait();
 await wait();
 check("Image file picker inserts a persistent Markdown image", () =>
   assert.equal(
-    ed.$("zettel-knowledge-base-editor-body").value,
-    "![Figure.png](zkb-asset:image-test.png)",
+    ed.$("knowledge-base-editor-body").value,
+    "![Figure.png](knowledge-base-asset:image-test.png)",
   ),
 );
-ed.$("zettel-knowledge-base-editor-preview").querySelector("img").click();
+ed.$("knowledge-base-editor-preview").querySelector("img").click();
 check("Image preview opens the full image viewer", () =>
   assert.equal(
     ed.calls.images[0],
-    "resource://zettel-knowledge-base-assets/image-test.png",
+    "resource://knowledge-base-assets/image-test.png",
   ),
 );
 const paste = new ed.win.Event("paste", { bubbles: true, cancelable: true });
@@ -459,14 +484,14 @@ Object.defineProperty(paste, "clipboardData", {
     ],
   },
 });
-ed.$("zettel-knowledge-base-editor-body").dispatchEvent(paste);
+ed.$("knowledge-base-editor-body").dispatchEvent(paste);
 await wait();
 await wait();
 check("Pasting image data imports bytes and inserts an image link", () => {
   assert.equal(paste.defaultPrevented, true);
   assert.match(
-    ed.$("zettel-knowledge-base-editor-body").value,
-    /!\[Clipboard.png\]\(zkb-asset:image-test.png\)/,
+    ed.$("knowledge-base-editor-body").value,
+    /!\[Clipboard.png\]\(knowledge-base-asset:image-test.png\)/,
   );
 });
 const missing = await editor(
@@ -474,7 +499,7 @@ const missing = await editor(
   {
     getZettel: async () => ({
       id: "old",
-      title: "Legacy",
+      title: "Missing source",
       body: "Text",
       item_key: "MISSING1",
       library_id: 7,
@@ -501,7 +526,7 @@ check(
   "Source search failures are visible instead of producing a dead picker",
   () =>
     assert.match(
-      failing.$("zettel-knowledge-base-src-status").textContent,
+      failing.$("knowledge-base-src-status").textContent,
       /Search failed/,
     ),
 );
@@ -552,7 +577,7 @@ await new Promise((resolve) =>
   graphDom.window.addEventListener("load", resolve, { once: true }),
 );
 graphDom.window.Zotero = {
-  ZettelKnowledgeBase: {
+  ZoteroKnowledgeBase: {
     api: {
       loc: (key) => key,
       getGraph: async () => graphData,
@@ -626,8 +651,8 @@ for (const [id, count] of [
 // Replace the entire API object as a plugin reload does, rather than mutating
 // one method on the old object. Open windows must call the new instance.
 let latestApiCalled = false;
-graphDom.window.Zotero.ZettelKnowledgeBase.api = {
-  ...graphDom.window.Zotero.ZettelKnowledgeBase.api,
+graphDom.window.Zotero.ZoteroKnowledgeBase.api = {
+  ...graphDom.window.Zotero.ZoteroKnowledgeBase.api,
   getGraph: async () => {
     latestApiCalled = true;
     return graphData;
@@ -649,7 +674,7 @@ const crowdedCards = Array.from({ length: 120 }, (_, i) => ({
   kind: "card",
   snippet: "Full idea context",
 }));
-graphDom.window.Zotero.ZettelKnowledgeBase.api.getGraph = async () => ({
+graphDom.window.Zotero.ZoteroKnowledgeBase.api.getGraph = async () => ({
   nodes: crowdedCards,
   edges: [],
 });

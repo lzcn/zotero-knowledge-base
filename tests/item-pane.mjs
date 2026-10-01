@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const workspace = await mkdtemp(join(tmpdir(), "zettel-knowledge-base-pane-"));
+const workspace = await mkdtemp(join(tmpdir(), "knowledge-base-pane-"));
 const output = join(workspace, "pane.mjs");
 const state = { cards: [], listeners: new Set(), errors: [], opens: [] };
 globalThis.paneTest = state;
 await build({
-  entryPoints: ["src/modules/itemPane.ts"],
+  entryPoints: ["src/modules/item-pane.ts"],
   outfile: output,
   bundle: true,
   platform: "node",
@@ -36,16 +36,13 @@ await build({
   ],
 });
 globalThis.Zotero = {
-  ItemTreeManager: { registerColumns() {} },
-  ItemPaneManager: {
-    customSectionData: {
-      options: [
-        {
-          pluginID: "zettel-knowledge-base@lzcn",
-          paneID: "escaped-existing-pane",
-        },
-      ],
+  ItemTreeManager: {
+    registerColumn() {
+      return "knowledge-base-count";
     },
+    unregisterColumn() {},
+  },
+  ItemPaneManager: {
     unregisterSection(id) {
       state.removed = id;
     },
@@ -128,7 +125,7 @@ check("A late source response cannot overwrite a newly selected source", () =>
   assert.equal(body.querySelector("li").textContent, "Source B"),
 );
 for (const language of ["en-US", "zh-CN"]) {
-  const ftl = await readFile(`addon/locale/${language}/itemPane.ftl`, "utf8");
+  const ftl = await readFile(`addon/locale/${language}/item-pane.ftl`, "utf8");
   check(
     `${language} labels do not replace native section or icon contents`,
     () => {
@@ -137,16 +134,12 @@ for (const language of ["en-US", "zh-CN"]) {
     },
   );
 }
-check(
-  "Hot update removes the previous section before registering the replacement",
-  () => {
-    assert.equal(state.removed, "escaped-existing-pane");
-    assert.equal(
-      state.section.sidenav.l10nID,
-      "zettel-knowledge-base-pane-sidenav",
-    );
-  },
-);
+const registered = state.section;
+await registerItemPaneUI();
+check("Repeated registration keeps one current section", () => {
+  assert.equal(state.section, registered);
+  assert.equal(state.removed, undefined);
+});
 unregisterItemPaneUI();
 check("Shutdown unregisters the actual section handle", () =>
   assert.equal(state.removed, state.section.paneID),

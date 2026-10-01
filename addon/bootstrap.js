@@ -11,13 +11,8 @@ var chromeHandle;
 
 function install(data, reason) {}
 
-async function startup({ id, version, resourceURI, rootURI }, reason) {
+async function startup({ id, version, rootURI }, reason) {
   await Zotero.initializationPromise;
-
-  // String 'rootURI' introduced in Zotero 7
-  if (!rootURI) {
-    rootURI = resourceURI.spec;
-  }
 
   var aomStartup = Components.classes[
     "@mozilla.org/addons/addon-manager-startup;1"
@@ -39,21 +34,21 @@ async function startup({ id, version, resourceURI, rootURI }, reason) {
   ctx._globalThis = ctx;
 
   Services.scriptloader.loadSubScript(
-    `${rootURI}/content/scripts/__addonRef__.js`,
+    `${rootURI}content/scripts/__addonRef__.js`,
     ctx,
   );
   await Zotero.__addonInstance__.hooks.onStartup();
 }
 
 async function onMainWindowLoad({ window }, reason) {
-  Zotero.__addonInstance__?.hooks.onMainWindowLoad(window);
+  await Zotero.__addonInstance__?.hooks.onMainWindowLoad(window);
 }
 
 async function onMainWindowUnload({ window }, reason) {
-  Zotero.__addonInstance__?.hooks.onMainWindowUnload(window);
+  await Zotero.__addonInstance__?.hooks.onMainWindowUnload(window);
 }
 
-async function shutdown({ id, version, resourceURI, rootURI }, reason) {
+async function shutdown({ id, version, rootURI }, reason) {
   if (reason === APP_SHUTDOWN) {
     return;
   }
@@ -69,7 +64,7 @@ async function shutdown({ id, version, resourceURI, rootURI }, reason) {
     .getService(Components.interfaces.nsIStringBundleService)
     .flushBundles();
 
-  Cu.unload(`${rootURI}/content/scripts/__addonRef__.js`);
+  Cu.unload(`${rootURI}content/scripts/__addonRef__.js`);
 
   if (chromeHandle) {
     chromeHandle.destruct();

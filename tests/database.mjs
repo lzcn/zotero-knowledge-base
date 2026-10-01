@@ -101,7 +101,7 @@ class Connection {
 }
 
 /* ------------------------------------------------------------------ */
-/* globals (must exist before the bundle is imported)                  */
+/* host bindings (must exist before the bundle is imported)                  */
 /* ------------------------------------------------------------------ */
 
 const zoteroStub = {
@@ -123,6 +123,7 @@ globalThis.ChromeUtils = {
 };
 globalThis.PathUtils = { join: (...parts) => path.join(...parts) };
 globalThis.Zotero = zoteroStub;
+globalThis.IOUtils = { exists: async () => false };
 
 /* ------------------------------------------------------------------ */
 /* current schema fixture                                             */
@@ -200,7 +201,7 @@ function createCurrentDatabase(file) {
 /* ------------------------------------------------------------------ */
 
 const workspace = await mkdtemp(
-  path.join(os.tmpdir(), "zettel-knowledge-base-verify-"),
+  path.join(os.tmpdir(), "knowledge-base-verify-"),
 );
 const entry = path.join(workspace, "entry.ts");
 const bundle = path.join(workspace, "bundle.mjs");
@@ -261,8 +262,7 @@ const REQUIRED = [
 async function initialize(label, dataDir, prepare) {
   console.log(`\n=== ${label} ===`);
   await mkdir(dataDir, { recursive: true });
-  if (prepare)
-    await prepare(path.join(dataDir, "zettel-knowledge-base.sqlite"));
+  if (prepare) await prepare(path.join(dataDir, "knowledge-base.sqlite"));
 
   zoteroStub.DataDirectory.dir = dataDir;
   try {
@@ -275,9 +275,7 @@ async function initialize(label, dataDir, prepare) {
     return null;
   }
 
-  const schema = await readSchema(
-    path.join(dataDir, "zettel-knowledge-base.sqlite"),
-  );
+  const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
   check("schemaVersion is 3", schema.version === "3", `got ${schema.version}`);
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
@@ -439,7 +437,7 @@ if (currentSchema) {
   );
   const markdownCard = await zettel.saveZettel({
     title: "Markdown card",
-    body: `[Stable label](zkb://zettel/${laterId})\n\n\`[[Not a card]]\``,
+    body: `[Stable label](knowledge-base://card/${laterId})\n\n\`[[Not a card]]\``,
   });
   await zettel.saveZettel({ id: laterId, title: "Renamed target", body: "" });
   check(
@@ -488,6 +486,38 @@ if (currentSchema) {
   );
   await db.closeDB();
 }
+
+// An unsupported schema is rejected without rewriting its data.
+const invalidDir = path.join(workspace, "unsupported-schema");
+await mkdir(invalidDir);
+const invalidFile = path.join(invalidDir, "knowledge-base.sqlite");
+const invalid = new DatabaseSync(invalidFile);
+invalid.exec(
+  "CREATE TABLE zettels (id TEXT PRIMARY KEY, title TEXT); INSERT INTO zettels VALUES ('keep', 'Untouched')",
+);
+invalid.close();
+zoteroStub.DataDirectory.dir = invalidDir;
+let schemaRejected = false;
+try {
+  await db.initDB();
+} catch {
+  schemaRejected = true;
+}
+await db.closeDB();
+const preserved = new DatabaseSync(invalidFile);
+check(
+  "unsupported schema is rejected without rewriting rows",
+  schemaRejected &&
+    preserved.prepare("SELECT title FROM zettels WHERE id='keep'").get()
+      .title === "Untouched",
+);
+check(
+  "failed initialization rolls back schema changes",
+  preserved
+    .prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE name='meta'")
+    .get().n === 0,
+);
+preserved.close();
 
 // Optional consistent snapshot: always reopen a disposable copy, never the
 // user's database. Compare every original field to detect data loss.

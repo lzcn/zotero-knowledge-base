@@ -7,14 +7,19 @@ import {
 } from "d3-force";
 import { filterGraph } from "../modules/graph";
 
-const api = new Proxy(
-  {},
-  { get: (_, key) => window.Zotero.ZettelKnowledgeBase.api[key] },
+const api = /** @type {import("../modules/api").KnowledgeBaseAPI} */ (
+  new Proxy({}, { get: (_, key) => window.Zotero.ZoteroKnowledgeBase.api[key] })
 );
-const $ = (id) => document.getElementById(id);
+/** @template {keyof import("../../typings/ui").GraphElements} K
+ * @param {K} id @returns {import("../../typings/ui").GraphElements[K]} */
+const $ = (id) =>
+  /** @type {import("../../typings/ui").GraphElements[K]} */ (
+    document.getElementById(id)
+  );
 const svgNS = "http://www.w3.org/2000/svg";
 let graph = { nodes: [], edges: [] };
-let centerId = window.arguments?.[0]?.centerId;
+let centerId = /** @type {{ centerId?: string }} */ (window.arguments[0] || {})
+  .centerId;
 let selectedId = centerId;
 let scope = centerId ? "1" : "all";
 let simulation;
@@ -125,11 +130,16 @@ function fit() {
   applyTransform();
 }
 function render() {
-  for (const button of $("graph-scope").children)
+  for (const button of /** @type {HTMLButtonElement[]} */ (
+    Array.from($("graph-scope").children)
+  ))
     button.setAttribute("aria-pressed", String(button.dataset.scope === scope));
   simulation?.stop();
   const data = visibleGraph();
-  const nodes = data.nodes.map((node) => ({ ...node }));
+  /** @typedef {import("../modules/graph").GraphNode & { x?: number, y?: number, fx?: number | null, fy?: number | null }} SimulationNode */
+  const nodes = data.nodes.map(
+    (node) => /** @type {SimulationNode} */ ({ ...node }),
+  );
   const edges = data.edges.map((edge) => ({ ...edge }));
   const svg = $("graph-svg");
   const { width, height } = size();
@@ -300,7 +310,7 @@ async function openNode(node) {
     await api.selectItem(node.itemKey, node.libraryID);
   else api.openEditor({ prefillTitle: node.title });
 }
-window.ZettelKnowledgeBase_showGraph = (id) => {
+window.ZoteroKnowledgeBase_showGraph = (id) => {
   centerId = id;
   selectedId = id;
   scope = id ? "1" : "all";
@@ -308,6 +318,7 @@ window.ZettelKnowledgeBase_showGraph = (id) => {
 };
 async function load() {
   document.title = api.loc("graph-title");
+  /** @type {Partial<Record<keyof import("../../typings/ui").GraphElements, string>>} */
   const labels = {
     "graph-all": "graph-all",
     "graph-local-one": "graph-local-one",
@@ -325,10 +336,14 @@ async function load() {
     "graph-legend-unresolved": "graph-legend-unresolved",
   };
   for (const [id, key] of Object.entries(labels))
-    $(id).textContent = api.loc(key);
+    $(
+      /** @type {keyof import("../../typings/ui").GraphElements} */ (id),
+    ).textContent = api.loc(key);
   $("graph-search").placeholder = api.loc("graph-search");
   scope = centerId ? "1" : "all";
-  for (const button of $("graph-scope").children) {
+  for (const button of /** @type {HTMLButtonElement[]} */ (
+    Array.from($("graph-scope").children)
+  )) {
     button.addEventListener("click", () => {
       scope = button.dataset.scope;
       if (scope !== "all" && !centerId)
@@ -338,7 +353,9 @@ async function load() {
     });
   }
   for (const id of ["graph-sources", "graph-unresolved"])
-    $(id).addEventListener("change", render);
+    $(
+      /** @type {keyof import("../../typings/ui").GraphElements} */ (id),
+    ).addEventListener("change", render);
   $("graph-search").addEventListener("input", render);
   $("graph-fit").addEventListener("click", fit);
   $("graph-refresh").addEventListener("click", () => run(refresh));

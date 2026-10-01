@@ -26,36 +26,39 @@ type AnnotationHeaderEvent =
 const ANNO_BUTTON_STYLE =
   "font-size:11px;padding:0 6px;margin-inline-start:6px;cursor:pointer;";
 
+const registered = new Set<string>();
+
 export function registerReaderUI(): void {
-  Zotero.Reader.registerEventListener(
-    "createAnnotationContextMenu",
-    onAnnotationContextMenu,
-    config.addonID,
-  );
-  Zotero.Reader.registerEventListener(
-    "renderSidebarAnnotationHeader",
-    onAnnotationHeader,
-    config.addonID,
-  );
+  if (!registered.has("createAnnotationContextMenu")) {
+    Zotero.Reader.registerEventListener(
+      "createAnnotationContextMenu",
+      onAnnotationContextMenu,
+      config.addonID,
+    );
+    registered.add("createAnnotationContextMenu");
+  }
+  if (!registered.has("renderSidebarAnnotationHeader")) {
+    Zotero.Reader.registerEventListener(
+      "renderSidebarAnnotationHeader",
+      onAnnotationHeader,
+      config.addonID,
+    );
+    registered.add("renderSidebarAnnotationHeader");
+  }
 }
 
 export function unregisterReaderUI(): void {
-  try {
+  if (registered.delete("createAnnotationContextMenu")) {
     Zotero.Reader.unregisterEventListener(
       "createAnnotationContextMenu",
       onAnnotationContextMenu,
     );
-  } catch (e) {
-    // the reader may already be gone during shutdown
-    Zotero.logError(e instanceof Error ? e : new Error(String(e)));
   }
-  try {
+  if (registered.delete("renderSidebarAnnotationHeader")) {
     Zotero.Reader.unregisterEventListener(
       "renderSidebarAnnotationHeader",
       onAnnotationHeader,
     );
-  } catch (e) {
-    Zotero.logError(e instanceof Error ? e : new Error(String(e)));
   }
 }
 
@@ -115,7 +118,7 @@ function onAnnotationHeader(event: AnnotationHeaderEvent): void {
   const count = getAnnotationCountSync(annotation.key);
 
   const button = doc.createElement("button");
-  button.className = "zettel-knowledge-base-anno-btn";
+  button.className = "knowledge-base-anno-btn";
   button.setAttribute("style", ANNO_BUTTON_STYLE);
   button.textContent = count
     ? getString("reader-anno-open", { args: { count } })

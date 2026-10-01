@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 for (const [file, name] of [
+  ["assets-notes.mjs", "Asset lifecycle"],
   ["database.mjs", "SQLite storage, card lifecycle and relationship indexing"],
   ["ui.mjs", "Markdown, sources, editor and graph interactions in XML windows"],
   [

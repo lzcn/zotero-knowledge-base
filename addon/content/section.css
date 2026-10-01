@@ -1,26 +1,26 @@
 /* Styles for the Zettel item pane section (injected into the main window) */
 
-.zettel-knowledge-base-section {
+.knowledge-base-section {
   font-size: 12px;
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-muted {
+.knowledge-base-section .knowledge-base-muted {
   color: color-mix(in srgb, currentColor 55%, transparent);
   padding: 4px 0;
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-count {
+.knowledge-base-section .knowledge-base-count {
   font-weight: 600;
   margin: 4px 0;
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-section-list {
+.knowledge-base-section .knowledge-base-section-list {
   list-style: none;
   margin: 0 0 6px;
   padding: 0;
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-section-list li {
+.knowledge-base-section .knowledge-base-section-list li {
   padding: 3px 6px;
   border-radius: 4px;
   cursor: pointer;
@@ -29,11 +29,11 @@
   white-space: nowrap;
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-section-list li:hover {
+.knowledge-base-section .knowledge-base-section-list li:hover {
   background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-mini-btn {
+.knowledge-base-section .knowledge-base-mini-btn {
   font-size: 11px;
   padding: 2px 10px;
   border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
@@ -42,7 +42,7 @@
   cursor: pointer;
 }
 
-.zettel-knowledge-base-section .zettel-knowledge-base-section-footer {
+.knowledge-base-section .knowledge-base-section-footer {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;

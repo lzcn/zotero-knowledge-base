@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-stylesheet
-href="chrome://zettel-knowledge-base/content/manager.css?v=__styleVersion__"
+href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
 <window
-  id="zettel-knowledge-base-graph"
-  windowtype="zettel-knowledge-base:graph"
+  id="knowledge-base-graph"
+  windowtype="knowledge-base:graph"
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
   xmlns:svg="http://www.w3.org/2000/svg"
@@ -13,9 +13,9 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
-  <script src="chrome://zettel-knowledge-base/content/graph.js" />
-  <html:div id="zettel-knowledge-base-graph-root">
-    <html:header id="zettel-knowledge-base-graph-toolbar">
+  <script src="chrome://knowledge-base/content/graph.js" />
+  <html:div id="knowledge-base-graph-root">
+    <html:header id="knowledge-base-graph-toolbar">
       <html:input id="graph-search" type="search" />
       <html:div id="graph-scope" role="group">
         <html:button id="graph-all" type="button" data-scope="all" />
@@ -36,9 +36,9 @@ type="text/css"?>
       <html:button id="graph-refresh" />
       <html:span id="graph-stats" class="muted" />
     </html:header>
-    <html:main id="zettel-knowledge-base-graph-main">
+    <html:main id="knowledge-base-graph-main">
       <html:div id="graph-canvas">
-        <svg:svg id="graph-svg" aria-label="Zettel graph" />
+        <svg:svg id="graph-svg" aria-label="Card graph" />
         <html:div id="graph-empty" class="muted" hidden="hidden" />
       </html:div>
       <html:aside id="graph-inspector">

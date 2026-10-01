@@ -41,14 +41,14 @@ const markdown = new Marked({
         };
       },
       renderer(token) {
-        return `<a href="zkb://zettel/${encodeURIComponent(token.ref)}" class="zettel-link">${escapeHTML(token.display)}</a>`;
+        return `<a href="knowledge-base://card/${encodeURIComponent(token.ref)}" class="zettel-link">${escapeHTML(token.display)}</a>`;
       },
     },
   ],
 });
 
 export function cardRefFromURL(href: string): string | null {
-  const match = /^zkb:\/\/zettel\/([^?#]+)$/i.exec(href);
+  const match = /^knowledge-base:\/\/card\/([^?#]+)$/i.exec(href);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -83,6 +83,28 @@ export function parseCardLinks(body: string): CardLink[] {
   return [...links.values()];
 }
 
+/** Actual image and link references, excluding examples in code blocks. */
+export function parseAssetNames(body: string): Set<string> {
+  const names = new Set<string>();
+  const add = (url: string) => {
+    const match =
+      /^(?:knowledge-base-asset:|resource:\/\/knowledge-base-assets\/)([a-zA-Z0-9-]+\.(?:png|jpg|gif|webp|avif))$/.exec(
+        url,
+      );
+    if (match) names.add(match[1]);
+  };
+  markdown.walkTokens(markdown.lexer(body), (token) => {
+    if (token.type === "image" || token.type === "link") add(token.href);
+    if (token.type === "html") {
+      for (const match of token.text.matchAll(
+        /\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+      ))
+        add(match[1] ?? match[2] ?? match[3]);
+    }
+  });
+  return names;
+}
+
 export function renderMarkdown(
   body: string,
   win: Parameters<typeof createDOMPurify>[0],
@@ -96,7 +118,7 @@ export function renderMarkdown(
   return createDOMPurify(win).sanitize(html, {
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP:
-      /^(?:(?:https?|mailto|zotero|zkb):|resource:\/\/zettel-knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+      /^(?:(?:https?|mailto|zotero|knowledge-base):|resource:\/\/knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     FORBID_TAGS: ["style", "form", "iframe"],
     FORBID_ATTR: ["style"],
   });

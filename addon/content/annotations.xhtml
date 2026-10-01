@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
 <?xml-stylesheet
-href="chrome://zettel-knowledge-base/content/manager.css?v=__styleVersion__"
+href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
 <window
-  id="zettel-knowledge-base-annotations"
-  windowtype="zettel-knowledge-base:annotations"
+  id="knowledge-base-annotations"
+  windowtype="knowledge-base:annotations"
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
   width="720"
@@ -12,34 +12,28 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
-  <script src="chrome://zettel-knowledge-base/content/annotations.js" />
-  <html:div id="zettel-knowledge-base-pick-root">
-    <html:header id="zettel-knowledge-base-pick-toolbar">
-      <html:div id="zettel-knowledge-base-pick-head">
-        <html:h1 id="zettel-knowledge-base-pick-title"></html:h1>
-        <html:div
-          id="zettel-knowledge-base-pick-source"
-          class="muted"
-        ></html:div>
+  <script src="chrome://knowledge-base/content/annotations.js" />
+  <html:div id="knowledge-base-pick-root">
+    <html:header id="knowledge-base-pick-toolbar">
+      <html:div id="knowledge-base-pick-head">
+        <html:h1 id="knowledge-base-pick-title"></html:h1>
+        <html:div id="knowledge-base-pick-source" class="muted"></html:div>
       </html:div>
       <html:div class="spacer" />
-      <html:button id="zettel-knowledge-base-pick-toggle"></html:button>
+      <html:button id="knowledge-base-pick-toggle"></html:button>
     </html:header>
-    <html:ul id="zettel-knowledge-base-pick-rows"></html:ul>
+    <html:ul id="knowledge-base-pick-rows"></html:ul>
     <html:div
-      id="zettel-knowledge-base-pick-empty"
+      id="knowledge-base-pick-empty"
       class="muted"
       hidden="hidden"
     ></html:div>
-    <html:footer id="zettel-knowledge-base-pick-footer">
-      <html:span
-        id="zettel-knowledge-base-pick-status"
-        class="muted"
-      ></html:span>
+    <html:footer id="knowledge-base-pick-footer">
+      <html:span id="knowledge-base-pick-status" class="muted"></html:span>
       <html:div class="spacer" />
-      <html:button id="zettel-knowledge-base-pick-close"></html:button>
+      <html:button id="knowledge-base-pick-close"></html:button>
       <html:button
-        id="zettel-knowledge-base-pick-create"
+        id="knowledge-base-pick-create"
         class="primary"
       ></html:button>
     </html:footer>

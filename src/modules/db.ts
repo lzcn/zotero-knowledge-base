@@ -1,7 +1,7 @@
 /**
  * Independent SQLite storage layer for the zettel knowledge base.
  *
- * The database lives at <Zotero data dir>/zettel-knowledge-base.sqlite and is completely
+ * The database lives at <Zotero data dir>/knowledge-base.sqlite and is completely
  * isolated from zotero.sqlite. We use the platform mozStorage wrapper
  * (Sqlite.sys.mjs) - the same approach Better BibTeX uses for its own DB.
  *
@@ -9,7 +9,7 @@
  * so schema statements must be executed one by one.
  */
 
-const DB_FILENAME = "zettel-knowledge-base.sqlite";
+const DB_FILENAME = "knowledge-base.sqlite";
 const SCHEMA_VERSION = 3;
 
 export interface ZettelRow {
@@ -70,19 +70,31 @@ const SCHEMA_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_zettels_annotation ON zettels(annotation_key)`,
 ];
 
-type SqliteConnection = any;
+interface StorageRow {
+  getResultByName(name: string): unknown;
+}
+interface SqliteConnection {
+  execute(sql: string, params?: unknown[]): Promise<StorageRow[]>;
+  executeTransaction<T>(callback: () => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
+interface SqliteModule {
+  Sqlite: {
+    openConnection(options: { path: string }): Promise<SqliteConnection>;
+  };
+}
 
 let _conn: SqliteConnection | null = null;
 let _schemaReady = false;
 
-function getSqlite(): Record<string, any> {
-  return ChromeUtils.importESModule("resource://gre/modules/Sqlite.sys.mjs");
+function getSqlite(): SqliteModule {
+  return ChromeUtils.importESModule(
+    "resource://gre/modules/Sqlite.sys.mjs",
+  ) as SqliteModule;
 }
 
 export async function initDB(): Promise<void> {
-  // Not just `if (_conn) return`: a failed migration must be retryable within
-  // the same session, otherwise the connection would stay open while the
-  // schema silently remains stale.
+  // Retry initialization if an earlier attempt did not finish.
   if (_conn && _schemaReady) return;
 
   if (!_conn) {
@@ -103,13 +115,14 @@ export async function initDB(): Promise<void> {
       );
       Zotero.logError(
         new Error(
-          `Zettel Knowledge Base: PRAGMA journal_mode=WAL failed (continuing): ${describeError(e)}`,
+          `Knowledge Base: PRAGMA journal_mode=WAL failed (continuing): ${describeError(e)}`,
         ),
       );
     }
   }
 
-  await ensureSchema();
+  schemaTrace.length = 0;
+  await conn().executeTransaction(ensureSchema);
   _schemaReady = true;
 }
 
@@ -128,7 +141,7 @@ async function ensureSchema(): Promise<void> {
   await assertSchema();
 }
 
-/** Columns `zettels` must have once the migration has run. */
+/** Columns `zettels` must have in the current schema. */
 const REQUIRED_COLUMNS = [
   "id",
   "title",
@@ -140,14 +153,7 @@ const REQUIRED_COLUMNS = [
   "updated_at",
 ];
 
-/**
- * Reads the schema back and fails loudly if it is not what we just tried to
- * build.
- *
- * The previous v1 database went unnoticed for several sessions precisely
- * because nothing verified the result: the statements "ran", the version was
- * never written, and the failure surfaced only as unrelated errors much later.
- */
+/** Verify the current schema before exposing the database. */
 async function assertSchema(): Promise<void> {
   const row = await getOne<{ value: string }>(
     `SELECT value FROM meta WHERE key = 'schemaVersion'`,
@@ -155,7 +161,7 @@ async function assertSchema(): Promise<void> {
   const actual = row?.value ?? "none";
   if (actual !== String(SCHEMA_VERSION)) {
     throw new Error(
-      `Zettel Knowledge Base: schema version mismatch after initialization, expected ${SCHEMA_VERSION} but found ${actual}`,
+      `Knowledge Base: schema version mismatch after initialization, expected ${SCHEMA_VERSION} but found ${actual}`,
     );
   }
 
@@ -164,7 +170,7 @@ async function assertSchema(): Promise<void> {
   const missing = REQUIRED_COLUMNS.filter((c) => !names.includes(c));
   if (missing.length) {
     throw new Error(
-      `Zettel Knowledge Base: zettels is missing required column(s) after initialization: ` +
+      `Knowledge Base: zettels is missing required column(s) after initialization: ` +
         `${missing.join(", ")} (found: ${names.join(", ") || "none"})`,
     );
   }
@@ -215,7 +221,7 @@ export function getSchemaTrace(): string {
  *
  * `optional` marks statements whose absence degrades performance rather than
  * correctness (indexes). Those are recorded and skipped instead of aborting
- * the whole migration, so a single failed index cannot hold the schema back.
+ * the schema initialization, so a single failed index cannot hold the schema back.
  */
 async function runSchemaStatement(
   sql: string,
@@ -233,7 +239,7 @@ async function runSchemaStatement(
     }
     trace(`FAIL ${oneLine} -> ${why}`);
     throw new Error(
-      `Zettel Knowledge Base: schema statement failed\n  statement: ${oneLine}\n  error: ${why}`,
+      `Knowledge Base: schema statement failed\n  statement: ${oneLine}\n  error: ${why}`,
     );
   }
 }
@@ -241,7 +247,7 @@ async function runSchemaStatement(
 /**
  * Best-effort snapshot of the database as it actually is.
  *
- * Called after a failed initDB (the connection is open even when the migration
+ * Called after a failed initDB (the connection is open even when initialization
  * aborts), so the log shows which statements took effect. Never throws.
  */
 export async function collectDBDiagnostics(): Promise<string> {
@@ -282,13 +288,14 @@ export async function closeDB(): Promise<void> {
   if (_conn) {
     await _conn.close();
     _conn = null;
+    _schemaReady = false;
   }
 }
 
 function conn(): SqliteConnection {
   if (!_conn)
     throw new Error(
-      "Zettel Knowledge Base: database is not ready. Reopen this window after startup.",
+      "Knowledge Base: database is not ready. Reopen this window after startup.",
     );
   return _conn;
 }
@@ -297,45 +304,18 @@ export async function exec(sql: string, params: unknown[] = []): Promise<void> {
   await conn().execute(sql, params);
 }
 
-/**
- * Makes a mozStorage row readable by column name.
- *
- * `Connection.execute()` resolves to raw `mozIStorageRow` objects, NOT plain
- * objects: they expose values only through `getResultByName()` /
- * `getResultByIndex()`. Reading `row.title` therefore yields `undefined`
- * silently, which is how every schema check "passed" while the database stayed
- * on its old version, and why `PRAGMA table_info()` appeared to return rows
- * with no column names at all. Zotero wraps rows the same way in its own
- * `xpcom/db.js` (`queryAsync`).
- */
-function wrapRow(row: unknown): unknown {
-  if (!row || typeof row !== "object") return row;
-  const target = row as { getResultByName?: (name: string) => unknown };
-  if (typeof target.getResultByName !== "function") return row;
-  const read = target.getResultByName.bind(target);
-
-  return new Proxy(target, {
-    get(t, prop, receiver) {
-      if (typeof prop !== "string") return Reflect.get(t, prop, receiver);
-      // A row must never look thenable, or awaiting it would try to call it.
-      if (prop === "then") return undefined;
-      try {
-        return read(prop);
-      } catch {
-        // Not a result column: fall back for XPCOM members and toString.
-        return Reflect.get(t, prop, receiver);
-      }
+/** Map mozStorage column accessors to typed query results. */
+function wrapRow(row: StorageRow): object {
+  return new Proxy(
+    {},
+    {
+      get(_target, property) {
+        if (property === "then" || typeof property !== "string")
+          return undefined;
+        return row.getResultByName(property);
+      },
     },
-    has(t, prop) {
-      if (typeof prop !== "string") return Reflect.has(t, prop);
-      try {
-        read(prop);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-  });
+  );
 }
 
 export async function getAll<T>(
@@ -343,7 +323,7 @@ export async function getAll<T>(
   params: unknown[] = [],
 ): Promise<T[]> {
   const rows = await conn().execute(sql, params);
-  return (rows as unknown[]).map(wrapRow) as T[];
+  return rows.map(wrapRow) as T[];
 }
 
 export async function getOne<T>(

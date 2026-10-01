@@ -1,5 +1,4 @@
 declare const _globalThis: {
-  [key: string]: any;
   Zotero: _ZoteroTypes.Zotero;
   ztoolkit: ZToolkit;
   addon: typeof addon;

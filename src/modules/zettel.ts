@@ -5,6 +5,7 @@
 import { exec, getAll, getOne, transaction, type ZettelRow } from "./db";
 import { parseCardLinks } from "./markdown";
 import { notifyDataChange } from "./events";
+import { cleanupImagesAfterChange } from "./assets";
 
 export interface Zettel extends ZettelRow {
   outgoing: number;
@@ -239,20 +240,6 @@ const itemCounts = new Map<string, number>();
 const annotationCounts = new Map<string, number>();
 
 export async function rebuildCounts(): Promise<void> {
-  const indexVersion = await getOne<{ value: string }>(
-    "SELECT value FROM meta WHERE key = 'linkIndexVersion'",
-  );
-  if (indexVersion?.value !== "2") {
-    await transaction(async () => {
-      const cards = await getAll<{ id: string; body: string }>(
-        "SELECT id, body FROM zettels",
-      );
-      for (const card of cards) await reindexLinks(card.id, card.body);
-      await exec(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('linkIndexVersion', '2')",
-      );
-    });
-  }
   await resolveUnresolvedLinks();
   const items = await getAll<{ item_key: string; n: number }>(
     `SELECT item_key, COUNT(*) AS n FROM zettels
@@ -375,6 +362,7 @@ export async function saveZettel(input: {
   }
   await refreshAnnotationCount(result.effectiveAnnotationKey);
   notifyDataChange();
+  await cleanupImagesAfterChange();
   return result.id;
 }
 
@@ -393,6 +381,7 @@ export async function deleteZettel(id: string): Promise<void> {
   await refreshItemCount(row?.item_key ?? null);
   await refreshAnnotationCount(row?.annotation_key ?? null);
   notifyDataChange();
+  await cleanupImagesAfterChange();
 }
 
 async function exists(id: string): Promise<boolean> {

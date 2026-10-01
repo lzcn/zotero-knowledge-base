@@ -1,3 +1,4 @@
+import type { LocaleService } from "./utils/locale";
 import { config } from "../package.json";
 import hooks from "./hooks";
 import { api } from "./modules/api";
@@ -10,7 +11,7 @@ class Addon {
     env: "development" | "production";
     ztoolkit: ZToolkit;
     locale?: {
-      current: any;
+      current: LocaleService;
     };
   };
   public hooks: typeof hooks;

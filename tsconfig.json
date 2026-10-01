@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "target": "ES2016",
-    "lib": ["ESNext"],
+    "target": "ES2022",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "experimentalDecorators": true,
     "module": "ESNext",
     "moduleResolution": "bundler",

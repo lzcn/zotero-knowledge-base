@@ -17,9 +17,9 @@ html {
   display: none !important;
 }
 
-#zettel-knowledge-base-root,
-#zettel-knowledge-base-editor-root,
-#zettel-knowledge-base-pick-root {
+#knowledge-base-root,
+#knowledge-base-editor-root,
+#knowledge-base-pick-root {
   display: flex;
   flex-direction: column;
   height: 100vh;
@@ -42,7 +42,7 @@ html {
 
 /* ---------- toolbar ---------- */
 
-#zettel-knowledge-base-toolbar {
+#knowledge-base-toolbar {
   flex-shrink: 0;
   flex-wrap: wrap;
   display: flex;
@@ -52,11 +52,11 @@ html {
   border-bottom: 1px solid var(--border);
 }
 
-#zettel-knowledge-base-search {
+#knowledge-base-search {
   flex: 0 1 320px;
 }
 
-#zettel-knowledge-base-stats {
+#knowledge-base-stats {
   white-space: nowrap;
 }
 
@@ -90,24 +90,24 @@ button.danger {
 
 /* ---------- layout ---------- */
 
-#zettel-knowledge-base-main {
+#knowledge-base-main {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-#zettel-knowledge-base-list-pane {
+#knowledge-base-list-pane {
   flex: 0 0 38%;
   min-width: 260px;
   overflow-y: auto;
 }
 
-#zettel-knowledge-base-splitter {
+#knowledge-base-splitter {
   width: 1px;
   background: var(--border);
 }
 
-#zettel-knowledge-base-detail-pane {
+#knowledge-base-detail-pane {
   flex: 1 1 0;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -118,7 +118,7 @@ button.danger {
 
 /* ---------- list ---------- */
 
-#zettel-knowledge-base-list {
+#knowledge-base-list {
   list-style: none;
   margin: 0;
   padding: 4px;
@@ -158,12 +158,12 @@ button.danger {
 
 /* ---------- detail ---------- */
 
-#zettel-knowledge-base-detail h1 {
+#knowledge-base-detail h1 {
   margin: 0 0 4px;
   font-size: 17px;
 }
 
-#zettel-knowledge-base-detail h2 {
+#knowledge-base-detail h2 {
   margin: 18px 0 6px;
   font-size: 12px;
   text-transform: uppercase;
@@ -171,7 +171,7 @@ button.danger {
   color: var(--muted);
 }
 
-#zettel-knowledge-base-detail-meta {
+#knowledge-base-detail-meta {
   font-family: ui-monospace, monospace;
   font-size: 11px;
 }
@@ -229,7 +229,7 @@ button.danger {
   background: var(--hover);
 }
 
-#zettel-knowledge-base-preview {
+#knowledge-base-preview {
   margin: 0;
   padding: 10px 12px;
   border: 1px solid var(--border);
@@ -242,25 +242,25 @@ button.danger {
   overflow-y: auto;
 }
 
-#zettel-knowledge-base-detail footer {
+#knowledge-base-detail footer {
   display: flex;
   gap: 8px;
   margin-top: 18px;
 }
 
-#zettel-knowledge-base-unresolved {
+#knowledge-base-unresolved {
   margin-top: auto;
   padding-top: 18px;
 }
 
-#zettel-knowledge-base-unresolved h2 {
+#knowledge-base-unresolved h2 {
   margin: 0 0 6px;
   font-size: 12px;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-#zettel-knowledge-base-error {
+#knowledge-base-error {
   flex: none;
   max-height: 120px;
   overflow-y: auto;
@@ -276,7 +276,7 @@ button.danger {
 
 /* ---------- editor ---------- */
 
-#zettel-knowledge-base-editor-root {
+#knowledge-base-editor-root {
   font-size: 13px;
   width: 100%;
   min-height: 0;
@@ -284,34 +284,34 @@ button.danger {
   position: relative;
 }
 
-#zettel-knowledge-base-editor-toolbar {
+#knowledge-base-editor-toolbar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 10px 14px 0;
 }
 
-#zettel-knowledge-base-editor-toolbar .lbl {
+#knowledge-base-editor-toolbar .lbl {
   flex: none;
   font-weight: 600;
 }
 
-#zettel-knowledge-base-src-display {
+#knowledge-base-src-display {
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#zettel-knowledge-base-src-display.placeholder {
+#knowledge-base-src-display.placeholder {
   font-style: italic;
 }
 
-#zettel-knowledge-base-editor-toolbar button.icon {
+#knowledge-base-editor-toolbar button.icon {
   padding: 2px 8px;
 }
 
-#zettel-knowledge-base-src-drop {
+#knowledge-base-src-drop {
   margin: 8px 14px 0;
   padding: 8px;
   border: 1px solid var(--border);
@@ -322,7 +322,7 @@ button.danger {
   background: var(--bg);
 }
 
-#zettel-knowledge-base-src-results {
+#knowledge-base-src-results {
   max-height: 180px;
   overflow-y: auto;
 }
@@ -333,14 +333,14 @@ button.danger {
   white-space: nowrap;
 }
 
-#zettel-knowledge-base-editor-title {
+#knowledge-base-editor-title {
   margin: 12px 14px 8px;
   padding: 6px 10px;
   font-size: 15px;
   font-weight: 600;
 }
 
-#zettel-knowledge-base-editor-body {
+#knowledge-base-editor-body {
   flex: 1;
   margin: 0 14px;
   padding: 10px 12px;
@@ -354,23 +354,23 @@ button.danger {
   resize: none;
 }
 
-#zettel-knowledge-base-editor-footer {
+#knowledge-base-editor-footer {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
 }
 
-#zettel-knowledge-base-editor-status {
+#knowledge-base-editor-status {
   font-family: ui-monospace, monospace;
   font-size: 11px;
 }
 
-#zettel-knowledge-base-editor-status.error {
+#knowledge-base-editor-status.error {
   color: var(--danger);
 }
 
-#zettel-knowledge-base-anno-layer {
+#knowledge-base-anno-layer {
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, black 35%, transparent);
@@ -379,7 +379,7 @@ button.danger {
   justify-content: center;
 }
 
-#zettel-knowledge-base-anno-box {
+#knowledge-base-anno-box {
   width: min(560px, 86%);
   max-height: 76%;
   display: flex;
@@ -391,12 +391,12 @@ button.danger {
   box-shadow: 0 8px 30px color-mix(in srgb, black 30%, transparent);
 }
 
-#zettel-knowledge-base-anno-box h2 {
+#knowledge-base-anno-box h2 {
   margin: 0 0 10px;
   font-size: 14px;
 }
 
-#zettel-knowledge-base-anno-list {
+#knowledge-base-anno-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -406,7 +406,7 @@ button.danger {
   gap: 6px;
 }
 
-#zettel-knowledge-base-anno-list li {
+#knowledge-base-anno-list li {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -415,15 +415,15 @@ button.danger {
   cursor: pointer;
 }
 
-#zettel-knowledge-base-anno-list li:hover {
+#knowledge-base-anno-list li:hover {
   background: var(--hover);
 }
 
-#zettel-knowledge-base-anno-list .anno-text {
+#knowledge-base-anno-list .anno-text {
   flex: 1;
 }
 
-#zettel-knowledge-base-anno-box footer {
+#knowledge-base-anno-box footer {
   display: flex;
   gap: 8px;
   margin-top: 12px;
@@ -431,7 +431,7 @@ button.danger {
 
 /* ---------- annotation batch picker ---------- */
 
-#zettel-knowledge-base-pick-toolbar {
+#knowledge-base-pick-toolbar {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -439,26 +439,26 @@ button.danger {
   border-bottom: 1px solid var(--border);
 }
 
-#zettel-knowledge-base-pick-head {
+#knowledge-base-pick-head {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
 }
 
-#zettel-knowledge-base-pick-title {
+#knowledge-base-pick-title {
   margin: 0;
   font-size: 15px;
 }
 
-#zettel-knowledge-base-pick-source {
+#knowledge-base-pick-source {
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#zettel-knowledge-base-pick-rows {
+#knowledge-base-pick-rows {
   flex: 1;
   list-style: none;
   margin: 0;
@@ -511,12 +511,12 @@ button.danger {
   border: 1px solid var(--border);
 }
 
-#zettel-knowledge-base-pick-empty {
+#knowledge-base-pick-empty {
   flex: 1;
   padding: 24px 16px;
 }
 
-#zettel-knowledge-base-pick-footer {
+#knowledge-base-pick-footer {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -524,14 +524,14 @@ button.danger {
   border-top: 1px solid var(--border);
 }
 
-#zettel-knowledge-base-pick-status {
+#knowledge-base-pick-status {
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#zettel-knowledge-base-pick-status.error {
+#knowledge-base-pick-status.error {
   color: var(--danger);
 }
 
@@ -541,18 +541,18 @@ button[disabled] {
 }
 
 /* Markdown workspace. Keep the viewport height at the outer flex container. */
-#zettel-knowledge-base-markdown-toolbar {
+#knowledge-base-markdown-toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   margin: 0 14px 8px;
 }
-#zettel-knowledge-base-markdown-toolbar button {
+#knowledge-base-markdown-toolbar button {
   font-size: 12px;
   padding: 4px 8px;
 }
-#zettel-knowledge-base-editor-workspace {
+#knowledge-base-editor-workspace {
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -561,10 +561,10 @@ button[disabled] {
   gap: 12px;
   margin: 0 14px;
 }
-#zettel-knowledge-base-editor-workspace.edit-only {
+#knowledge-base-editor-workspace.edit-only {
   grid-template-columns: minmax(0, 1fr);
 }
-#zettel-knowledge-base-editor-workspace #zettel-knowledge-base-editor-body {
+#knowledge-base-editor-workspace #knowledge-base-editor-body {
   width: 100%;
   height: 100%;
   box-sizing: border-box;
@@ -573,7 +573,7 @@ button[disabled] {
   min-width: 0;
   min-height: 0;
 }
-#zettel-knowledge-base-editor-preview {
+#knowledge-base-editor-preview {
   box-sizing: border-box;
   min-height: 0;
   overflow: auto;
@@ -582,22 +582,22 @@ button[disabled] {
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-#zettel-knowledge-base-link-drop {
+#knowledge-base-link-drop {
   margin: 0 14px 8px;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
 }
-#zettel-knowledge-base-link-search {
+#knowledge-base-link-search {
   width: 100%;
   box-sizing: border-box;
 }
-#zettel-knowledge-base-link-results {
+#knowledge-base-link-results {
   max-height: 150px;
   overflow-y: auto;
 }
-#zettel-knowledge-base-src-status,
-#zettel-knowledge-base-link-status {
+#knowledge-base-src-status,
+#knowledge-base-link-status {
   font-size: 12px;
   margin-top: 4px;
 }
@@ -616,12 +616,12 @@ button[disabled] {
   margin-bottom: 0;
 }
 .markdown-body h1,
-#zettel-knowledge-base-detail .markdown-body h1 {
+#knowledge-base-detail .markdown-body h1 {
   font-size: 1.7em;
   margin: 1em 0 0.4em;
 }
 .markdown-body h2,
-#zettel-knowledge-base-detail .markdown-body h2 {
+#knowledge-base-detail .markdown-body h2 {
   font-size: 1.4em;
   margin: 1em 0 0.4em;
   color: inherit;
@@ -677,45 +677,45 @@ button[disabled] {
 .markdown-body input[type="checkbox"] {
   margin-right: 6px;
 }
-#zettel-knowledge-base-preview.markdown-body {
+#knowledge-base-preview.markdown-body {
   white-space: normal;
   max-height: none;
   font-size: 13px;
 }
 
 /* Card context and relation graph */
-#zettel-knowledge-base-editor-content {
+#knowledge-base-editor-content {
   display: flex;
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
 }
-#zettel-knowledge-base-editor-content #zettel-knowledge-base-editor-workspace {
+#knowledge-base-editor-content #knowledge-base-editor-workspace {
   margin-right: 0;
 }
-#zettel-knowledge-base-editor-relations {
+#knowledge-base-editor-relations {
   flex: 0 0 210px;
   overflow-y: auto;
   padding: 0 12px;
   box-sizing: border-box;
 }
-#zettel-knowledge-base-editor-relations h3 {
+#knowledge-base-editor-relations h3 {
   font-size: 12px;
   margin: 16px 0 6px;
   color: var(--muted);
 }
-#zettel-knowledge-base-editor-relations .refs {
+#knowledge-base-editor-relations .refs {
   font-size: 12px;
 }
-#zettel-knowledge-base-editor-relations .unresolved {
+#knowledge-base-editor-relations .unresolved {
   color: var(--muted);
   border-bottom: 1px dashed var(--border);
 }
-#zettel-knowledge-base-editor-preview img,
-#zettel-knowledge-base-preview img {
+#knowledge-base-editor-preview img,
+#knowledge-base-preview img {
   cursor: zoom-in;
 }
-#zettel-knowledge-base-image-stage {
+#knowledge-base-image-stage {
   height: 100vh;
   display: flex;
   align-items: center;
@@ -723,12 +723,12 @@ button[disabled] {
   overflow: auto;
   background: var(--bg);
 }
-#zettel-knowledge-base-full-image {
+#knowledge-base-full-image {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
 }
-#zettel-knowledge-base-graph-root {
+#knowledge-base-graph-root {
   height: 100vh;
   display: flex;
   flex-direction: column;
@@ -737,7 +737,7 @@ button[disabled] {
   background: var(--bg);
   font-size: 13px;
 }
-#zettel-knowledge-base-graph-toolbar {
+#knowledge-base-graph-toolbar {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -749,13 +749,13 @@ button[disabled] {
   flex: 1;
   min-width: 160px;
 }
-#zettel-knowledge-base-graph-toolbar label {
+#knowledge-base-graph-toolbar label {
   display: flex;
   align-items: center;
   gap: 3px;
   white-space: nowrap;
 }
-#zettel-knowledge-base-graph-main {
+#knowledge-base-graph-main {
   display: flex;
   flex: 1;
   min-height: 0;
@@ -860,17 +860,17 @@ button[disabled] {
 }
 
 /* Header and actions stay visible as the writing panes scroll. */
-#zettel-knowledge-base-editor-toolbar,
-#zettel-knowledge-base-editor-title,
-#zettel-knowledge-base-markdown-toolbar,
-#zettel-knowledge-base-editor-footer {
+#knowledge-base-editor-toolbar,
+#knowledge-base-editor-title,
+#knowledge-base-markdown-toolbar,
+#knowledge-base-editor-footer {
   flex-shrink: 0;
 }
-#zettel-knowledge-base-editor-relations {
+#knowledge-base-editor-relations {
   border-left: 1px solid var(--border);
   margin-left: 12px;
 }
-#zettel-knowledge-base-editor-footer {
+#knowledge-base-editor-footer {
   border-top: 1px solid var(--border);
   margin-top: 12px;
 }
@@ -909,4 +909,25 @@ button[disabled] {
 #graph-scope button[aria-pressed="true"] {
   background: var(--accent);
   color: white;
+}
+
+/* Keep writing and preview side by side, with optional relations underneath. */
+#knowledge-base-editor-content {
+  flex-direction: column;
+}
+#knowledge-base-editor-content #knowledge-base-editor-workspace {
+  margin-right: 14px;
+}
+#knowledge-base-editor-relations {
+  flex: 0 0 auto;
+  max-height: 180px;
+  margin: 12px 14px 0;
+  padding: 10px 0 0;
+  border-left: 0;
+  border-top: 1px solid var(--border);
+}
+#knowledge-base-editor-relations summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
 }

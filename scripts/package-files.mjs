@@ -1,0 +1,17 @@
+export const requiredFiles = [
+  "content/icons/icon-16.svg",
+  "content/icons/icon-20.svg",
+  "content/scripts/knowledge-base.js",
+  "content/graph.js",
+  "content/editor.js",
+  "content/editor-formatting.js",
+  "content/manager.js",
+  "content/annotations.js",
+  "content/image-viewer.js",
+  "content/licenses/project-AGPL-3.0.txt",
+  "content/licenses/NOTICE.txt",
+  "locale/en-US/knowledge-base-addon.ftl",
+  "locale/zh-CN/knowledge-base-addon.ftl",
+  "locale/en-US/knowledge-base-item-pane.ftl",
+  "locale/zh-CN/knowledge-base-item-pane.ftl",
+];

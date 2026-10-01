@@ -1,7 +1,8 @@
-build
-logs
-node_modules
+node_modules/
+dist/
+build/
+release/
+logs/
+.scaffold/
+.local-backups/
 package-lock.json
-yarn.lock
-pnpm-lock.yaml
-release

@@ -10,23 +10,30 @@
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
-const api = new Proxy(
-  {},
-  { get: (_, key) => window.Zotero.ZettelKnowledgeBase.api[key] },
+const api = /** @type {import("../../src/modules/api").KnowledgeBaseAPI} */ (
+  new Proxy({}, { get: (_, key) => window.Zotero.ZoteroKnowledgeBase.api[key] })
 );
-const args = (window.arguments && window.arguments[0]) || {};
+const args =
+  /** @type {import("../../src/modules/api").AnnotationPickerArgs} */ (
+    window.arguments[0] || {}
+  );
 
 let highlights = [];
 let busy = false;
 
-const $ = (id) => document.getElementById(id);
+/** @template {keyof import("../../typings/ui").AnnotationsElements} K
+ * @param {K} id @returns {import("../../typings/ui").AnnotationsElements[K]} */
+const $ = (id) =>
+  /** @type {import("../../typings/ui").AnnotationsElements[K]} */ (
+    document.getElementById(id)
+  );
 
 window.addEventListener("error", (ev) => {
   showError(ev.error ? ev.error.stack || ev.error.message : ev.message);
 });
 
 function showError(msg) {
-  const status = $("zettel-knowledge-base-pick-status");
+  const status = $("knowledge-base-pick-status");
   status.textContent = "⚠ " + msg;
   status.classList.add("error");
   try {
@@ -37,25 +44,25 @@ function showError(msg) {
 }
 
 function setStatus(text) {
-  const status = $("zettel-knowledge-base-pick-status");
+  const status = $("knowledge-base-pick-status");
   status.textContent = text;
   status.classList.remove("error");
 }
 
 function applyLocale() {
   document.title = api.loc("picker-title");
-  $("zettel-knowledge-base-pick-close").textContent = api.loc("picker-close");
-  $("zettel-knowledge-base-pick-empty").textContent = api.loc("picker-empty");
-  $("zettel-knowledge-base-pick-source").textContent =
+  $("knowledge-base-pick-close").textContent = api.loc("picker-close");
+  $("knowledge-base-pick-empty").textContent = api.loc("picker-empty");
+  $("knowledge-base-pick-source").textContent =
     args.itemTitle || args.itemKey || "";
 }
 
 function bindEvents() {
-  $("zettel-knowledge-base-pick-toggle").addEventListener("click", toggleAll);
-  $("zettel-knowledge-base-pick-close").addEventListener("click", () =>
+  $("knowledge-base-pick-toggle").addEventListener("click", toggleAll);
+  $("knowledge-base-pick-close").addEventListener("click", () =>
     window.close(),
   );
-  $("zettel-knowledge-base-pick-create").addEventListener(
+  $("knowledge-base-pick-create").addEventListener(
     "click",
     () => void create(),
   );
@@ -68,7 +75,7 @@ async function load() {
   applyLocale();
   bindEvents();
   if (!args.itemKey) {
-    $("zettel-knowledge-base-pick-empty").hidden = false;
+    $("knowledge-base-pick-empty").hidden = false;
     updateCreateButton();
     return;
   }
@@ -76,10 +83,10 @@ async function load() {
 }
 
 async function render() {
-  const rows = $("zettel-knowledge-base-pick-rows");
+  const rows = $("knowledge-base-pick-rows");
   rows.textContent = "";
   highlights = await api.getHighlights(args.itemKey, args.libraryID);
-  $("zettel-knowledge-base-pick-empty").hidden = highlights.length > 0;
+  $("knowledge-base-pick-empty").hidden = highlights.length > 0;
 
   for (const h of highlights) {
     rows.appendChild(row(h));
@@ -91,7 +98,9 @@ function row(h) {
   const li = document.createElementNS(XHTML_NS, "li");
   li.className = "pick-row" + (h.cards ? " done" : "");
 
-  const cb = document.createElementNS(XHTML_NS, "input");
+  const cb = /** @type {HTMLInputElement} */ (
+    document.createElementNS(XHTML_NS, "input")
+  );
   cb.type = "checkbox";
   cb.dataset.id = String(h.id);
   cb.checked = h.cards === 0;
@@ -132,16 +141,24 @@ function row(h) {
 
 function pendingBoxes() {
   return [
-    ...$("zettel-knowledge-base-pick-rows").querySelectorAll(
-      "input[type=checkbox]:not([disabled])",
+    .../** @type {HTMLInputElement[]} */ (
+      Array.from(
+        $("knowledge-base-pick-rows").querySelectorAll(
+          "input[type=checkbox]:not([disabled])",
+        ),
+      )
     ),
   ];
 }
 
 function checkedBoxes() {
   return [
-    ...$("zettel-knowledge-base-pick-rows").querySelectorAll(
-      "input[type=checkbox]:checked",
+    .../** @type {HTMLInputElement[]} */ (
+      Array.from(
+        $("knowledge-base-pick-rows").querySelectorAll(
+          "input[type=checkbox]:checked",
+        ),
+      )
     ),
   ];
 }
@@ -155,12 +172,12 @@ function toggleAll() {
 
 function updateCreateButton() {
   const count = checkedBoxes().length;
-  const button = $("zettel-knowledge-base-pick-create");
+  const button = $("knowledge-base-pick-create");
   button.disabled = busy || count === 0;
   button.textContent = count
     ? api.loc("picker-create-count", { count })
     : api.loc("picker-create");
-  $("zettel-knowledge-base-pick-toggle").textContent = api.loc("picker-toggle");
+  $("knowledge-base-pick-toggle").textContent = api.loc("picker-toggle");
 }
 
 async function create() {

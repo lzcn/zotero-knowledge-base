@@ -1,193 +1,190 @@
 import { config, version } from "../package.json";
 import { getString, initLocale } from "./utils/locale";
-import {
-  closeDB,
-  collectDBDiagnostics,
-  describeError,
-  getSchemaTrace,
-  initDB,
-} from "./modules/db";
+import { closeDB, initDB } from "./modules/db";
 import { rebuildCounts } from "./modules/zettel";
-import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/itemPane";
+import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import { registerReaderUI, unregisterReaderUI } from "./modules/reader";
-import { createZToolkit } from "./utils/ztoolkit";
-import { initAssets, closeAssets } from "./modules/assets";
+import {
+  initAssets,
+  closeAssets,
+  cleanupImagesAfterChange,
+} from "./modules/assets";
+import {
+  clearStartupLog,
+  reportStartupFailure,
+} from "./modules/startup-errors";
 
-async function onStartup() {
-  await Promise.all([
-    Zotero.initializationPromise,
-    Zotero.unlockPromise,
-    Zotero.uiReadyPromise,
-  ]);
+const windows = new Map<Window, Element[]>();
+let ready = false;
+let generation = 0;
+let startupPromise: Promise<void> | undefined;
+let shutdownPromise: Promise<void> | undefined;
 
-  initLocale();
+async function onStartup(): Promise<void> {
+  if (startupPromise) return startupPromise;
+  const token = ++generation;
+  startupPromise = start(token);
+  return startupPromise;
+}
 
-  // Run each step separately so a failure can be attributed to a specific one.
-  // The database comes first and is fatal: every later step reads from it.
-  const steps: [string, () => Promise<unknown> | unknown][] = [
-    ["initDB", initDB],
-    ["initAssets", initAssets],
-    ["rebuildCounts", rebuildCounts],
-    ["registerItemPaneUI", registerItemPaneUI],
-    ["registerReaderUI", registerReaderUI],
-  ];
-
-  let failed = false;
-  for (const [name, run] of steps) {
-    try {
+async function start(token: number): Promise<void> {
+  let step = "Zotero readiness";
+  try {
+    await Promise.all([
+      Zotero.initializationPromise,
+      Zotero.unlockPromise,
+      Zotero.uiReadyPromise,
+    ]);
+    if (token !== generation) return;
+    initLocale();
+    const steps: [string, () => Promise<unknown> | unknown][] = [
+      ["initDB", initDB],
+      ["initAssets", initAssets],
+      ["rebuildCounts", rebuildCounts],
+      ["cleanupUnusedImages", cleanupImagesAfterChange],
+      ["registerItemPaneUI", registerItemPaneUI],
+      ["registerReaderUI", registerReaderUI],
+    ];
+    for (const [name, run] of steps) {
+      step = name;
       await run();
-    } catch (e) {
-      failed = true;
-      await reportStartupFailure(name, e);
-      break;
+      if (token !== generation) return;
+    }
+    ready = true;
+    step = "registerWindowUI";
+    for (const win of Zotero.getMainWindows()) await onMainWindowLoad(win);
+    await clearStartupLog();
+  } catch (error) {
+    ready = false;
+    try {
+      await reportStartupFailure(step, error);
+    } catch (reportError) {
+      Zotero.logError(
+        reportError instanceof Error
+          ? reportError
+          : new Error(String(reportError)),
+      );
+    } finally {
+      await releaseResources();
     }
   }
-  if (!failed) {
-    await clearStartupLog();
-  }
-
-  await Promise.all(
-    Zotero.getMainWindows().map((win) => onMainWindowLoad(win)),
-  );
-}
-
-function startupLogPath(): string {
-  return PathUtils.join(
-    Zotero.DataDirectory.dir,
-    `${config.addonRef}-startup-error.log`,
-  );
-}
-
-/**
- * Drop a previous run's failure log.
- *
- * Its existence should mean "the current session failed"; leaving a stale file
- * behind would send the next diagnosis down the wrong path.
- */
-async function clearStartupLog(): Promise<void> {
-  try {
-    await IOUtils.remove(startupLogPath(), { ignoreAbsent: true });
-  } catch {
-    /* a stale log is not worth failing startup over */
-  }
-}
-
-/**
- * Persist a startup failure next to the database.
- *
- * A transient ProgressWindow is easy to miss and leaves nothing to inspect
- * afterwards, which is how a broken schema migration previously became an
- * invisible failure. Logging must never be the thing that breaks startup.
- */
-async function reportStartupFailure(
-  step: string,
-  error: unknown,
-): Promise<void> {
-  // Report the message *and* the stack. mozStorage throws XPCOM exceptions
-  // rather than Error instances, and their stack can be truncated to a single
-  // frame across async boundaries - dropping `message` here is exactly how the
-  // first diagnostic round lost the cause.
-  const parts = [
-    `[${new Date().toISOString()}] startup failed at ${step}`,
-    `error: ${describeError(error)}`,
-    `stack:\n${
-      error instanceof Error ? (error.stack ?? "(none)") : "(not an Error)"
-    }`,
-  ];
-
-  try {
-    parts.push(`schema trace:\n${getSchemaTrace()}`);
-  } catch {
-    /* diagnostics must never mask the original failure */
-  }
-
-  try {
-    parts.push(`database state:\n${await collectDBDiagnostics()}`);
-  } catch (e) {
-    parts.push(`database state: <unavailable: ${describeError(e)}>`);
-  }
-
-  const entry = `${parts.join("\n")}\n`;
-  const detail = parts.join(" | ");
-
-  Zotero.logError(
-    new Error(`Zettel Knowledge Base: startup failed at ${step}: ${detail}`),
-  );
-
-  try {
-    await Zotero.File.putContentsAsync(startupLogPath(), entry);
-  } catch (e) {
-    Zotero.logError(
-      new Error(`Zettel Knowledge Base: could not write startup log: ${e}`),
-    );
-  }
-
-  new ztoolkit.ProgressWindow(config.addonName, { closeOnClick: true })
-    .createLine({
-      text: getString("startup-db-error"),
-      type: "fail",
-    })
-    .show();
 }
 
 async function onMainWindowLoad(win: Window): Promise<void> {
-  addon.data.ztoolkit = createZToolkit();
-
-  // @ts-ignore This is a moz feature
-  win.MozXULElement.insertFTLIfNeeded(
-    `${addon.data.config.addonRef}-itemPane.ftl`,
-  );
-
-  const link = win.document.createElementNS(
-    "http://www.w3.org/1999/xhtml",
-    "link",
-  ) as HTMLLinkElement;
-  link.rel = "stylesheet";
-  link.href = `chrome://${config.addonRef}/content/section.css?v=${version}`;
-  win.document.documentElement.appendChild(link);
-
-  ztoolkit.Menu.register("menuTools", {
-    tag: "menuitem",
-    id: `${config.addonRef}-menu-open-manager`,
-    label: getString("menu-open-manager"),
-    commandListener: () => addon.api.openManager(),
-  });
-
-  // context menu on selected item(s): create a card sourced to the item
-  ztoolkit.Menu.register("item", {
-    tag: "menuitem",
-    id: `${config.addonRef}-itemmenu-new-zettel`,
-    label: getString("menu-new-zettel"),
-    commandListener: () => {
-      const item = Zotero.getActiveZoteroPane()?.getSelectedItems?.()[0];
+  if (!ready || windows.has(win)) return;
+  const nodes: Element[] = [];
+  windows.set(win, nodes);
+  try {
+    const doc = win.document;
+    const chromeWindow = win as Window & {
+      MozXULElement: { insertFTLIfNeeded(path: string): void };
+    };
+    chromeWindow.MozXULElement.insertFTLIfNeeded(
+      `${config.addonRef}-item-pane.ftl`,
+    );
+    const style = doc.createElementNS("http://www.w3.org/1999/xhtml", "link");
+    style.setAttribute("rel", "stylesheet");
+    style.setAttribute(
+      "href",
+      `chrome://${config.addonRef}/content/section.css?v=${version}`,
+    );
+    doc.documentElement.appendChild(style);
+    nodes.push(style);
+    const addMenu = (
+      popupID: string,
+      suffix: string,
+      label: string,
+      command: () => void,
+    ) => {
+      const popup = doc.getElementById(popupID);
+      if (!popup) throw new Error(`Missing Zotero menu: ${popupID}`);
+      const menu = doc.createXULElement("menuitem");
+      menu.id = `${config.addonRef}-${suffix}`;
+      menu.setAttribute("label", getString(label));
+      menu.classList.add("menuitem-iconic");
+      menu.setAttribute(
+        "image",
+        `chrome://${config.addonRef}/content/icons/icon-16.svg`,
+      );
+      menu.addEventListener("command", command);
+      popup.appendChild(menu);
+      nodes.push(menu);
+    };
+    addMenu("menu_ToolsPopup", "menu-open-manager", "menu-open-manager", () =>
+      addon.api.openManager(),
+    );
+    addMenu("zotero-itemmenu", "itemmenu-new-card", "menu-new-zettel", () => {
+      const pane = (
+        win as Window & {
+          ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
+        }
+      ).ZoteroPane;
+      const item = pane.getSelectedItems()[0];
       if (!item) return;
       addon.api.openEditor({
-        sourceItem: item.isRegularItem?.()
-          ? { key: item.key, libraryID: item.libraryID }
-          : undefined,
+        sourceItem:
+          item.isRegularItem() || item.isNote()
+            ? { key: item.key, libraryID: item.libraryID }
+            : undefined,
       });
-    },
-  });
+    });
+  } catch (error) {
+    await onMainWindowUnload(win);
+    throw error;
+  }
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
-  ztoolkit.unregisterAll();
+  for (const node of windows.get(win) ?? []) node.remove();
+  windows.delete(win);
+}
+
+async function releaseResources(): Promise<void> {
+  ready = false;
+  for (const win of [...windows.keys()]) await onMainWindowUnload(win);
+  const actions: (() => unknown | Promise<unknown>)[] = [
+    () => {
+      for (const kind of [
+        "manager",
+        "editor",
+        "graph",
+        "annotations",
+        "image",
+      ]) {
+        for (const win of Services.wm.getEnumerator(
+          `${config.addonRef}:${kind}`,
+        ))
+          win.close();
+      }
+    },
+    unregisterItemPaneUI,
+    unregisterReaderUI,
+    closeAssets,
+    () => ztoolkit.unregisterAll(),
+    closeDB,
+  ];
+  for (const action of actions) {
+    try {
+      await action();
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
 }
 
 async function onShutdown(): Promise<void> {
-  unregisterItemPaneUI();
-  closeAssets();
-  unregisterReaderUI();
-  ztoolkit.unregisterAll();
-  await closeDB();
-  addon.data.alive = false;
-  // @ts-ignore - Plugin instance is not typed
-  delete Zotero[config.addonInstance];
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    ++generation;
+    ready = false;
+    await startupPromise;
+    await releaseResources();
+    addon.data.alive = false;
+    delete (Zotero as unknown as Record<string, unknown>)[config.addonInstance];
+  })();
+  return shutdownPromise;
 }
 
-export default {
-  onStartup,
-  onShutdown,
-  onMainWindowLoad,
-  onMainWindowUnload,
-};
+export default { onStartup, onShutdown, onMainWindowLoad, onMainWindowUnload };

@@ -7,10 +7,9 @@ export default tseslint.config(
   {
     ignores: [
       "build/**",
+      "dist/**",
       ".scaffold/**",
       "node_modules/**",
-      "scripts/",
-      "tests/",
       "release/**",
     ],
   },
@@ -52,7 +51,7 @@ export default tseslint.config(
   },
   {
     // Chrome page scripts run in their own window context
-    files: ["addon/content/**/*.js", "src/ui/**/*.js"],
+    files: ["addon/content/**/*.js", "src/ui/**/*.{js,ts}"],
     languageOptions: {
       globals: {
         window: "readonly",
@@ -66,6 +65,30 @@ export default tseslint.config(
     },
     rules: {
       "no-restricted-globals": "off",
+    },
+  },
+  {
+    files: ["scripts/**/*.mjs", "tests/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        URL: "readonly",
+        IOUtils: "readonly",
+        console: "readonly",
+        process: "readonly",
+        Buffer: "readonly",
+        setTimeout: "readonly",
+        clearTimeout: "readonly",
+        setImmediate: "readonly",
+        TextEncoder: "readonly",
+        TextDecoder: "readonly",
+      },
+    },
+    rules: {
+      "no-restricted-globals": "off",
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { args: "none", caughtErrors: "none", varsIgnorePattern: "^_" },
+      ],
     },
   },
 );

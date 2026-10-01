@@ -42,7 +42,9 @@ function summary(item: Zotero.Item): ItemSummary {
   return {
     key: item.key,
     libraryID: item.libraryID,
-    title: item.getField("title", false, true) || "",
+    title: item.isNote()
+      ? item.getNoteTitle()
+      : item.getField("title", false, true) || "",
     creatorYear: creatorYear(item),
     selectURL: selectURL(item),
     libraryName: library ? library.name : "",
@@ -61,15 +63,15 @@ export async function searchItems(
     libraries.map(async (lib) => {
       const s = new Zotero.Search({ libraryID: lib.libraryID });
       s.addCondition("deleted", "false");
-      s.addCondition("noChildren", "true");
       s.addCondition("itemType", "isNot", "attachment");
-      s.addCondition("itemType", "isNot", "note");
       if (q) s.addCondition("quicksearch-titleCreatorYear", "contains", q);
       const ids = await s.search();
       // Search IDs are not necessarily in Items' cache (especially group items).
       const items = await Zotero.Items.getAsync(ids.slice(0, limit));
       await Zotero.Items.loadDataTypes(items, ["itemData"]);
-      return items.filter((item) => item.isRegularItem()).map(summary);
+      return items
+        .filter((item) => item.isRegularItem() || item.isNote())
+        .map(summary);
     }),
   );
   return matches.flat().slice(0, limit);
@@ -79,20 +81,11 @@ export async function getItemSummary(
   key: string,
   libraryID: number | null,
 ): Promise<ItemSummary | null> {
-  // v1 cards can have a source key with no library ID. Recover only an
-  // unambiguous match; an edit must not erase an unresolved source association.
-  const libraryIDs =
-    libraryID == null
-      ? Zotero.Libraries.getAll().map((lib) => lib.libraryID)
-      : [libraryID];
-  const ids = libraryIDs
-    .map((id) => Zotero.Items.getIDFromLibraryAndKey(id, key))
-    .filter(Boolean);
-  if (ids.length !== 1) return null;
-  const id = ids[0];
+  if (libraryID == null) return null;
+  const id = Zotero.Items.getIDFromLibraryAndKey(libraryID, key);
   if (!id) return null;
   const item = await Zotero.Items.getAsync(id);
-  if (!item || !item.isRegularItem()) return null;
+  if (!item || (!item.isRegularItem() && !item.isNote())) return null;
   await Zotero.Items.loadDataTypes([item], ["itemData"]);
   return summary(item);
 }
@@ -223,7 +216,7 @@ interface ZoteroPaneStubs {
 
 export async function getSelectedSource(): Promise<ItemSummary | null> {
   const selected = Zotero.getActiveZoteroPane()?.getSelectedItems?.()[0];
-  const item = regularItemOf(selected ?? null);
+  const item = selected?.isNote() ? selected : regularItemOf(selected ?? null);
   if (item) await Zotero.Items.loadDataTypes([item], ["itemData"]);
   return item ? summary(item) : null;
 }
