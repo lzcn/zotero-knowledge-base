@@ -21,12 +21,6 @@ await mkdir(directory, { recursive: true });
 await copyFile("build/zettel-knowledge-base.xpi", `${directory}/${filename}`);
 await copyFile("README.md", `${directory}/README.md`);
 await copyFile("README.zh-CN.md", `${directory}/README.zh-CN.md`);
-await mkdir(`${directory}/.github/badges`, { recursive: true });
-for (const name of ["ai-assisted-chatgpt.svg", "ai-assisted-deepseek.svg"])
-  await copyFile(
-    `.github/badges/${name}`,
-    `${directory}/.github/badges/${name}`,
-  );
 await copyFile("LICENSE", `${directory}/LICENSE`);
 await writeFile(
   `${directory}/SHA256SUMS`,

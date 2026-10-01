@@ -2,11 +2,11 @@
 
 [中文](README.zh-CN.md)
 
-![AI Assisted · ChatGPT](.github/badges/ai-assisted-chatgpt.svg) ![AI Assisted · DeepSeek](.github/badges/ai-assisted-deepseek.svg)
+[![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/)
 
 A Zotero plugin for connected notes. Write one idea per card, keep its sources, and link it to other ideas.
 
-Built mainly with help from ChatGPT and DeepSeek.
+Built mainly with ChatGPT, with some help from DeepSeek.
 
 ## Features
 

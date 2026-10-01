@@ -2,11 +2,11 @@
 
 [English](README.md)
 
-![AI Assisted · ChatGPT](.github/badges/ai-assisted-chatgpt.svg) ![AI Assisted · DeepSeek](.github/badges/ai-assisted-deepseek.svg)
+[![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/)
 
 在 Zotero 中管理相互连接的卡片：一张卡片写一个想法，保留出处，用链接连接相关想法。
 
-本项目主要借助 ChatGPT 和 DeepSeek 构建。
+本项目主要借助 ChatGPT 构建，也少量使用了 DeepSeek。
 
 ## 功能
 
