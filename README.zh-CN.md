@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-[![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/)
+[![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/) [![Built with DeepSeek](https://img.shields.io/badge/Built_with-DeepSeek-4D6BFE?style=flat)](https://www.deepseek.com/)
 
 在 Zotero 中管理相互连接的卡片：一张卡片写一个想法，保留出处，用链接连接相关想法。
 

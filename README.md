@@ -2,7 +2,7 @@
 
 [中文](README.zh-CN.md)
 
-[![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/)
+[![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/) [![Built with DeepSeek](https://img.shields.io/badge/Built_with-DeepSeek-4D6BFE?style=flat)](https://www.deepseek.com/)
 
 A Zotero plugin for connected notes. Write one idea per card, keep its sources, and link it to other ideas.
 
