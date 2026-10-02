@@ -6,3 +6,4 @@ logs/
 .scaffold/
 .local-backups/
 package-lock.json
+addon/content/katex/

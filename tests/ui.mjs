@@ -11,10 +11,10 @@ const workspace = await mkdtemp(path.join(tmpdir(), "knowledge-base-ui-"));
 const entry = path.join(workspace, "entry.ts");
 await writeFile(
   entry,
-  ["markdown", "zotero", "graph", "assets"]
+  ["markdown", "zotero", "graph", "assets", "rich-text"]
     .map(
       (name) =>
-        `export * as ${name} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
+        `export * as ${name.replace(/-/g, "_")} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
     )
     .join("\n"),
 );
@@ -23,17 +23,21 @@ await build({
   entryPoints: [entry],
   bundle: true,
   format: "esm",
-  platform: "neutral",
+  platform: "browser",
   outfile: bundle,
   logLevel: "warning",
 });
+const htmlWindow = new JSDOM("<!doctype html><html><body></body></html>")
+  .window;
+globalThis.window = htmlWindow;
+globalThis.document = htmlWindow.document;
 const {
+  rich_text,
   markdown,
   zotero,
   graph: graphModule,
   assets,
 } = await import(pathToFileURL(bundle).href);
-const htmlWindow = new JSDOM("").window;
 let checks = 0;
 function check(label, fn) {
   fn();
@@ -41,6 +45,46 @@ function check(label, fn) {
   console.log(`PASS ${label}`);
 }
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
+const equations = String.raw`Inline $E = mc^2$.
+
+$$
+\int_0^1 x^2\,dx = \frac{1}{3}
+$$`;
+check(
+  "Markdown renders inline and display math and preserves its LaTeX source",
+  () => {
+    const html = markdown.renderMarkdown(equations, htmlWindow);
+    const doc = new JSDOM(html).window.document;
+    assert.equal(doc.querySelectorAll(".katex").length, 2);
+    assert.equal(doc.querySelectorAll(".katex-display").length, 1);
+    const source = rich_text.richTextToMarkdown(html);
+    assert.match(source, /\$E = mc\^2\$/);
+    assert.ok(source.includes(String.raw`\int_0^1 x^2\,dx = \frac{1}{3}`));
+  },
+);
+check(
+  "Code, escaped dollars and prices stay literal; math cannot inject active HTML",
+  () => {
+    const html = markdown.renderMarkdown(
+      String.raw`\$literal$ and $5 and $10.
+
+INLINECODE
+
+~~~
+$$not math$$
+~~~
+
+$\href{javascript:alert(1)}{test}$ <img src=x onerror=alert(1)>`.replace(
+        "INLINECODE",
+        () => "`$code$`",
+      ),
+      htmlWindow,
+    );
+    const doc = new JSDOM(html).window.document;
+    assert.equal(doc.querySelectorAll(".katex").length, 1);
+    assert.equal(doc.querySelector('[onerror],a[href^="javascript:"]'), null);
+  },
+);
 
 const sample =
   "# Idea\n\n**Strong** and *emphasis* and ~~removed~~\n\n- [x] Task\n\n> Quote\n\n```js\nconst x = 1;\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n[[中文概念|别名]] [stable](knowledge-base://card/20261001000000)\n\n![image](knowledge-base-asset:abc.png)\n\n[source](zotero://select/library/items/ABCD1234)\n\n<script>bad()</script><img src=x onerror=bad()><a href=javascript:bad()>bad</a>";
@@ -50,6 +94,21 @@ const rendered = markdown.renderMarkdown(
   assets.resolveAssetURL,
 );
 const renderedDoc = new JSDOM(rendered).window.document;
+check("Managed references render only their stable index", () => {
+  const body =
+    "[[card:stable-id]] [Old name](knowledge-base://card/stable-id) `[[card:ignored]]`";
+  assert.deepEqual(
+    markdown.parseCardLinks(body).map((link) => link.ref),
+    ["stable-id"],
+  );
+  const html = markdown.renderMarkdown(body, htmlWindow, (url) => url);
+  const doc = new JSDOM(html).window.document;
+  assert.deepEqual(
+    [...doc.querySelectorAll("a")].map((a) => a.textContent),
+    ["stable-id", "stable-id"],
+  );
+});
+
 check(
   "Markdown headings, emphasis, task lists, quotes, code and tables",
   () => {
@@ -320,9 +379,13 @@ async function editor(args = {}, overrides = {}) {
     loc: (key) => key,
     renderMarkdown: (body) =>
       markdown.renderMarkdown(body, htmlWindow, assets.resolveAssetURL),
+    richTextToMarkdown: (html) => rich_text.richTextToMarkdown(html),
+    getFamily: async () => ({ parent: null, children: [] }),
+    getParentCandidates: async () => [],
     getDraftLinks: async (body) =>
       markdown.parseCardLinks(body).map((link) => ({
         ...link,
+        display: link.ref === "20261001000000" ? "Target card" : link.display,
         targetId: link.ref === "missing" ? null : link.ref,
       })),
     getBacklinks: async () => [],
@@ -372,6 +435,62 @@ const ed = await editor({ prefillTitle: "New concept" });
 check("Editor prefills concept titles in its real XML document", () =>
   assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
 );
+const commands = await editor({ prefillTitle: "Commands" });
+const commandBody = commands.$("knowledge-base-editor-body");
+const typeCommand = (text) => {
+  commandBody.value = text;
+  commandBody.setSelectionRange(text.length, text.length);
+  commandBody.dispatchEvent(new commands.win.Event("input", { bubbles: true }));
+};
+typeCommand("/task");
+check(
+  "Typing a slash filters commands without moving focus or changing body text",
+  () => {
+    assert.equal(commands.$("knowledge-base-command-menu").hidden, false);
+    assert.equal(commandBody.value, "/task");
+  },
+);
+commandBody.dispatchEvent(
+  new commands.win.KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+);
+check(
+  "Executing a slash command replaces only its invocation with a real Markdown task",
+  () => {
+    assert.equal(commandBody.value, "- [ ] ");
+    assert.equal(commands.$("knowledge-base-command-menu").hidden, true);
+  },
+);
+for (const text of [
+  "https://example.com/task",
+  "```\n/task",
+  "~~~\n/task",
+  "content /task",
+]) {
+  typeCommand(text);
+  check(
+    `Slash commands leave URLs, code and inline prose alone: ${JSON.stringify(text)}`,
+    () => assert.equal(commands.$("knowledge-base-command-menu").hidden, true),
+  );
+}
+typeCommand("/heading");
+commands.win.dispatchEvent(
+  new commands.win.KeyboardEvent("keydown", { key: "Escape" }),
+);
+check("Cancelling a slash command preserves its unsaved text", () =>
+  assert.equal(commandBody.value, "/heading"),
+);
+commandBody.value = "Selected title";
+commandBody.setSelectionRange(0, 14);
+commands.$("knowledge-base-command-open").click();
+commands.$("knowledge-base-command-search").value = "heading";
+commands
+  .$("knowledge-base-command-search")
+  .dispatchEvent(new commands.win.Event("input"));
+commands.$("knowledge-base-command-list").querySelector("button").click();
+check(
+  "The insertion menu applies a chosen command to the saved selection",
+  () => assert.equal(commandBody.value, "## Selected title"),
+);
 ed.$("knowledge-base-editor-body").value = sample;
 ed.win.__editorEval("updatePreview()");
 check(
@@ -389,6 +508,106 @@ check(
     );
   },
 );
+const richBundle = path.join(workspace, "rich-editor.js");
+await build({
+  entryPoints: [path.join(ROOT, "src/ui/rich-editor.ts")],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  outfile: richBundle,
+});
+const richFrame = ed.$("knowledge-base-rich-frame");
+const richWindow = richFrame.contentWindow;
+richWindow.document.open();
+richWindow.document.write(
+  '<!doctype html><html><body><div id="editor"></div></body></html>',
+);
+richWindow.document.close();
+richWindow.requestAnimationFrame = (fn) => richWindow.setTimeout(fn, 0);
+richWindow.cancelAnimationFrame = (id) => richWindow.clearTimeout(id);
+richWindow.Range.prototype.getClientRects = () => [];
+richWindow.Range.prototype.getBoundingClientRect = () => ({
+  top: 0,
+  left: 0,
+  bottom: 0,
+  right: 0,
+  width: 0,
+  height: 0,
+});
+richWindow.eval(await readFile(richBundle, "utf8"));
+const nativeClick = (element, win) =>
+  element.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+const visualButton = ed.$("knowledge-base-visual-toggle");
+nativeClick(visualButton, ed.win);
+await wait();
+await wait();
+const richSurface = richWindow.document.querySelector(".tiptap");
+assert.ok(richSurface);
+// Use the engine's document transaction; no direct DOM rewrites or fake input event.
+const controller = ed.win.__editorEval("richEditor");
+controller.setHTML(
+  '<p><a href="knowledge-base://card/stable-id">Old name</a></p><p><img src="resource://knowledge-base-assets/image-test.png" alt="Figure"></p>',
+);
+controller.insertHTML("<p>Changed directly in visual editor</p>");
+await wait();
+check(
+  "Tiptap edits persist without replacing the editing DOM or losing card and image identities",
+  () => {
+    assert.ok(
+      ed
+        .$("knowledge-base-editor-body")
+        .value.includes("Changed directly in visual editor"),
+    );
+    assert.ok(
+      ed.$("knowledge-base-editor-body").value.includes("[[stable-id]]"),
+    );
+    assert.ok(
+      ed
+        .$("knowledge-base-editor-body")
+        .value.includes("knowledge-base-asset:image-test.png"),
+    );
+    assert.equal(richWindow.document.querySelector(".tiptap"), richSurface);
+  },
+);
+controller.format("bold");
+controller.insertHTML("<p><strong>Bold insertion</strong></p>");
+assert.ok(controller.getHTML().includes("<strong>"));
+richSurface.dispatchEvent(
+  new richWindow.KeyboardEvent("keydown", {
+    key: "z",
+    ctrlKey: true,
+    bubbles: true,
+  }),
+);
+check(
+  "Mature editor handles formatting and undo with its document history",
+  () => assert.ok(!controller.getHTML().includes("Bold insertion")),
+);
+controller.setHTML(
+  '<ul><li><input type="checkbox" checked="checked">A task</li></ul><table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table>',
+);
+controller.insertHTML("<p>Tail</p>");
+check("Tiptap tables and tasks round-trip to Markdown", () => {
+  assert.match(ed.$("knowledge-base-editor-body").value, /\| A \|/);
+  assert.match(ed.$("knowledge-base-editor-body").value, /\[x\]/);
+});
+controller.setHTML(markdown.renderMarkdown(equations, htmlWindow));
+controller.insertHTML("<p>After equations</p>");
+check(
+  "Tiptap keeps math nodes and LaTeX when editing surrounding prose",
+  () => {
+    const value = ed.$("knowledge-base-editor-body").value;
+    assert.match(value, /\$E = mc\^2\$/);
+    assert.ok(
+      value.includes(String.raw`\int_0^1 x^2\,dx = \frac{1}{3}`),
+      value + "\n" + controller.getHTML(),
+    );
+    assert.ok(value.includes("After equations"));
+    assert.ok(richSurface.querySelector(".katex"));
+  },
+);
+nativeClick(visualButton, ed.win);
+await wait();
 ed.win.__editorEval("toggleSourceDrop()");
 await ed.win.__editorEval("searchSources()");
 ed.$("knowledge-base-src-results").firstElementChild.click();
@@ -414,11 +633,8 @@ ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
 ed.win.__editorEval("openCardPicker()");
 await ed.win.__editorEval("searchCards()");
 ed.$("knowledge-base-link-results").firstElementChild.click();
-check("Card picker inserts a stable standard Markdown link", () =>
-  assert.equal(
-    ed.$("knowledge-base-editor-body").value,
-    "[Target card](knowledge-base://card/20261001000000)",
-  ),
+check("Card picker inserts a stable managed reference", () =>
+  assert.equal(ed.$("knowledge-base-editor-body").value, "[[20261001000000]]"),
 );
 await ed.win.__editorEval("refreshRelations()");
 check("Connected cards appear while editing unsaved Markdown", () =>
@@ -426,6 +642,68 @@ check("Connected cards appear while editing unsaved Markdown", () =>
     ed.$("knowledge-base-editor-outgoing").textContent,
     /Target card/,
   ),
+);
+const childDraft = await editor(
+  { prefillParentId: "PARENT" },
+  {
+    getZettel: async (id) => ({ id, title: "Parent concept" }),
+  },
+);
+childDraft.$("knowledge-base-editor-title").value = "Child concept";
+await childDraft.win.__editorEval("save(false)");
+check(
+  "New child drafts save their explicitly prefilled parent without adding a reference",
+  () => {
+    assert.equal(childDraft.saved().parentId, "PARENT");
+    assert.equal(childDraft.saved().body, "");
+  },
+);
+ed.win.__editorEval("openCardPicker()");
+await ed.win.__editorEval("searchCards()");
+ed.$("knowledge-base-link-search").dispatchEvent(
+  new ed.win.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+);
+check(
+  "Reference picker can be reached by keyboard and distinguishes title from stable ID",
+  () => {
+    const row = ed.$("knowledge-base-link-results").firstElementChild;
+    assert.equal(ed.win.document.activeElement, row);
+    assert.equal(
+      row.querySelector(".relation-title").textContent,
+      "Target card",
+    );
+    assert.equal(
+      row.querySelector(".relation-id").textContent,
+      "20261001000000",
+    );
+  },
+);
+ed.$("knowledge-base-link-drop").hidden = true;
+const familyBox = ed.$("knowledge-base-editor-family");
+const manyChildren = Array.from({ length: 8 }, (_, i) => ({
+  id: String(i),
+  title: `Child ${i}`,
+}));
+ed.win.ZoteroKnowledgeBaseMarkdown.renderFamily(
+  familyBox,
+  { parent: null, children: manyChildren },
+  ed.win.Zotero.ZoteroKnowledgeBase.api,
+);
+check(
+  "Large child groups initially collapse without hiding the parent or losing children",
+  () => {
+    assert.equal(familyBox.querySelector("details").open, false);
+    assert.equal(familyBox.querySelectorAll(".family-link").length, 8);
+  },
+);
+familyBox.querySelector("details").open = true;
+ed.win.ZoteroKnowledgeBaseMarkdown.renderFamily(
+  familyBox,
+  { parent: null, children: manyChildren },
+  ed.win.Zotero.ZoteroKnowledgeBase.api,
+);
+check("Relationship refresh preserves an explicitly expanded child group", () =>
+  assert.equal(familyBox.querySelector("details").open, true),
 );
 ed.$("knowledge-base-editor-body").value = "word";
 ed.$("knowledge-base-editor-body").setSelectionRange(0, 4);
@@ -531,13 +809,59 @@ check(
     ),
 );
 
+check(
+  "Tree layout separates broad branches, centers parents and remains deterministic",
+  () => {
+    const nodes = [
+      { id: "r", title: "Root", kind: "card" },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        id: String(i),
+        title: "A deliberately long title for this child",
+        kind: "card",
+        parentId: "r",
+      })),
+    ];
+    const positions = graphModule.layoutHierarchy(nodes);
+    const children = nodes.slice(1).map((node) => positions.get(node.id));
+    for (let i = 1; i < children.length; i++)
+      assert.ok(children[i].x - children[i - 1].x >= 200);
+    assert.equal(positions.get("r").x, (children[0].x + children.at(-1).x) / 2);
+    assert.deepEqual([...positions], [...graphModule.layoutHierarchy(nodes)]);
+  },
+);
+check(
+  "A deep knowledge outline lays out without recursion or non-finite coordinates",
+  () => {
+    const nodes = Array.from({ length: 10000 }, (_, i) => ({
+      id: String(i),
+      title: "Card",
+      kind: "card",
+      parentId: i ? String(i - 1) : null,
+    }));
+    const positions = graphModule.layoutHierarchy(nodes);
+    assert.equal(positions.size, 10000);
+    assert.ok(Number.isFinite(positions.get("9999").y));
+    assert.ok(positions.get("9999").y > positions.get("9998").y);
+  },
+);
 const graphData = {
   nodes: [
-    { id: "A", title: "A", kind: "card", snippet: "" },
+    {
+      id: "A",
+      title: "A",
+      kind: "card",
+      snippet: "# Summary\n\n**Rendered preview**",
+    },
     { id: "B", title: "B", kind: "card", snippet: "" },
     { id: "C", title: "C", kind: "card", snippet: "" },
     { id: "I", title: "Isolated", kind: "card", snippet: "" },
-    { id: "S", title: "Paper", kind: "source", snippet: "" },
+    {
+      id: "S",
+      title: "Paper",
+      kind: "source",
+      snippet: "Author 2024 · Journal",
+      citation: "Author 2024 · Journal",
+    },
   ],
   edges: [
     { source: "A", target: "B", kind: "link" },
@@ -581,6 +905,7 @@ graphDom.window.Zotero = {
     api: {
       loc: (key) => key,
       getGraph: async () => graphData,
+      renderMarkdown: (body) => markdown.renderMarkdown(body, htmlWindow),
       onDataChange: () => () => {},
       openEditor() {},
     },
@@ -595,10 +920,26 @@ await build({
   outfile: graphBundle,
   logLevel: "warning",
 });
+graphDom.window.eval(previewScript);
 graphDom.window.eval(await readFile(graphBundle, "utf8"));
 graphDom.window.dispatchEvent(new graphDom.window.Event("load"));
 await wait();
 await wait();
+check(
+  "Graph exposes independent relationship toggles and defaults to all relationships",
+  () => {
+    for (const id of ["graph-outline", "graph-references", "graph-sources"])
+      assert.equal(
+        graphDom.window.document.getElementById(id).getAttribute("checked"),
+        "true",
+      );
+    assert.equal(
+      graphDom.window.document.getElementById("graph-node-focus"),
+      null,
+    );
+    assert.equal(graphDom.window.document.getElementById("graph-hint"), null);
+  },
+);
 check(
   "Graph renders directed SVG edges and every isolated card in a real XML DOM",
   () => {
@@ -619,35 +960,169 @@ check(
 graphDom.window.document
   .querySelector(".graph-node")
   .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
+const pointerNode = graphDom.window.document.querySelector(".graph-node");
+let capturedOnNode = false;
+pointerNode.setPointerCapture = () => {
+  capturedOnNode = true;
+};
+pointerNode.dispatchEvent(
+  new graphDom.window.MouseEvent("pointerdown", { bubbles: true, button: 0 }),
+);
+graphDom.window.document
+  .getElementById("graph-svg")
+  .dispatchEvent(
+    new graphDom.window.MouseEvent("pointerup", { bubbles: true }),
+  );
+check(
+  "Node dragging keeps pointer capture on the node so clicks remain actionable",
+  () => assert.equal(capturedOnNode, true),
+);
 check("Selecting a node shows connected nodes in the graph inspector", () =>
   assert.equal(
     graphDom.window.document.querySelectorAll("#graph-connections li").length,
     2,
   ),
 );
-for (const [id, count] of [
-  ["graph-local-one", 2],
-  ["graph-local-two", 3],
-  ["graph-all", 4],
-]) {
-  graphDom.window.document.getElementById(id).click();
-  check(`Graph scope ${id} switches visible cards and pressed state`, () => {
-    assert.equal(
-      graphDom.window.document.querySelectorAll(".graph-node.card").length,
-      count,
+const originalPositions = Array.from(
+  graphDom.window.document.querySelectorAll(".graph-node"),
+  (node) => node.getAttribute("transform"),
+);
+const originalViewport = graphDom.window.document
+  .querySelector("#graph-svg > g")
+  .getAttribute("transform");
+check(
+  "Graph uses curved paths with clipped endpoints and handles self references",
+  () => {
+    assert.match(
+      graphDom.window.document
+        .querySelector(".graph-edge.link")
+        .getAttribute("d"),
+      / Q /,
+    );
+    assert.match(
+      graphModule.edgePath(
+        { id: "a", x: 0, y: 0 },
+        { id: "b", x: 50, y: 100 },
+        "parent",
+      ),
+      / C /,
+    );
+    assert.match(
+      graphModule.edgePath(
+        { id: "a", x: 0, y: 0 },
+        { id: "a", x: 0, y: 0 },
+        "link",
+      ),
+      / C /,
+    );
+  },
+);
+const referenceToggle =
+  graphDom.window.document.getElementById("graph-references");
+referenceToggle.setAttribute("checked", "false");
+referenceToggle.dispatchEvent(new graphDom.window.Event("command"));
+check("Hiding references leaves every card visible", () => {
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-edge.link").length,
+    0,
+  );
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-node.card").length,
+    4,
+  );
+});
+check(
+  "Relationship toggles retain every node position and the current viewport",
+  () => {
+    assert.deepEqual(
+      Array.from(
+        graphDom.window.document.querySelectorAll(".graph-node"),
+        (node) => node.getAttribute("transform"),
+      ),
+      originalPositions,
     );
     assert.equal(
-      graphDom.window.document.getElementById(id).getAttribute("aria-pressed"),
-      "true",
+      graphDom.window.document
+        .querySelector("#graph-svg > g")
+        .getAttribute("transform"),
+      originalViewport,
     );
+  },
+);
+referenceToggle.setAttribute("checked", "true");
+referenceToggle.dispatchEvent(new graphDom.window.Event("command"));
+check("Showing references restores edges without filtering cards", () =>
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-edge.link").length,
+    2,
+  ),
+);
+const sourceToggle = graphDom.window.document.getElementById("graph-sources");
+sourceToggle.setAttribute("checked", "false");
+sourceToggle.dispatchEvent(new graphDom.window.Event("command"));
+check(
+  "Hiding source items removes their nodes, edges and legend, retaining every card",
+  () => {
     assert.equal(
       graphDom.window.document.querySelectorAll(
-        '#graph-scope [aria-pressed="true"]',
+        ".graph-node.source,.graph-edge.source",
       ).length,
-      1,
+      0,
     );
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".graph-node.card").length,
+      4,
+    );
+    assert.equal(
+      graphDom.window.document.getElementById("graph-legend-sources").hidden,
+      true,
+    );
+  },
+);
+sourceToggle.setAttribute("checked", "true");
+sourceToggle.dispatchEvent(new graphDom.window.Event("command"));
+check("Source nodes return when enabled; settings use a native popup", () => {
+  assert.ok(graphDom.window.document.querySelector(".graph-node.source"));
+  assert.ok(sourceToggle.closest("#graph-display-menu"));
+  assert.ok(
+    graphDom.window.document.getElementById("graph-search").placeholder,
+  );
+});
+check("Right-click opens the shared graph settings at the pointer", () => {
+  const popup = graphDom.window.document.getElementById("graph-display-menu");
+  let position;
+  popup.openPopupAtScreen = (...args) => {
+    position = args;
+  };
+  const event = new graphDom.window.MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    screenX: 340,
+    screenY: 220,
   });
-}
+  graphDom.window.document.getElementById("graph-svg").dispatchEvent(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.deepEqual(position, [340, 220, true]);
+  assert.equal(popup.parentNode.id, "graph-settings");
+  assert.equal(popup.parentNode.getAttribute("type"), "menu");
+  position = null;
+  graphDom.window.document
+    .getElementById("graph-inspector")
+    .dispatchEvent(
+      new graphDom.window.MouseEvent("contextmenu", { bubbles: true }),
+    );
+  assert.equal(position, null);
+});
+const searchGraph = graphDom.window.document.getElementById("graph-search");
+searchGraph.value = "isolated";
+searchGraph.dispatchEvent(new graphDom.window.Event("input"));
+check("Graph search keeps the entire graph visible", () =>
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-node.card").length,
+    4,
+  ),
+);
+searchGraph.value = "";
 // Replace the entire API object as a plugin reload does, rather than mutating
 // one method on the old object. Open windows must call the new instance.
 let latestApiCalled = false;
@@ -658,7 +1133,9 @@ graphDom.window.Zotero.ZoteroKnowledgeBase.api = {
     return graphData;
   },
 };
-graphDom.window.document.getElementById("graph-refresh").click();
+graphDom.window.document
+  .getElementById("graph-refresh")
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
 await wait();
 await wait();
 check("Open graph window uses the replacement API after plugin reload", () => {
@@ -678,7 +1155,9 @@ graphDom.window.Zotero.ZoteroKnowledgeBase.api.getGraph = async () => ({
   nodes: crowdedCards,
   edges: [],
 });
-graphDom.window.document.getElementById("graph-refresh").click();
+graphDom.window.document
+  .getElementById("graph-refresh")
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
 await wait();
 await wait();
 check("All Cards keeps every node while hiding crowded graph labels", () => {
@@ -707,11 +1186,168 @@ check(
     assert.ok(hiddenNode.classList.contains("selected"));
     assert.ok(!hiddenNode.classList.contains("label-hidden"));
     assert.equal(
-      graphDom.window.document.getElementById("graph-node-snippet").textContent,
+      graphDom.window.document
+        .getElementById("graph-node-snippet")
+        .textContent.trim(),
       "Full idea context",
     );
   },
 );
+// Exercise the card browser in its actual XML document.
+const managerDOM = new JSDOM(
+  await readFile(path.join(ROOT, "addon/content/manager.xhtml"), "utf8"),
+  { contentType: "application/xhtml+xml", runScripts: "outside-only" },
+);
+const managerWin = managerDOM.window;
+windows.push(managerWin);
+// Model the icon children created by Zotero's native toolbarbutton constructor.
+for (const button of managerWin.document.querySelectorAll("toolbarbutton")) {
+  const icon = managerWin.document.createElementNS(
+    button.namespaceURI,
+    "image",
+  );
+  icon.classList.add("toolbarbutton-icon");
+  button.appendChild(icon);
+}
+let managerCards = [
+  {
+    id: "20261002011320",
+    title: "这是2017的Zettel",
+    body: "An idea with a clear source and related notes.",
+    updated_at: 1790874821032,
+    outgoing: 1,
+    incoming: 0,
+  },
+  {
+    id: "20261002005552",
+    title: "是直接点",
+    body: "Child idea",
+    updated_at: 1790874821032,
+    outgoing: 0,
+    incoming: 0,
+  },
+];
+const managerCalls = { edits: [], graphs: [], deletes: [], opens: [] };
+const labels = {
+  "manager-new": "New card",
+  "graph-title": "All cards graph",
+  "manager-edit": "Edit card",
+  "manager-delete": "Delete card",
+  "manager-show-graph": "Show card in graph",
+  "new-child": "New child card",
+  parent: "Parent",
+  children: "Children",
+  root: "Entry point",
+  entries: "Entry points",
+  "manager-outgoing": "Linked cards",
+  "manager-backlinks": "Backlinks",
+  "manager-updated": "Updated",
+  "manager-title": "Knowledge Base",
+  "manager-search-placeholder": "Search title, body or ID…",
+};
+managerWin.arguments = [{}];
+managerWin.confirm = () => true;
+managerWin.Zotero = {
+  logError: (error) => {
+    throw error;
+  },
+  ZoteroKnowledgeBase: {
+    api: {
+      loc: (key) => labels[key] || key,
+      listZettels: async () => managerCards,
+      getZettel: async (id) => managerCards.find((card) => card.id === id),
+      getFamily: async () => ({
+        parent: null,
+        children: [managerCards[1]].filter(Boolean),
+      }),
+      getOutgoing: async () => [],
+      getBacklinks: async () => [],
+      getUnresolvedRefs: async () => [],
+      onDataChange: () => () => {},
+      renderMarkdown: (body) => `<p>${body}</p>`,
+      openEditor: (args) => managerCalls.edits.push(args),
+      openGraph: (args) => managerCalls.graphs.push(args),
+      openManager: (args) => managerCalls.opens.push(args),
+      deleteZettel: async (id) => {
+        managerCalls.deletes.push(id);
+        managerCards = managerCards.filter((card) => card.id !== id);
+      },
+    },
+  },
+};
+managerWin.eval(previewScript);
+managerWin.eval(
+  (await readFile(path.join(ROOT, "addon/content/manager.js"), "utf8")) +
+    "\nwindow.__managerLoad = load;",
+);
+await managerWin.__managerLoad();
+await wait();
+await wait();
+const managerDoc = managerWin.document;
+check("Card browser exposes IDs and uses Zotero native toolbar actions", () => {
+  assert.deepEqual(
+    [...managerDoc.querySelectorAll(".zettel-row .zid")].map(
+      (el) => el.textContent,
+    ),
+    managerCards.map((card) => card.id),
+  );
+  const actions = [
+    ...managerDoc.querySelectorAll(".card-actions toolbarbutton"),
+  ];
+  assert.equal(actions.length, 3);
+  for (const button of actions) {
+    assert.equal(
+      button.namespaceURI,
+      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+    );
+    assert.ok(button.getAttribute("tooltiptext"));
+    assert.ok(button.getAttribute("aria-label"));
+    assert.ok(button.getAttribute("label"));
+    assert.ok(button.querySelector(".toolbarbutton-icon"));
+    assert.equal(button.textContent.trim(), "");
+  }
+  assert.equal(
+    managerDoc.querySelector(".zettel-row.active").getAttribute("aria-current"),
+    "true",
+  );
+});
+nativeClick(managerDoc.getElementById("knowledge-base-btn-edit"), managerWin);
+nativeClick(
+  managerDoc.getElementById("knowledge-base-btn-local-graph"),
+  managerWin,
+);
+managerDoc.getElementById("knowledge-base-btn-child").click();
+check("Edit, graph and new-child actions target the selected card", () => {
+  assert.equal(managerCalls.edits[0].zettelId, managerCards[0].id);
+  assert.equal(managerCalls.graphs[0].centerId, managerCards[0].id);
+  assert.equal(managerCalls.edits[1].prefillParentId, managerCards[0].id);
+});
+managerDoc.querySelector("#knowledge-base-family .family-link").click();
+check("Compact child entries still navigate to their card", () =>
+  assert.equal(managerCalls.opens[0].selectId, managerCards[1].id),
+);
+// Save the real rendered fixture for browser visual inspection when requested.
+if (process.env.KNOWLEDGE_BASE_PREVIEW) {
+  const css = await readFile(
+    path.join(ROOT, "addon/content/manager.css"),
+    "utf8",
+  );
+  const markup = managerDoc
+    .getElementById("knowledge-base-root")
+    .outerHTML.replace(/html:/g, "");
+  await writeFile(
+    process.env.KNOWLEDGE_BASE_PREVIEW,
+    `<html><head><meta charset="utf-8"><style>${css}\n:root{--bg:#f5f5f7;--fg:#1d1d1f;--accent:#007aff}body{margin:0}#knowledge-base-toolbar,#knowledge-base-list-pane{background:#f5f5f7}</style></head><body>${markup}</body></html>`,
+  );
+}
+nativeClick(managerDoc.getElementById("knowledge-base-btn-delete"), managerWin);
+await wait();
+await wait();
+check("Delete action removes the selected card and clears its details", () => {
+  assert.equal(managerCalls.deletes[0], "20261002011320");
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
+  assert.equal(managerDoc.getElementById("knowledge-base-detail").hidden, true);
+});
 for (const win of windows) {
   win.dispatchEvent(new win.Event("unload"));
   win.close();

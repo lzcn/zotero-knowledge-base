@@ -1,11 +1,6 @@
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-} from "d3-force";
-import { filterGraph } from "../modules/graph";
+import { select as d3Select } from "d3-selection";
+import { zoom, zoomIdentity } from "d3-zoom";
+import { edgePath, filterGraph, layoutHierarchy } from "../modules/graph";
 
 const api = /** @type {import("../modules/api").KnowledgeBaseAPI} */ (
   new Proxy({}, { get: (_, key) => window.Zotero.ZoteroKnowledgeBase.api[key] })
@@ -18,19 +13,24 @@ const $ = (id) =>
   );
 const svgNS = "http://www.w3.org/2000/svg";
 let graph = { nodes: [], edges: [] };
-let centerId = /** @type {{ centerId?: string }} */ (window.arguments[0] || {})
-  .centerId;
+let graphNodes = new Map();
+let refreshVersion = 0;
+const centerId = /** @type {{ centerId?: string }} */ (
+  window.arguments[0] || {}
+).centerId;
 let selectedId = centerId;
-let scope = centerId ? "1" : "all";
-let simulation;
+
+let layoutNodes = [];
+let updatePositions = () => {};
 let scene;
 let transform = { x: 0, y: 0, k: 1 };
 let nodeElements = new Map();
 let renderedEdges = [];
-let pan = null;
+let zoomBehavior;
 let drag = null;
 let refreshTimer;
 let unsubscribe;
+let layoutKey = "";
 
 function svgElement(tag, attrs = {}) {
   const element = document.createElementNS(svgNS, tag);
@@ -46,18 +46,30 @@ function run(fn) {
     });
 }
 async function refresh() {
-  graph = await api.getGraph();
+  const version = ++refreshVersion;
+  const next = await api.getGraph();
+  if (version !== refreshVersion) return;
+  graph = next;
+  graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
   $("graph-error").textContent = "";
   render();
 }
+function enabled(id) {
+  return document.getElementById(id).getAttribute("checked") === "true";
+}
 function visibleGraph() {
-  return filterGraph(graph, {
-    centerId: scope === "all" ? undefined : centerId,
-    depth: Number(scope) || 1,
-    query: $("graph-search").value,
-    includeSources: $("graph-sources").checked,
-    includeUnresolved: $("graph-unresolved").checked,
+  const data = filterGraph(graph, {
+    includeSources: enabled("graph-sources"),
+    includeUnresolved: true,
   });
+  data.edges = data.edges.filter((edge) =>
+    edge.kind === "parent"
+      ? enabled("graph-outline")
+      : edge.kind === "link"
+        ? enabled("graph-references")
+        : enabled("graph-sources"),
+  );
+  return data;
 }
 function size() {
   const rect = $("graph-canvas").getBoundingClientRect();
@@ -76,7 +88,7 @@ function applyTransform() {
 // Cull intersecting labels in screen coordinates; hover/focus still reveals a title.
 function updateLabels() {
   const occupied = [];
-  const nodes = [...(simulation?.nodes() || [])].sort(
+  const nodes = [...layoutNodes].sort(
     (a, b) => Number(b.id === selectedId) - Number(a.id === selectedId),
   );
   for (const node of nodes) {
@@ -88,8 +100,8 @@ function updateLabels() {
         (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
         0,
       ) * transform.k;
-    const x = (node.x + 12) * transform.k + transform.x;
-    const y = (node.y - 10) * transform.k + transform.y;
+    const x = node.x * transform.k + transform.x - width / 2;
+    const y = (node.y + 18) * transform.k + transform.y;
     const rect = {
       x,
       y,
@@ -112,33 +124,53 @@ function updateLabels() {
 }
 function fit() {
   const { width, height } = size();
-  const nodes = simulation?.nodes() || [];
+  const nodes = layoutNodes;
   if (!nodes.length) return;
-  const minX = Math.min(...nodes.map((node) => node.x || 0)) - 80;
-  const maxX = Math.max(...nodes.map((node) => node.x || 0)) + 80;
-  const minY = Math.min(...nodes.map((node) => node.y || 0)) - 50;
-  const maxY = Math.max(...nodes.map((node) => node.y || 0)) + 50;
+  let minX = Infinity,
+    maxX = -Infinity,
+    minY = Infinity,
+    maxY = -Infinity;
+  for (const node of nodes) {
+    const halfWidth =
+      Array.from(node.title)
+        .slice(0, 24)
+        .reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7), 0) /
+      2;
+    minX = Math.min(minX, node.x - halfWidth - 24);
+    maxX = Math.max(maxX, node.x + halfWidth + 24);
+    minY = Math.min(minY, node.y - 30);
+    maxY = Math.max(maxY, node.y + 48);
+  }
   const k = Math.max(
-    0.15,
-    Math.min(1.8, width / (maxX - minX), height / (maxY - minY)),
+    0.0001,
+    Math.min(1, width / (maxX - minX), height / (maxY - minY)),
   );
   transform = {
     x: width / 2 - ((minX + maxX) / 2) * k,
     y: height / 2 - ((minY + maxY) / 2) * k,
     k,
   };
-  applyTransform();
+  if (zoomBehavior)
+    d3Select($("graph-svg")).call(
+      zoomBehavior.transform,
+      zoomIdentity.translate(transform.x, transform.y).scale(transform.k),
+    );
+  else applyTransform();
 }
 function render() {
-  for (const button of /** @type {HTMLButtonElement[]} */ (
-    Array.from($("graph-scope").children)
-  ))
-    button.setAttribute("aria-pressed", String(button.dataset.scope === scope));
-  simulation?.stop();
+  $("graph-legend-sources").hidden = !enabled("graph-sources");
   const data = visibleGraph();
-  /** @typedef {import("../modules/graph").GraphNode & { x?: number, y?: number, fx?: number | null, fy?: number | null }} SimulationNode */
+  const nextKey = JSON.stringify(
+    data.nodes.map((node) => [node.id, node.parentId, node.title]),
+  );
+  const retainLayout = nextKey === layoutKey;
+  const previousPositions = new Map(
+    layoutNodes.map((node) => [node.id, { x: node.x, y: node.y }]),
+  );
+  layoutKey = nextKey;
+  /** @typedef {import("../modules/graph").GraphNode & { x?: number, y?: number, fx?: number | null, fy?: number | null }} LayoutNode */
   const nodes = data.nodes.map(
-    (node) => /** @type {SimulationNode} */ ({ ...node }),
+    (node) => /** @type {LayoutNode} */ ({ ...node }),
   );
   const edges = data.edges.map((edge) => ({ ...edge }));
   const svg = $("graph-svg");
@@ -149,7 +181,7 @@ function render() {
   const marker = svgElement("marker", {
     id: "graph-arrow",
     viewBox: "0 0 10 10",
-    refX: 19,
+    refX: 9,
     refY: 5,
     markerWidth: 6,
     markerHeight: 6,
@@ -162,10 +194,16 @@ function render() {
   svg.appendChild(defs);
   scene = svgElement("g");
   svg.appendChild(scene);
-  renderedEdges = edges.map((edge) => {
-    const line = svgElement("line", {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  renderedEdges = edges.map((raw) => {
+    const edge = {
+      ...raw,
+      source: nodeById.get(raw.source),
+      target: nodeById.get(raw.target),
+    };
+    const line = svgElement("path", {
       class: `graph-edge ${edge.kind}`,
-      "marker-end": edge.kind === "link" ? "url(#graph-arrow)" : "",
+      "marker-end": edge.kind !== "source" ? "url(#graph-arrow)" : "",
     });
     const title = svgElement("title");
     title.textContent = edge.context || edge.ref;
@@ -182,9 +220,9 @@ function render() {
       "aria-label": node.title,
     });
     group.appendChild(
-      svgElement("circle", { r: node.kind === "card" ? 8 : 6 }),
+      svgElement("circle", { r: node.kind === "card" ? 12 : 9 }),
     );
-    const label = svgElement("text", { x: 12, y: 4 });
+    const label = svgElement("text", { x: 0, y: 32, "text-anchor": "middle" });
     const titleChars = Array.from(node.title);
     label.textContent =
       titleChars.slice(0, 24).join("") + (titleChars.length > 24 ? "…" : "");
@@ -206,30 +244,24 @@ function render() {
       drag = node;
       node.fx = node.x;
       node.fy = node.y;
-      simulation.alphaTarget(0.15).restart();
-      $("graph-svg").setPointerCapture?.(ev.pointerId);
+      group.setPointerCapture?.(ev.pointerId);
+      select(node.id);
     });
     nodeElements.set(node.id, group);
     scene.appendChild(group);
   }
-  simulation = forceSimulation(nodes)
-    .force(
-      "link",
-      forceLink(edges)
-        .id((node) => node.id)
-        .distance(130),
-    )
-    .force("charge", forceManyBody().strength(-280))
-    .force("collide", forceCollide(30))
-    .force("center", forceCenter(0, 0));
-  simulation.stop();
-  for (let i = 0; i < 80; i++) simulation.tick();
+  layoutNodes = nodes;
+  const positions = retainLayout ? previousPositions : layoutHierarchy(nodes);
+  for (const node of nodes) {
+    const position = positions.get(node.id);
+    node.x = position.x;
+    node.y = position.y;
+    node.fx = node.x;
+    node.fy = node.y;
+  }
   const tick = () => {
     for (const { edge, line } of renderedEdges) {
-      line.setAttribute("x1", edge.source.x);
-      line.setAttribute("y1", edge.source.y);
-      line.setAttribute("x2", edge.target.x);
-      line.setAttribute("y2", edge.target.y);
+      line.setAttribute("d", edgePath(edge.source, edge.target, edge.kind));
     }
     for (const node of nodes)
       nodeElements
@@ -238,8 +270,9 @@ function render() {
     updateLabels();
   };
   tick();
-  simulation.on("tick", tick).restart();
-  fit();
+  updatePositions = tick;
+  if (!retainLayout) fit();
+  else applyTransform();
   $("graph-empty").hidden = nodes.length > 0;
   $("graph-stats").textContent = api.loc("graph-stats", {
     cards: nodes.filter((node) => node.kind === "card").length,
@@ -249,12 +282,12 @@ function render() {
 }
 function select(id) {
   selectedId = id;
-  const node = graph.nodes.find((candidate) => candidate.id === id);
-  if (!node) {
+  const node = graphNodes.get(id);
+  if (!node || !nodeElements.has(id)) {
     $("graph-selection").hidden = true;
     return;
   }
-  const connections = graph.edges.filter(
+  const connections = visibleGraph().edges.filter(
     (edge) => edge.source === id || edge.target === id,
   );
   const neighbors = new Set([
@@ -275,33 +308,101 @@ function select(id) {
   updateLabels();
   $("graph-selection").hidden = false;
   $("graph-node-title").textContent = node.title;
-  $("graph-node-kind").textContent = api.loc(`graph-kind-${node.kind}`);
-  $("graph-node-snippet").textContent = node.snippet;
-  $("graph-node-open").textContent = api.loc(
-    node.kind === "unresolved" ? "graph-create" : "graph-open",
+  $("graph-node-kind").textContent =
+    node.kind === "card" ? node.id : api.loc(`graph-kind-${node.kind}`);
+  window.ZoteroKnowledgeBaseMarkdown.render(
+    $("graph-node-snippet"),
+    node.snippet,
   );
+  const openLabel = api.loc(
+    node.kind === "unresolved"
+      ? "graph-create"
+      : node.kind === "card"
+        ? "graph-open-card"
+        : "graph-open-source",
+  );
+  $("graph-node-open").setAttribute("data-kind", node.kind);
+  $("graph-node-open").setAttribute("label", openLabel);
+  $("graph-node-open").setAttribute("tooltiptext", openLabel);
+  $("graph-node-open").setAttribute("aria-label", openLabel);
   const list = $("graph-connections");
+  const collapsed = new Set(
+    Array.from(list.querySelectorAll("details:not([open])"), (section) =>
+      /** @type {Element} */ (section).getAttribute("data-relation"),
+    ),
+  );
   list.textContent = "";
+  const groups = new Map();
+  for (const key of [
+    "parent",
+    "children",
+    "manager-outgoing",
+    "manager-backlinks",
+    "manager-source",
+  ]) {
+    const section = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "details",
+    );
+    section.setAttribute("data-relation", key);
+    if (!collapsed.has(key)) section.setAttribute("open", "");
+    section.hidden = true;
+    const heading = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "summary",
+    );
+    heading.textContent = api.loc(
+      key === "manager-outgoing"
+        ? "graph-outgoing"
+        : key === "manager-backlinks"
+          ? "graph-backlinks"
+          : key,
+    );
+    const peers = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "ul",
+    );
+    peers.className = "refs";
+    section.append(heading, peers);
+    list.appendChild(section);
+    groups.set(key, { section, peers, heading });
+  }
   for (const edge of connections) {
     const peerId = edge.source === id ? edge.target : edge.source;
-    const peer = graph.nodes.find((candidate) => candidate.id === peerId);
+    const peer = graphNodes.get(peerId);
     if (!peer) continue;
     const row = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
     row.tabIndex = 0;
-    row.textContent = `${edge.kind === "source" ? "◈" : edge.source === id ? "→" : "←"} ${peer.title}`;
-    if (edge.context) {
+    if (peer.kind === "card")
+      window.ZoteroKnowledgeBaseMarkdown.identity(row, peer.id, peer.title);
+    else row.textContent = peer.title;
+    if (edge.kind === "source" && peer.citation) {
       const context = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
         "small",
       );
-      context.textContent = edge.context;
+      context.textContent = peer.citation;
       row.appendChild(context);
     }
     row.addEventListener("click", () => select(peerId));
+    row.addEventListener("dblclick", () => run(() => openNode(peer)));
     row.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") select(peerId);
     });
-    list.appendChild(row);
+    const key =
+      edge.kind === "parent"
+        ? edge.source === id
+          ? "children"
+          : "parent"
+        : edge.kind === "source"
+          ? "manager-source"
+          : edge.source === id
+            ? "manager-outgoing"
+            : "manager-backlinks";
+    const group = groups.get(key);
+    group.section.hidden = false;
+    group.peers.appendChild(row);
+    group.heading.textContent = `${api.loc(key === "manager-outgoing" ? "graph-outgoing" : key === "manager-backlinks" ? "graph-backlinks" : key)} · ${group.peers.children.length}`;
   }
 }
 async function openNode(node) {
@@ -311,24 +412,13 @@ async function openNode(node) {
   else api.openEditor({ prefillTitle: node.title });
 }
 window.ZoteroKnowledgeBase_showGraph = (id) => {
-  centerId = id;
   selectedId = id;
-  scope = id ? "1" : "all";
   run(refresh);
 };
 async function load() {
   document.title = api.loc("graph-title");
   /** @type {Partial<Record<keyof import("../../typings/ui").GraphElements, string>>} */
   const labels = {
-    "graph-all": "graph-all",
-    "graph-local-one": "graph-local-one",
-    "graph-local-two": "graph-local-two",
-    "graph-sources-label": "graph-sources",
-    "graph-unresolved-label": "graph-unresolved",
-    "graph-fit": "graph-fit",
-    "graph-refresh": "graph-refresh",
-    "graph-hint": "graph-hint",
-    "graph-node-focus": "graph-focus",
     "graph-connections-title": "graph-connections",
     "graph-empty": "graph-empty",
     "graph-legend-cards": "graph-legend-cards",
@@ -339,79 +429,108 @@ async function load() {
     $(
       /** @type {keyof import("../../typings/ui").GraphElements} */ (id),
     ).textContent = api.loc(key);
-  $("graph-search").placeholder = api.loc("graph-search");
-  scope = centerId ? "1" : "all";
-  for (const button of /** @type {HTMLButtonElement[]} */ (
-    Array.from($("graph-scope").children)
-  )) {
-    button.addEventListener("click", () => {
-      scope = button.dataset.scope;
-      if (scope !== "all" && !centerId)
-        centerId =
-          selectedId || graph.nodes.find((node) => node.kind === "card")?.id;
-      render();
-    });
+  for (const id of ["graph-fit", "graph-refresh", "graph-settings"]) {
+    const button = document.getElementById(id);
+    const label = api.loc(id === "graph-settings" ? "graph-display" : id);
+    button.setAttribute("label", label);
+    button.setAttribute("tooltiptext", label);
+    button.setAttribute("aria-label", label);
   }
-  for (const id of ["graph-sources", "graph-unresolved"])
-    $(
-      /** @type {keyof import("../../typings/ui").GraphElements} */ (id),
-    ).addEventListener("change", render);
-  $("graph-search").addEventListener("input", render);
+  const menu = $("graph-display-menu");
+  for (const [id, key] of Object.entries({
+    "graph-outline": "graph-hierarchy",
+    "graph-references": "graph-links",
+    "graph-sources": "graph-sources",
+    "graph-menu-fit": "graph-fit",
+    "graph-menu-refresh": "graph-refresh",
+  }))
+    document.getElementById(id).setAttribute("label", api.loc(key));
+  $("graph-search").placeholder = api.loc("graph-search");
+  $("graph-canvas").addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    menu.openPopupAtScreen(event.screenX, event.screenY, true);
+  });
+  document.getElementById("graph-menu-fit").addEventListener("command", fit);
+  document
+    .getElementById("graph-menu-refresh")
+    .addEventListener("command", () => run(refresh));
   $("graph-fit").addEventListener("click", fit);
   $("graph-refresh").addEventListener("click", () => run(refresh));
   $("graph-node-open").addEventListener("click", () =>
-    run(() => openNode(graph.nodes.find((node) => node.id === selectedId))),
+    run(() => openNode(graphNodes.get(selectedId))),
   );
-  $("graph-node-focus").addEventListener("click", () => {
-    centerId = selectedId;
-    scope = "1";
-    render();
+  for (const id of ["graph-outline", "graph-references", "graph-sources"]) {
+    document.getElementById(id).addEventListener("command", render);
+  }
+  $("graph-search").addEventListener("input", () => {
+    const query = $("graph-search").value.trim().toLowerCase();
+    if (!query) return;
+    const match = visibleGraph().nodes.find((node) =>
+      `${node.id} ${node.title} ${node.snippet}`.toLowerCase().includes(query),
+    );
+    if (match) select(match.id);
   });
-  $("graph-svg").addEventListener(
-    "wheel",
-    (ev) => {
-      ev.preventDefault();
-      const rect = $("graph-svg").getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      const k = Math.min(
-        6,
-        Math.max(0.1, transform.k * Math.exp(-ev.deltaY * 0.001)),
-      );
-      transform.x = x - ((x - transform.x) * k) / transform.k;
-      transform.y = y - ((y - transform.y) * k) / transform.k;
-      transform.k = k;
+  $("graph-node-snippet").addEventListener("click", (event) => {
+    const anchor = /** @type {Element} */ (event.target).closest("a");
+    if (!anchor) return;
+    event.preventDefault();
+    run(async () => {
+      const href = anchor.getAttribute("href");
+      const card = await api.resolveCardLink(href);
+      if (card?.targetId) select(card.targetId);
+      else await api.openLink(href);
+    });
+  });
+  zoomBehavior = zoom()
+    .extent(() => {
+      const { width, height } = size();
+      return [
+        [0, 0],
+        [width, height],
+      ];
+    })
+    .scaleExtent([0.0001, 6])
+    .touchable(() => false)
+    .filter(
+      (event) =>
+        event.type !== "dblclick" &&
+        !drag &&
+        (event.type === "wheel" ||
+          (!event.button && !event.target.closest(".graph-node"))),
+    )
+    .on("zoom", (event) => {
+      transform = {
+        x: event.transform.x,
+        y: event.transform.y,
+        k: event.transform.k,
+      };
       applyTransform();
-    },
-    { passive: false },
-  );
-  $("graph-svg").addEventListener("pointerdown", (ev) => {
-    if (ev.button !== 0) return;
-    pan = { x: ev.clientX, y: ev.clientY, tx: transform.x, ty: transform.y };
-    $("graph-svg").setPointerCapture?.(ev.pointerId);
-  });
+    });
+  d3Select($("graph-svg")).call(zoomBehavior).on("dblclick.zoom", null);
   $("graph-svg").addEventListener("pointermove", (ev) => {
     if (drag) {
       const rect = $("graph-svg").getBoundingClientRect();
       drag.fx = (ev.clientX - rect.left - transform.x) / transform.k;
       drag.fy = (ev.clientY - rect.top - transform.y) / transform.k;
-    } else if (pan) {
-      transform.x = pan.tx + ev.clientX - pan.x;
-      transform.y = pan.ty + ev.clientY - pan.y;
-      applyTransform();
+      drag.x = drag.fx;
+      drag.y = drag.fy;
+      updatePositions();
     }
   });
   const release = () => {
     if (drag) {
-      drag.fx = null;
-      drag.fy = null;
-      simulation.alphaTarget(0);
+      updatePositions();
     }
     drag = null;
-    pan = null;
   };
   $("graph-svg").addEventListener("pointerup", release);
   $("graph-svg").addEventListener("pointercancel", release);
+  window.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+      event.preventDefault();
+      window.close();
+    }
+  });
   window.addEventListener("resize", () => {
     const { width, height } = size();
     $("graph-svg").setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -425,7 +544,8 @@ async function load() {
 }
 window.addEventListener("load", () => run(load));
 window.addEventListener("unload", () => {
+  d3Select($("graph-svg")).on(".zoom", null);
+  refreshVersion++;
   unsubscribe?.();
-  simulation?.stop();
   clearTimeout(refreshTimer);
 });

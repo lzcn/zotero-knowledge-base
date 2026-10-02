@@ -1,4 +1,6 @@
 <?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?> <?xml-stylesheet
+href="chrome://zotero-platform/content/zotero.css" type="text/css"?>
 <?xml-stylesheet
 href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
@@ -33,17 +35,31 @@ type="text/css"?>
       <html:ul id="knowledge-base-src-results" class="refs"></html:ul>
     </html:div>
     <html:input id="knowledge-base-editor-title" type="text" />
+    <html:div class="parent-control">
+      <html:label
+        id="knowledge-base-parent-label"
+        for="knowledge-base-parent-search"
+      />
+      <html:button id="knowledge-base-parent-display" />
+      <html:button id="knowledge-base-parent-root">⌂</html:button>
+      <html:input
+        id="knowledge-base-parent-search"
+        type="search"
+        hidden="hidden"
+      />
+      <html:ul
+        id="knowledge-base-parent-results"
+        class="refs"
+        hidden="hidden"
+      />
+    </html:div>
     <html:div id="knowledge-base-markdown-toolbar">
-      <html:button data-format="heading" title="Heading">H</html:button>
-      <html:button data-format="bold" title="Bold (Ctrl/Cmd+B)">B</html:button>
-      <html:button data-format="italic" title="Italic (Ctrl/Cmd+I)"
-        >I</html:button
+      <html:button
+        id="knowledge-base-command-open"
+        class="icon-button"
+        aria-expanded="false"
+        >➕</html:button
       >
-      <html:button data-format="quote" title="Blockquote">&gt;</html:button>
-      <html:button data-format="list" title="List">•</html:button>
-      <html:button data-format="task" title="Task list">☑</html:button>
-      <html:button data-format="code" title="Code">&lt;/&gt;</html:button>
-      <html:button data-format="table" title="Markdown table">▦</html:button>
       <html:button id="knowledge-base-link-pick"></html:button>
       <html:button id="knowledge-base-url-insert" />
       <html:button id="knowledge-base-image-insert" />
@@ -56,6 +72,14 @@ type="text/css"?>
         id="knowledge-base-preview-toggle"
         aria-pressed="true"
       ></html:button>
+    </html:div>
+    <html:div
+      id="knowledge-base-command-menu"
+      class="command-menu"
+      hidden="hidden"
+    >
+      <html:input id="knowledge-base-command-search" type="search" />
+      <html:div id="knowledge-base-command-list" role="menu" />
     </html:div>
     <html:div id="knowledge-base-link-drop" hidden="hidden">
       <html:input id="knowledge-base-link-search" type="search" />
@@ -70,10 +94,16 @@ type="text/css"?>
           spellcheck="true"
         />
         <html:div id="knowledge-base-editor-preview" class="markdown-body" />
+        <html:iframe
+          id="knowledge-base-rich-frame"
+          src="chrome://knowledge-base/content/rich-editor.html"
+          hidden="hidden"
+        />
       </html:div>
       <html:details id="knowledge-base-editor-relations">
         <html:summary id="knowledge-base-editor-relations-summary" />
         <html:button id="knowledge-base-editor-graph" />
+        <html:div id="knowledge-base-editor-family" />
         <html:h3 id="knowledge-base-editor-outgoing-label" />
         <html:ul id="knowledge-base-editor-outgoing" class="refs" />
         <html:h3 id="knowledge-base-editor-backlinks-label" />

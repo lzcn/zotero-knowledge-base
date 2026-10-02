@@ -3,6 +3,7 @@
  */
 
 import { exec, getAll, getOne, transaction, type ZettelRow } from "./db";
+import { saveParent, removeParent } from "./hierarchy";
 import { parseCardLinks } from "./markdown";
 import { notifyDataChange } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
@@ -63,27 +64,31 @@ export function parseLinks(body: string): ParsedLink[] {
 
 export async function resolveRefs(
   refs: string[],
+  shouldStop = () => false,
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  if (!refs.length) return map;
+  if (!refs.length || shouldStop()) return map;
   const placeholders = refs.map(() => "?").join(",");
   // by id
   const byId = await getAll<{ id: string; title: string }>(
     `SELECT id, title FROM zettels WHERE id IN (${placeholders})`,
     refs,
   );
+  if (shouldStop()) return map;
   for (const r of byId) map.set(r.id, r.id);
   // by exact title
   const byTitle = await getAll<{ id: string; title: string }>(
     `SELECT id, title FROM zettels WHERE title IN (${placeholders})`,
     refs,
   );
+  if (shouldStop()) return map;
   for (const r of byTitle) if (!map.has(r.title)) map.set(r.title, r.id);
   // by title, case-insensitive fallback
   const lower = new Map<string, string>();
   const all = await getAll<{ id: string; title: string }>(
     `SELECT id, title FROM zettels`,
   );
+  if (shouldStop()) return map;
   for (const r of all) if (r.title) lower.set(r.title.toLowerCase(), r.id);
   for (const ref of refs) {
     if (!map.has(ref)) {
@@ -135,20 +140,26 @@ export async function getZettel(id: string): Promise<Zettel | null> {
   return rowToZettel(row, counts?.outgoing ?? 0, counts?.incoming ?? 0);
 }
 
-export async function listZettels(query = ""): Promise<Zettel[]> {
+export async function listZettels(
+  query = "",
+  entriesOnly = false,
+): Promise<Zettel[]> {
+  const entryFilter = entriesOnly
+    ? "id IN (SELECT card_id FROM card_parents WHERE parent_id IS NULL)"
+    : "1 = 1";
   const q = query.trim();
   let rows: ZettelRow[];
   if (q) {
     const like = `%${q}%`;
     rows = await getAll<ZettelRow>(
       `SELECT * FROM zettels
-       WHERE title LIKE ? OR body LIKE ? OR id LIKE ?
+       WHERE (${entryFilter}) AND (title LIKE ? OR body LIKE ? OR id LIKE ?)
        ORDER BY updated_at DESC LIMIT 500`,
       [like, like, like],
     );
   } else {
     rows = await getAll<ZettelRow>(
-      `SELECT * FROM zettels ORDER BY updated_at DESC LIMIT 500`,
+      `SELECT * FROM zettels WHERE ${entryFilter} ORDER BY updated_at DESC LIMIT 500`,
     );
   }
   const counts = await getAll<{
@@ -239,12 +250,31 @@ const itemCounts = new Map<string, number>();
 /** Annotation key -> number of cards created from it. */
 const annotationCounts = new Map<string, number>();
 
-export async function rebuildCounts(): Promise<void> {
-  await resolveUnresolvedLinks();
+const cardTitles = new Map<string, string>();
+
+export function getCardTitleSync(id: string): string | undefined {
+  return cardTitles.get(id);
+}
+
+export async function rebuildCounts(shouldStop = () => false): Promise<void> {
+  if (shouldStop()) return;
+  const cards = await getAll<{ id: string; title: string }>(
+    "SELECT id, title FROM zettels",
+  );
+  if (shouldStop()) return;
+  cardTitles.clear();
+  for (let i = 0; i < cards.length; i++) {
+    if (shouldStop()) return;
+    cardTitles.set(cards[i].id, cards[i].title);
+    if (i % 100 === 99) await Zotero.Promise.delay(0);
+  }
+  await resolveUnresolvedLinks(shouldStop);
+  if (shouldStop()) return;
   const items = await getAll<{ item_key: string; n: number }>(
     `SELECT item_key, COUNT(*) AS n FROM zettels
      WHERE item_key IS NOT NULL GROUP BY item_key`,
   );
+  if (shouldStop()) return;
   itemCounts.clear();
   for (const r of items) itemCounts.set(r.item_key, r.n);
 
@@ -252,6 +282,7 @@ export async function rebuildCounts(): Promise<void> {
     `SELECT annotation_key, COUNT(*) AS n FROM zettels
      WHERE annotation_key IS NOT NULL GROUP BY annotation_key`,
   );
+  if (shouldStop()) return;
   annotationCounts.clear();
   for (const r of annotations) annotationCounts.set(r.annotation_key, r.n);
 }
@@ -295,6 +326,7 @@ export async function saveZettel(input: {
   itemKey?: string | null;
   libraryID?: number | null;
   annotationKey?: string | null;
+  parentId?: string | null;
 }): Promise<string> {
   const now = Date.now();
   const title = input.title.trim();
@@ -351,6 +383,7 @@ export async function saveZettel(input: {
         ],
       );
     }
+    await saveParent(id, input.parentId);
     await reindexLinks(id, body);
     await resolveUnresolvedLinks();
     return { id, previousItemKey, effectiveAnnotationKey };
@@ -361,6 +394,7 @@ export async function saveZettel(input: {
     await refreshItemCount(result.previousItemKey);
   }
   await refreshAnnotationCount(result.effectiveAnnotationKey);
+  cardTitles.set(result.id, title);
   notifyDataChange();
   await cleanupImagesAfterChange();
   return result.id;
@@ -372,12 +406,14 @@ export async function deleteZettel(id: string): Promise<void> {
     annotation_key: string | null;
   }>(`SELECT item_key, annotation_key FROM zettels WHERE id = ?`, [id]);
   await transaction(async () => {
+    await removeParent(id);
     await exec(`DELETE FROM links WHERE source_id = ?`, [id]);
     await exec(`UPDATE links SET target_id = NULL WHERE target_id = ?`, [id]);
     await exec(`DELETE FROM tags WHERE zettel_id = ?`, [id]);
     await exec(`DELETE FROM zettels WHERE id = ?`, [id]);
     await resolveUnresolvedLinks();
   });
+  cardTitles.delete(id);
   await refreshItemCount(row?.item_key ?? null);
   await refreshAnnotationCount(row?.annotation_key ?? null);
   notifyDataChange();
@@ -406,12 +442,18 @@ async function reindexLinks(zettelId: string, body: string): Promise<void> {
 }
 
 /** Resolve forward references when their target is created later. */
-async function resolveUnresolvedLinks(): Promise<void> {
+async function resolveUnresolvedLinks(shouldStop = () => false): Promise<void> {
+  if (shouldStop()) return;
   const rows = await getAll<{ ref: string }>(
     `SELECT DISTINCT ref FROM links WHERE target_id IS NULL`,
   );
-  const resolved = await resolveRefs(rows.map((r) => r.ref));
+  if (shouldStop()) return;
+  const resolved = await resolveRefs(
+    rows.map((r) => r.ref),
+    shouldStop,
+  );
   for (const [ref, id] of resolved) {
+    if (shouldStop()) return;
     await exec(
       `UPDATE links SET target_id = ? WHERE ref = ? AND target_id IS NULL`,
       [id, ref],
@@ -440,7 +482,7 @@ export async function getOutgoing(id: string): Promise<ResolvedLink[]> {
   );
   return rows.map((r) => ({
     ref: r.ref,
-    display: displays.get(r.ref) || r.title || r.ref,
+    display: r.title || displays.get(r.ref) || r.ref,
     targetId: r.target_id,
   }));
 }

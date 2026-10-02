@@ -14,6 +14,11 @@ const ASSET_RE =
 const FILE_RE = /^[a-zA-Z0-9-]+\.(?:png|jpg|gif|webp|avif)$/;
 const drafts = new Map<string, { refs: Set<string>; pending: Set<string> }>();
 let registered = false;
+let stopping = false;
+
+export function stopAssets(): void {
+  stopping = true;
+}
 let cleanupQueue: Promise<unknown> = Promise.resolve();
 
 function draft(id: string) {
@@ -29,20 +34,28 @@ export function updateImageDraft(id: string, body: string): void {
 
 export async function releaseImageDraft(id: string): Promise<void> {
   drafts.delete(id);
+  if (stopping) return;
   await cleanupUnusedImages();
 }
 
 /** Preserve references from every saved card and every open editor. */
 export function cleanupUnusedImages(): Promise<number> {
   const task = cleanupQueue.then(async () => {
+    if (stopping) return 0;
     if (!(await IOUtils.exists(assetDirectory()))) return 0;
+    if (stopping) return 0;
     const rows = await getAll<{ body: string }>("SELECT body FROM zettels");
-    const referenced = new Set(
-      rows.flatMap((row) => [...parseAssetNames(row.body)]),
-    );
+    const referenced = new Set<string>();
+    for (let i = 0; i < rows.length; i++) {
+      if (stopping) return 0;
+      for (const name of parseAssetNames(rows[i].body)) referenced.add(name);
+      if (i % 25 === 24) await Zotero.Promise.delay(20);
+    }
+    if (stopping) return 0;
     const files = await IOUtils.getChildren(assetDirectory());
     let removed = 0;
     for (const file of files) {
+      if (stopping) return removed;
       const name = PathUtils.filename(file);
       if (!FILE_RE.test(name) || referenced.has(name)) continue;
       if (
@@ -92,6 +105,7 @@ async function ensureAssetDirectory(): Promise<void> {
 }
 
 export async function initAssets(): Promise<void> {
+  stopping = false;
   await ensureAssetDirectory();
   const { FileUtils } = ChromeUtils.importESModule(
     "resource://gre/modules/FileUtils.sys.mjs",
@@ -105,6 +119,7 @@ export async function initAssets(): Promise<void> {
 }
 
 export async function closeAssets(): Promise<void> {
+  stopAssets();
   await cleanupQueue;
   drafts.clear();
   if (registered) {
@@ -123,6 +138,7 @@ export async function importImage(
   mime: string,
   draftId?: string,
 ): Promise<string> {
+  if (stopping) throw new Error("Knowledge Base is shutting down.");
   const extension = MIME_EXT[mime];
   if (!extension)
     throw new Error("Supported image formats: PNG, JPEG, GIF, WebP, AVIF");
@@ -131,6 +147,10 @@ export async function importImage(
   const state = draftId ? draft(draftId) : undefined;
   state?.pending.add(filename);
   await ensureAssetDirectory();
+  if (stopping) {
+    state?.pending.delete(filename);
+    throw new Error("Knowledge Base is shutting down.");
+  }
   await IOUtils.write(
     PathUtils.join(assetDirectory(), filename),
     new Uint8Array(bytes),

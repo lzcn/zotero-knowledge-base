@@ -25,7 +25,17 @@ class Addon {
       ztoolkit: createZToolkit(),
     };
     this.hooks = hooks;
-    this.api = api;
+    this.api = new Proxy(api, {
+      get: (target, key, receiver) => {
+        const method = Reflect.get(target, key, receiver);
+        if (typeof method !== "function") return method;
+        return (...args: unknown[]) => {
+          if (!this.data.alive && key !== "releaseImageDraft")
+            throw new Error("Knowledge Base is shutting down.");
+          return Reflect.apply(method, target, args);
+        };
+      },
+    });
   }
 }
 

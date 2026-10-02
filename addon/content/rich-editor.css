@@ -1,0 +1,110 @@
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  font:
+    13px/1.65 system-ui,
+    sans-serif;
+  color: CanvasText;
+  background: Canvas;
+}
+.tiptap {
+  min-height: calc(100vh - 32px);
+  padding: 16px;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+.tiptap > :first-child {
+  margin-top: 0;
+}
+.tiptap p {
+  margin: 0 0 0.8em;
+}
+.tiptap h1,
+.tiptap h2,
+.tiptap h3 {
+  line-height: 1.3;
+}
+.tiptap img {
+  max-width: 100%;
+  height: auto;
+}
+.tiptap a {
+  color: LinkText;
+  text-decoration: underline;
+}
+.tiptap blockquote {
+  margin: 0.8em 0;
+  padding-left: 16px;
+  border-left: 2px solid GrayText;
+}
+.tiptap pre {
+  background: color-mix(in srgb, CanvasText 5%, Canvas);
+  padding: 12px;
+  border-radius: 5px;
+  white-space: pre-wrap;
+}
+.tiptap code {
+  font-family: ui-monospace, monospace;
+}
+.tiptap table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 12px 0;
+}
+.tiptap th,
+.tiptap td {
+  border: 1px solid GrayText;
+  padding: 6px 8px;
+  vertical-align: top;
+  min-width: 40px;
+}
+.tiptap th {
+  background: color-mix(in srgb, CanvasText 5%, Canvas);
+}
+.tiptap ul[data-type="taskList"] {
+  padding-left: 0;
+  list-style: none;
+}
+.tiptap li[data-type="taskItem"] {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.tiptap li[data-type="taskItem"] > div {
+  flex: 1;
+  min-width: 0;
+}
+.tiptap li[data-type="taskItem"] > label {
+  flex: 0 0 auto;
+}
+.ProseMirror-selectednode {
+  outline: 2px solid Highlight;
+}
+.tiptap .selectedCell {
+  background: color-mix(in srgb, Highlight 15%, Canvas);
+}
+.ProseMirror-gapcursor {
+  display: none;
+  pointer-events: none;
+  position: absolute;
+}
+.ProseMirror-gapcursor:after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+  border-top: 1px solid CanvasText;
+  animation: blink 1s steps(2, start) infinite;
+}
+.ProseMirror-focused .ProseMirror-gapcursor {
+  display: block;
+}
+@keyframes blink {
+  to {
+    visibility: hidden;
+  }
+}

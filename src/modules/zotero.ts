@@ -8,6 +8,7 @@ export interface ItemSummary {
   libraryID: number;
   title: string;
   creatorYear: string;
+  publication?: string;
   selectURL: string;
   libraryName: string;
 }
@@ -46,6 +47,13 @@ function summary(item: Zotero.Item): ItemSummary {
       ? item.getNoteTitle()
       : item.getField("title", false, true) || "",
     creatorYear: creatorYear(item),
+    publication: String(
+      item.getField("publicationTitle", false, true) ||
+        item.getField("conferenceName", false, true) ||
+        item.getField("publisher", false, true) ||
+        item.getField("repository", false, true) ||
+        "",
+    ),
     selectURL: selectURL(item),
     libraryName: library ? library.name : "",
   };

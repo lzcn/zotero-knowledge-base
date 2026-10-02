@@ -166,6 +166,41 @@ try {
   ]);
   pass("Closing an editor during an image write does not leave an orphan file");
 
+  let allowExists;
+  let existsStarted;
+  const existenceCheck = new Promise((resolve) => {
+    existsStarted = resolve;
+  });
+  const originalExists = IOUtils.exists;
+  IOUtils.exists = async () => {
+    existsStarted();
+    return new Promise((resolve) => {
+      allowExists = resolve;
+    });
+  };
+  const cleaning = assets.cleanupUnusedImages();
+  await existenceCheck;
+  assets.stopAssets();
+  globalThis.__cardBodies = () => {
+    throw new Error("SQL started during shutdown");
+  };
+  allowExists(true);
+  assert.equal(await cleaning, 0);
+  IOUtils.exists = () => {
+    throw new Error("Filesystem scan started during shutdown");
+  };
+  await assets.releaseImageDraft("quitting");
+  assert.equal(await assets.cleanupUnusedImages(), 0);
+  await assert.rejects(
+    assets.importImage([1], "image/png", "quitting"),
+    /shutting down/,
+  );
+  IOUtils.exists = originalExists;
+  await assets.closeAssets();
+  pass(
+    "Quit cancels pending scans and rejects new imports without SQL or filesystem work",
+  );
+
   console.log(`OK - ${checks} asset cleanup checks`);
 } finally {
   win.close();

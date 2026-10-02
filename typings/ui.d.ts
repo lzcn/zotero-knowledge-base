@@ -9,6 +9,11 @@ declare global {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
   }
   interface Window {
+    KnowledgeBaseRichEditor: {
+      create(
+        options: import("../src/ui/rich-editor").RichEditorOptions,
+      ): import("../src/ui/rich-editor").RichEditorController;
+    };
     KnowledgeBaseEditing: {
       formatEdit: typeof import("../src/ui/editor-formatting").formatEdit;
       continueList: typeof import("../src/ui/editor-formatting").continueList;
@@ -18,6 +23,12 @@ declare global {
     DOMParser: typeof DOMParser;
     ZoteroKnowledgeBaseMarkdown: {
       render(container: Element, body: string): void;
+      identity(container: Element, id: string, title: string): void;
+      renderFamily(
+        container: Element,
+        family: import("../src/modules/hierarchy").CardFamily,
+        api: KnowledgeBaseAPI,
+      ): void;
     };
     ZoteroKnowledgeBase_selectZettel?: (id: string) => void;
     ZoteroKnowledgeBase_showGraph?: (id?: string) => void;
@@ -25,6 +36,17 @@ declare global {
 }
 
 export interface EditorElements {
+  "knowledge-base-rich-frame": HTMLIFrameElement;
+  "knowledge-base-command-open": HTMLButtonElement;
+  "knowledge-base-command-menu": HTMLDivElement;
+  "knowledge-base-command-search": HTMLInputElement;
+  "knowledge-base-command-list": HTMLDivElement;
+  "knowledge-base-parent-label": HTMLLabelElement;
+  "knowledge-base-parent-display": HTMLButtonElement;
+  "knowledge-base-parent-search": HTMLInputElement;
+  "knowledge-base-parent-results": HTMLUListElement;
+  "knowledge-base-parent-root": HTMLButtonElement;
+  "knowledge-base-editor-family": HTMLDivElement;
   "knowledge-base-editor": Element;
   "knowledge-base-editor-root": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-toolbar": HTMLElementTagNameMap["div"];
@@ -75,6 +97,9 @@ export interface EditorElements {
 }
 
 export interface ManagerElements {
+  "knowledge-base-entries": HTMLInputElement;
+  "knowledge-base-entries-label": HTMLSpanElement;
+  "knowledge-base-family": HTMLDivElement;
   "knowledge-base-manager": Element;
   "knowledge-base-root": HTMLElementTagNameMap["div"];
   "knowledge-base-toolbar": HTMLElementTagNameMap["header"];
@@ -90,6 +115,8 @@ export interface ManagerElements {
   "knowledge-base-detail-empty": HTMLElementTagNameMap["div"];
   "knowledge-base-detail": HTMLElementTagNameMap["div"];
   "knowledge-base-detail-title": HTMLElementTagNameMap["html"];
+  "knowledge-base-detail-id": HTMLDivElement;
+  "knowledge-base-btn-child": HTMLButtonElement;
   "knowledge-base-detail-meta": HTMLElementTagNameMap["div"];
   "knowledge-base-detail-source": HTMLElementTagNameMap["div"];
   "knowledge-base-outgoing-head": HTMLElementTagNameMap["html"];
@@ -124,18 +151,14 @@ export interface AnnotationsElements {
 }
 
 export interface GraphElements {
+  "graph-display-menu": XULMenuPopupElement;
+  "graph-outline": Element;
+  "graph-references": Element;
   "knowledge-base-graph": Element;
   "knowledge-base-graph-root": HTMLElementTagNameMap["div"];
   "knowledge-base-graph-toolbar": HTMLElementTagNameMap["header"];
   "graph-search": HTMLElementTagNameMap["input"];
-  "graph-scope": HTMLElementTagNameMap["div"];
-  "graph-all": HTMLElementTagNameMap["button"];
-  "graph-local-one": HTMLElementTagNameMap["button"];
-  "graph-local-two": HTMLElementTagNameMap["button"];
-  "graph-sources": HTMLElementTagNameMap["input"];
-  "graph-sources-label": HTMLElementTagNameMap["span"];
-  "graph-unresolved": HTMLElementTagNameMap["input"];
-  "graph-unresolved-label": HTMLElementTagNameMap["span"];
+  "graph-sources": Element;
   "graph-fit": HTMLElementTagNameMap["button"];
   "graph-refresh": HTMLElementTagNameMap["button"];
   "graph-stats": HTMLElementTagNameMap["span"];
@@ -144,15 +167,13 @@ export interface GraphElements {
   "graph-svg": SVGSVGElement;
   "graph-empty": HTMLElementTagNameMap["div"];
   "graph-inspector": HTMLElementTagNameMap["aside"];
-  "graph-hint": HTMLElementTagNameMap["p"];
   "graph-selection": HTMLElementTagNameMap["div"];
   "graph-node-title": HTMLElementTagNameMap["html"];
   "graph-node-kind": HTMLElementTagNameMap["div"];
-  "graph-node-snippet": HTMLElementTagNameMap["p"];
+  "graph-node-snippet": HTMLElementTagNameMap["div"];
   "graph-node-open": HTMLElementTagNameMap["button"];
-  "graph-node-focus": HTMLElementTagNameMap["button"];
   "graph-connections-title": HTMLElementTagNameMap["html"];
-  "graph-connections": HTMLElementTagNameMap["ul"];
+  "graph-connections": HTMLElementTagNameMap["div"];
   "graph-legend": HTMLElementTagNameMap["footer"];
   "graph-legend-cards": HTMLElementTagNameMap["span"];
   "graph-legend-sources": HTMLElementTagNameMap["span"];

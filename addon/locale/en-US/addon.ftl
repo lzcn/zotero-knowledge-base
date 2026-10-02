@@ -123,7 +123,7 @@ editor-link-pick = Insert card link
 editor-link-placeholder = Search card title, body or ID…
 editor-link-empty = No matching cards. You can also write [[New concept]].
 editor-preview = Live preview
-editor-body-placeholder = Write in Markdown: headings, lists, quotes, code and tables. Type [[ or use Insert card link to connect cards.
+editor-body-placeholder = Write in Markdown. Type [[ID]] to reference a card.
 editor-format-text = Text
 editor-searching = Searching…
 editor-search-empty = No matching references
@@ -136,7 +136,7 @@ editor-relations-empty = No connections yet
 
 graph-title = Card graph
 graph-all = All cards
-graph-local-one = Direct connections
+graph-local-one = Show in graph
 graph-local-two = Extended connections
 graph-sources = Source items
 graph-unresolved = Missing cards
@@ -145,19 +145,59 @@ graph-refresh = Refresh
 graph-focus = Focus this node
 graph-open = Open
 graph-create = Create card
-graph-connections = Related information
-graph-search = Search node title, body or ID…
-graph-hint = Click a node to inspect connections; double-click to open. Scroll to zoom, drag the canvas to pan, or drag a node. Arrows show the direction of references.
+graph-connections = Links & backlinks
+graph-search = Search cards…
+graph-hint = Click to inspect; double-click to open. Solid lines show parent → child; dashed lines show references.
 graph-empty = No nodes match this view. Create a card and insert card links in its body to connect ideas.
 graph-stats = { $cards } cards · { $links } connections
 graph-kind-card = Card
 graph-kind-source = Source item
 graph-kind-unresolved = Missing card
-graph-legend-cards = ● Cards · arrows: references
-graph-legend-sources = ◈ Sources · dashed: provenance
+graph-legend-cards = ● Cards · solid: parent–child · dashed: card links
+graph-legend-sources = ◈ Sources
 graph-legend-unresolved = ○ Missing cards
 
 section-load-error = Could not load cards. Select the item again to retry.
 
 
 editor-relations = Card connections
+
+editor-visual = Visual editing
+
+hierarchy = Knowledge outline
+parent = Parent
+children = Children
+entries = Entry points
+root = Entry point
+parent-search = Find parent by ID or title
+references = References
+both = Outline + references
+
+new-child = New child
+
+command-menu = Insert
+command-search = Find a command…
+command-empty = No matching commands
+command-heading = Heading
+command-list = List
+command-task = Task
+command-quote = Quote
+command-code = Code block
+command-table = Table
+more-actions = More actions
+
+manager-show-graph = Show in graph
+
+graph-display = Display
+
+graph-hierarchy = Parent–child hierarchy
+
+graph-links = Card links
+
+graph-outgoing = Outgoing links
+
+graph-backlinks = Backlinks
+
+graph-open-card = Edit card
+
+graph-open-source = Open source item

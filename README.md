@@ -11,23 +11,28 @@ Manage connected idea cards in Zotero. Write one idea in your own words, keep it
 ## Features
 
 - Link existing Zotero items and notes without copying their content.
-
-- Write Markdown with images, links, tables, code, and a live preview.
-- Search cards, insert links, and see backlinks.
+- Write Markdown or use the visual editor, with images, links, tables, code, and math (`$…$` or `$$…$$`). Click a formula in the visual editor to edit its LaTeX.
+- Reference cards with `[[ID]]`; the body shows a numbered link, while relation panels show ID and title.
 - Associate Zotero sources and view cards in the item sidebar.
-- Explore all cards or a card’s connections in a graph.
+- Build a knowledge outline with one parent per card; children are derived automatically.
+- Start from entry points (cards without parents).
+- Show parent–child connections and card links separately. Hide source items and their connections by right-clicking the graph or using its settings button.
 - Create cards from PDF highlights, individually or in batches.
 - Remove images no longer used by saved cards or open drafts.
 
 ## Installation
 
-Requires Zotero 7–10.
+Requires Zotero 10.
 
-Open **Tools → Plugins** in Zotero, select **Install Plugin From File** from the gear menu, choose the `.xpi` file, and restart Zotero.
+Download the `.xpi` file from [Releases](https://github.com/lzcn/zotero-knowledge-base/releases). Open **Tools → Plugins** in Zotero, select **Install Plugin From File** from the gear menu, choose the `.xpi` file, and restart Zotero.
 
 ## Usage
 
 Open **Tools → Knowledge Base**. Write one idea per card, choose a source, and link related cards. Use `Ctrl/Cmd+S` to save and `Ctrl/Cmd+K` to find a card to link.
+
+Start from entry points, then follow parents and children. Choose **New child card** to create a child of the current card. Parent selection builds the outline; `[[ID]]` in the body creates a separate reference. Relationship groups show titles and stable IDs, with counts and collapsible lists. In the reference picker, use arrow keys to choose a card and Enter to insert it.
+
+Click ➕ in the editor for insertion options, or type `/` at the start of a Markdown line to search commands. Use arrow keys and Enter to choose; Escape cancels. Parent selection opens on click. The graph reserves space for titles and subtrees, uses curved connections, and preserves your view when toggling relationships.
 
 ## Data and backup
 
@@ -48,7 +53,9 @@ npm run release    # Run all checks and prepare local release files
 
 For local testing, install `dist/zotero-knowledge-base.xpi`, restart Zotero, and test the plugin. Rebuild and reinstall after changes.
 
-Release files are prepared in `release/v0.1.0/`: `zotero-knowledge-base-0.1.0.xpi`, `SHA256SUMS`, and `updates.json`. `npm run release` does not upload files. For publication, upload the XPI and `updates.json` as assets of the corresponding version’s Release.
+`npm run test:host` tests real Zotero startup, saving, and quitting with the manager, editor, and graph open. It uses temporary profile and data directories. The default executable is the macOS app; set `ZOTERO_BINARY` for another path.
+
+`npm run release` prepares the XPI, checksums, and update metadata under `release/`. It does not create a Git tag or publish a GitHub release.
 
 After configuring Zotero paths and a development profile in your local `.env`, use `npm start` for development.
 

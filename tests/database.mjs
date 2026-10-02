@@ -63,6 +63,7 @@ class Connection {
     this.db = new DatabaseSync(filename);
   }
   async execute(sql, params = null) {
+    executedStatements.push(sql);
     const bound = Array.isArray(params)
       ? params
       : params
@@ -99,6 +100,7 @@ class Connection {
     this.db.close();
   }
 }
+const executedStatements = [];
 
 /* ------------------------------------------------------------------ */
 /* host bindings (must exist before the bundle is imported)                  */
@@ -109,6 +111,7 @@ const zoteroStub = {
   debug: () => {},
   logError: (e) => console.log(`   [zotero.logError] ${e?.message ?? e}`),
 };
+const shutdownBlockers = new Set();
 
 globalThis.ChromeUtils = {
   importESModule: (spec) => {
@@ -117,6 +120,10 @@ globalThis.ChromeUtils = {
     return {
       Sqlite: {
         openConnection: async ({ path: file }) => new Connection(file),
+        shutdown: {
+          addBlocker: (_name, blocker) => shutdownBlockers.add(blocker),
+          removeBlocker: (blocker) => shutdownBlockers.delete(blocker),
+        },
       },
     };
   },
@@ -211,7 +218,8 @@ await writeFile(
   // Absolute paths so esbuild does not need the entry to sit in the project.
   `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
     `export * as zettel from ${JSON.stringify(path.join(ROOT, "src/modules/zettel.ts"))};\n` +
-    `export * as graph from ${JSON.stringify(path.join(ROOT, "src/modules/graph.ts"))};\n`,
+    `export * as graph from ${JSON.stringify(path.join(ROOT, "src/modules/graph.ts"))};\n` +
+    `export * as hierarchy from ${JSON.stringify(path.join(ROOT, "src/modules/hierarchy.ts"))};\n`,
 );
 await build({
   entryPoints: [entry],
@@ -224,7 +232,9 @@ await build({
 
 // One bundle, one module instance: both modules must share the same
 // connection object for the flow checks to mean anything.
-const { db, zettel, graph } = await import(pathToFileURL(bundle).href);
+const { db, zettel, graph, hierarchy } = await import(
+  pathToFileURL(bundle).href
+);
 
 async function readSchema(file) {
   const inspect = new DatabaseSync(file);
@@ -276,7 +286,7 @@ async function initialize(label, dataDir, prepare) {
   }
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
-  check("schemaVersion is 3", schema.version === "3", `got ${schema.version}`);
+  check("schemaVersion is 4", schema.version === "4", `got ${schema.version}`);
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
     "all required columns present",
@@ -284,8 +294,8 @@ async function initialize(label, dataDir, prepare) {
     missing.join(", "),
   );
   check(
-    "all 6 indexes present",
-    schema.indexes.length === 6,
+    "all 7 indexes present",
+    schema.indexes.length === 7,
     `got ${schema.indexes.length}`,
   );
   return schema;
@@ -295,7 +305,61 @@ async function initialize(label, dataDir, prepare) {
 const fresh = await initialize("fresh database", path.join(workspace, "fresh"));
 if (fresh)
   check("fresh database has no rows", fresh.rows === 0, `got ${fresh.rows}`);
-await db.closeDB();
+check("database registers a shutdown blocker", shutdownBlockers.size === 1);
+await Promise.all([...shutdownBlockers].map((blocker) => blocker()));
+check(
+  "application shutdown closes and releases its connection",
+  shutdownBlockers.size === 0,
+);
+let closed = false;
+try {
+  await db.getAll("SELECT * FROM zettels");
+} catch {
+  closed = true;
+}
+check("closed connection rejects new queries", closed);
+const reopened = await initialize(
+  "reopen after shutdown",
+  path.join(workspace, "fresh"),
+);
+check("shutdown preserves the SQLite file", reopened?.rows === 0);
+await Promise.all([db.closeDB(), db.closeDB()]);
+check("duplicate close removes the blocker once", shutdownBlockers.size === 0);
+await db.initDB();
+let finishWrite;
+let writeStarted;
+const writing = new Promise((resolve) => {
+  writeStarted = resolve;
+});
+const pendingWrite = db.transaction(async () => {
+  await db.exec("INSERT INTO meta(key,value) VALUES('shutdown-test','before')");
+  writeStarted();
+  await new Promise((resolve) => {
+    finishWrite = resolve;
+  });
+  await db.exec("UPDATE meta SET value='committed' WHERE key='shutdown-test'");
+});
+await writing;
+const draining = Promise.all([...shutdownBlockers].map((blocker) => blocker()));
+await new Promise((resolve) => setImmediate(resolve));
+let newWriteRejected = false;
+try {
+  await db.transaction(async () => {});
+} catch {
+  newWriteRejected = true;
+}
+finishWrite();
+await Promise.all([pendingWrite, draining]);
+const savedWrite = new DatabaseSync(
+  path.join(workspace, "fresh/knowledge-base.sqlite"),
+);
+check(
+  "shutdown commits the current transaction and rejects new writes",
+  newWriteRejected &&
+    savedWrite.prepare("SELECT value FROM meta WHERE key='shutdown-test'").get()
+      .value === "committed",
+);
+savedWrite.close();
 
 /* ---- case 2: current development database ---- */
 const currentSchema = await initialize(
@@ -315,6 +379,13 @@ if (currentSchema) {
 if (currentSchema) {
   console.log("\n=== data-layer flows ===");
   await db.initDB();
+  const beforeCancellation = executedStatements.length;
+  let cancellationChecks = 0;
+  await zettel.rebuildCounts(() => ++cancellationChecks > 1);
+  check(
+    "cancelled indexing finishes its current read without scheduling more SQL",
+    executedStatements.length === beforeCancellation + 1,
+  );
   await zettel.rebuildCounts();
 
   const listed = await zettel.listZettels();
@@ -426,8 +497,8 @@ if (currentSchema) {
   const laterId = await zettel.saveZettel({ title: "Later", body: "" });
   const forwardLink = (await zettel.getOutgoing(forwardId))[0];
   check(
-    "creating a target resolves earlier links and preserves aliases",
-    forwardLink?.targetId === laterId && forwardLink?.display === "显示别名",
+    "creating a target resolves earlier links and shows its current title",
+    forwardLink?.targetId === laterId && forwardLink?.display === "Later",
   );
   check(
     "resolved forward reference appears in backlinks and counts",
@@ -447,6 +518,97 @@ if (currentSchema) {
   check(
     "code examples do not create phantom graph references",
     !(await zettel.getUnresolvedRefs()).some((ref) => ref.ref === "Not a card"),
+  );
+  const rootId = await zettel.saveZettel({ title: "Outline root", body: "" });
+  const branchId = await zettel.saveZettel({
+    title: "Outline branch",
+    body: "",
+    parentId: rootId,
+  });
+  const leafId = await zettel.saveZettel({
+    title: "Outline leaf",
+    body: `[[${rootId}]]`,
+    parentId: branchId,
+  });
+  check(
+    "Parent assignment derives children without changing reference counts",
+    (await hierarchy.getFamily(branchId)).parent?.id === rootId &&
+      (await hierarchy.getFamily(branchId)).children[0]?.id === leafId &&
+      (await zettel.getZettel(branchId)).outgoing === 0 &&
+      (await zettel.getZettel(rootId)).incoming === 1,
+  );
+  check(
+    "Entry points select only cards without parents before the list limit",
+    (await zettel.listZettels("Outline", true))
+      .map((card) => card.id)
+      .join() === rootId,
+  );
+  let cycleRejected = false;
+  try {
+    await zettel.saveZettel({
+      id: rootId,
+      title: "Should roll back",
+      body: "",
+      parentId: leafId,
+    });
+  } catch {
+    cycleRejected = true;
+  }
+  check(
+    "Cycles reject the entire card edit transaction",
+    cycleRejected &&
+      (await zettel.getZettel(rootId)).title === "Outline root" &&
+      !(await hierarchy.getFamily(rootId)).parent,
+  );
+  let selfRejected = false;
+  try {
+    await zettel.saveZettel({
+      id: leafId,
+      title: "Outline leaf",
+      body: "",
+      parentId: leafId,
+    });
+  } catch {
+    selfRejected = true;
+  }
+  check(
+    "Self parent is rejected and descendants cannot be offered as parents",
+    selfRejected &&
+      !(await hierarchy.getParentCandidates(rootId)).some((card) =>
+        [rootId, branchId, leafId].includes(card.id),
+      ),
+  );
+  const tree = graph.filterGraph(await graph.getGraphData(), {
+    relationMode: "hierarchy",
+    centerId: branchId,
+    depth: 1,
+  });
+  check(
+    "Hierarchy graph is independent from bidirectional links",
+    tree.edges.length === 2 &&
+      tree.edges.every((edge) => edge.kind === "parent"),
+  );
+  const position = graph.layoutHierarchy(tree.nodes);
+  check(
+    "Hierarchy layout places parent above child",
+    position.get(rootId).y < position.get(branchId).y &&
+      position.get(branchId).y < position.get(leafId).y,
+  );
+  await zettel.deleteZettel(branchId);
+  check(
+    "Deleting a parent moves its children one level up",
+    (await hierarchy.getFamily(leafId)).parent?.id === rootId,
+  );
+  await zettel.saveZettel({
+    id: leafId,
+    title: "Outline leaf",
+    body: "",
+    parentId: null,
+  });
+  check(
+    "Clearing parent makes a card an entry point",
+    !(await hierarchy.getFamily(leafId)).parent &&
+      (await zettel.listZettels("Outline", true)).length === 2,
   );
   await zettel.saveZettel({ title: "Pending", body: "[[Future concept]]" });
   const allGraph = await graph.getGraphData();

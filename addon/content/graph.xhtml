@@ -1,4 +1,6 @@
 <?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?> <?xml-stylesheet
+href="chrome://zotero-platform/content/zotero.css" type="text/css"?>
 <?xml-stylesheet
 href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
@@ -13,27 +15,24 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
+  <script src="chrome://knowledge-base/content/markdown.js" />
   <script src="chrome://knowledge-base/content/graph.js" />
   <html:div id="knowledge-base-graph-root">
     <html:header id="knowledge-base-graph-toolbar">
       <html:input id="graph-search" type="search" />
-      <html:div id="graph-scope" role="group">
-        <html:button id="graph-all" type="button" data-scope="all" />
-        <html:button id="graph-local-one" type="button" data-scope="1" />
-        <html:button id="graph-local-two" type="button" data-scope="2" />
-      </html:div>
-      <html:label
-        ><html:input id="graph-sources" type="checkbox" /><html:span
-          id="graph-sources-label"
-      /></html:label>
-      <html:label
-        ><html:input
-          id="graph-unresolved"
-          type="checkbox"
-          checked="checked" /><html:span id="graph-unresolved-label"
-      /></html:label>
-      <html:button id="graph-fit" />
-      <html:button id="graph-refresh" />
+      <html:div class="spacer" />
+      <toolbarbutton id="graph-settings" class="kb-native-tool" type="menu">
+        <menupopup id="graph-display-menu">
+          <menuitem id="graph-outline" type="checkbox" checked="true" />
+          <menuitem id="graph-references" type="checkbox" checked="true" />
+          <menuitem id="graph-sources" type="checkbox" checked="true" />
+          <menuseparator />
+          <menuitem id="graph-menu-fit" />
+          <menuitem id="graph-menu-refresh" />
+        </menupopup>
+      </toolbarbutton>
+      <toolbarbutton id="graph-fit" class="kb-native-tool" />
+      <toolbarbutton id="graph-refresh" class="kb-native-tool" />
       <html:span id="graph-stats" class="muted" />
     </html:header>
     <html:main id="knowledge-base-graph-main">
@@ -42,15 +41,15 @@ type="text/css"?>
         <html:div id="graph-empty" class="muted" hidden="hidden" />
       </html:div>
       <html:aside id="graph-inspector">
-        <html:p id="graph-hint" class="muted" />
         <html:div id="graph-selection" hidden="hidden">
-          <html:h2 id="graph-node-title" />
+          <html:header class="graph-node-heading">
+            <html:h2 id="graph-node-title" />
+            <toolbarbutton id="graph-node-open" class="kb-native-tool" />
+          </html:header>
           <html:div id="graph-node-kind" class="muted" />
-          <html:p id="graph-node-snippet" />
-          <html:button id="graph-node-open" />
-          <html:button id="graph-node-focus" />
+          <html:div id="graph-node-snippet" class="markdown-body" />
           <html:h3 id="graph-connections-title" />
-          <html:ul id="graph-connections" class="refs" />
+          <html:div id="graph-connections" />
         </html:div>
       </html:aside>
     </html:main>

@@ -7,6 +7,7 @@ import { registerReaderUI, unregisterReaderUI } from "./modules/reader";
 import {
   initAssets,
   closeAssets,
+  stopAssets,
   cleanupImagesAfterChange,
 } from "./modules/assets";
 import {
@@ -19,9 +20,20 @@ let ready = false;
 let generation = 0;
 let startupPromise: Promise<void> | undefined;
 let shutdownPromise: Promise<void> | undefined;
+let observingQuit = false;
+let cancelReadiness: (() => void) | undefined;
+const quitObserver = { observe: () => onAppShutdown() };
+
+function removeQuitObserver(): void {
+  if (!observingQuit) return;
+  Services.obs.removeObserver(quitObserver, "quit-application-granted");
+  observingQuit = false;
+}
 
 async function onStartup(): Promise<void> {
   if (startupPromise) return startupPromise;
+  Services.obs.addObserver(quitObserver, "quit-application-granted");
+  observingQuit = true;
   const token = ++generation;
   startupPromise = start(token);
   return startupPromise;
@@ -30,17 +42,23 @@ async function onStartup(): Promise<void> {
 async function start(token: number): Promise<void> {
   let step = "Zotero readiness";
   try {
-    await Promise.all([
-      Zotero.initializationPromise,
-      Zotero.unlockPromise,
-      Zotero.uiReadyPromise,
+    await Promise.race([
+      Promise.all([
+        Zotero.initializationPromise,
+        Zotero.unlockPromise,
+        Zotero.uiReadyPromise,
+      ]),
+      new Promise<void>((resolve) => {
+        cancelReadiness = resolve;
+      }),
     ]);
+    cancelReadiness = undefined;
     if (token !== generation) return;
     initLocale();
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
       ["initAssets", initAssets],
-      ["rebuildCounts", rebuildCounts],
+      ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
       ["registerItemPaneUI", registerItemPaneUI],
       ["registerReaderUI", registerReaderUI],
@@ -141,6 +159,7 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 
 async function releaseResources(): Promise<void> {
   ready = false;
+  removeQuitObserver();
   for (const win of [...windows.keys()]) await onMainWindowUnload(win);
   const actions: (() => unknown | Promise<unknown>)[] = [
     () => {
@@ -174,11 +193,19 @@ async function releaseResources(): Promise<void> {
   }
 }
 
+function onAppShutdown(): void {
+  ++generation;
+  ready = false;
+  addon.data.alive = false;
+  stopAssets();
+  cancelReadiness?.();
+  removeQuitObserver();
+}
+
 async function onShutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
-    ++generation;
-    ready = false;
+    onAppShutdown();
     await startupPromise;
     await releaseResources();
     addon.data.alive = false;
@@ -187,4 +214,10 @@ async function onShutdown(): Promise<void> {
   return shutdownPromise;
 }
 
-export default { onStartup, onShutdown, onMainWindowLoad, onMainWindowUnload };
+export default {
+  onStartup,
+  onShutdown,
+  onAppShutdown,
+  onMainWindowLoad,
+  onMainWindowUnload,
+};

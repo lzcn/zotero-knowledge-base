@@ -10,7 +10,7 @@
  */
 
 const DB_FILENAME = "knowledge-base.sqlite";
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 export interface ZettelRow {
   id: string;
@@ -31,6 +31,7 @@ export interface LinkRow {
 }
 
 const SCHEMA_TABLES: string[] = [
+  `CREATE TABLE IF NOT EXISTS card_parents (card_id TEXT PRIMARY KEY, parent_id TEXT, CHECK(card_id <> parent_id))`,
   `CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -62,6 +63,7 @@ const SCHEMA_TABLES: string[] = [
  * Create indexes after the current schema tables.
  */
 const SCHEMA_INDEXES: string[] = [
+  `CREATE INDEX IF NOT EXISTS idx_card_parents_parent ON card_parents(parent_id)`,
   `CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id)`,
   `CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id)`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_title ON zettels(title)`,
@@ -81,11 +83,27 @@ interface SqliteConnection {
 interface SqliteModule {
   Sqlite: {
     openConnection(options: { path: string }): Promise<SqliteConnection>;
+    shutdown: {
+      addBlocker(name: string, blocker: () => Promise<void>): void;
+      removeBlocker(blocker: () => Promise<void>): void;
+    };
   };
 }
 
 let _conn: SqliteConnection | null = null;
 let _schemaReady = false;
+let _initializing: Promise<void> | undefined;
+let _shutdownClient: SqliteModule["Sqlite"]["shutdown"] | undefined;
+let _closing: Promise<void> | undefined;
+const _transactions = new Set<Promise<unknown>>();
+
+async function shutdownDatabase(): Promise<void> {
+  try {
+    await _initializing;
+  } finally {
+    await closeDB();
+  }
+}
 
 function getSqlite(): SqliteModule {
   return ChromeUtils.importESModule(
@@ -94,6 +112,16 @@ function getSqlite(): SqliteModule {
 }
 
 export async function initDB(): Promise<void> {
+  if (_initializing) return _initializing;
+  _initializing = initializeDB();
+  try {
+    await _initializing;
+  } finally {
+    _initializing = undefined;
+  }
+}
+
+async function initializeDB(): Promise<void> {
   // Retry initialization if an earlier attempt did not finish.
   if (_conn && _schemaReady) return;
 
@@ -101,6 +129,12 @@ export async function initDB(): Promise<void> {
     const { Sqlite } = getSqlite();
     const path = PathUtils.join(Zotero.DataDirectory.dir, DB_FILENAME);
     _conn = await Sqlite.openConnection({ path });
+    // Sqlite waits for every connection to close; it does not close ours for us.
+    _shutdownClient = Sqlite.shutdown;
+    _shutdownClient.addBlocker(
+      "Knowledge Base: close database",
+      shutdownDatabase,
+    );
     // WAL is a performance optimisation only. Zotero wraps this same pragma in
     // try/catch in xpcom/db.js, and so must we: letting it abort the run would
     // leave the database permanently stuck on its old schema. Written without
@@ -138,6 +172,9 @@ async function ensureSchema(): Promise<void> {
     [String(SCHEMA_VERSION)],
   );
 
+  await exec(
+    `INSERT OR IGNORE INTO card_parents (card_id, parent_id) SELECT id, NULL FROM zettels`,
+  );
   await assertSchema();
 }
 
@@ -285,15 +322,26 @@ export async function collectDBDiagnostics(): Promise<string> {
 }
 
 export async function closeDB(): Promise<void> {
-  if (_conn) {
-    await _conn.close();
+  if (_closing) return _closing;
+  const connection = _conn;
+  if (!connection) return;
+  _closing = (async () => {
+    await Promise.allSettled([..._transactions]);
+    await connection.close();
     _conn = null;
     _schemaReady = false;
+    _shutdownClient?.removeBlocker(shutdownDatabase);
+    _shutdownClient = undefined;
+  })();
+  try {
+    await _closing;
+  } finally {
+    _closing = undefined;
   }
 }
 
 function conn(): SqliteConnection {
-  if (!_conn)
+  if (!_conn || (_closing && !_transactions.size))
     throw new Error(
       "Knowledge Base: database is not ready. Reopen this window after startup.",
     );
@@ -335,5 +383,12 @@ export async function getOne<T>(
 }
 
 export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
-  return conn().executeTransaction(fn);
+  if (_closing) throw new Error("Knowledge Base: database is closing.");
+  const operation = conn().executeTransaction(fn);
+  _transactions.add(operation);
+  try {
+    return await operation;
+  } finally {
+    _transactions.delete(operation);
+  }
 }

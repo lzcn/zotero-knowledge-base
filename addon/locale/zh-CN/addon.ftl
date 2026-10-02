@@ -97,7 +97,7 @@ editor-link-pick = 插入卡片链接
 editor-link-placeholder = 搜索卡片标题、正文或 ID…
 editor-link-empty = 没有匹配的卡片；也可以直接写 [[新概念]]
 editor-preview = 实时预览
-editor-body-placeholder = 用 Markdown 记录想法。输入 [[ 或点击“插入卡片链接”关联其他卡片。
+editor-body-placeholder = 用 Markdown 写正文，通过 [[ID]] 引用卡片。
 editor-format-text = 文字
 editor-searching = 搜索中…
 editor-search-empty = 没有匹配的来源文献
@@ -110,7 +110,7 @@ editor-relations-empty = 暂无关联卡片
 
 graph-title = 卡片关系图
 graph-all = 全部卡片
-graph-local-one = 直接关联
+graph-local-one = 在关系图中查看
 graph-local-two = 间接关联
 graph-sources = 文献来源
 graph-unresolved = 待创建的卡片
@@ -119,19 +119,59 @@ graph-refresh = 刷新
 graph-focus = 聚焦此节点
 graph-open = 打开
 graph-create = 创建卡片
-graph-connections = 关联信息
-graph-search = 搜索节点标题、正文或 ID…
-graph-hint = 单击节点查看连接；双击打开。滚轮缩放，拖动画布平移，拖动节点整理布局。箭头表示卡片的引用方向。
+graph-connections = 链接与反向链接
+graph-search = 搜索卡片…
+graph-hint = 单击查看，双击打开。实线为父 → 子，虚线为双链。
 graph-empty = 当前筛选下没有节点。新建卡片，并在正文中插入卡片链接来建立连接。
 graph-stats = { $cards } 张卡片 · { $links } 条连接
 graph-kind-card = 卡片
 graph-kind-source = 来源文献
 graph-kind-unresolved = 待创建的卡片
-graph-legend-cards = ● 卡片 · 实线箭头：引用
-graph-legend-sources = ◈ 来源 · 虚线：出处
+graph-legend-cards = ● 卡片 · 实线：父子层级 · 虚线：卡片链接
+graph-legend-sources = ◈ 来源
 graph-legend-unresolved = ○ 待创建的卡片
 
 section-load-error = 卡片加载失败，请重新选择条目重试。
 
 
 editor-relations = 卡片关联
+
+editor-visual = 可视化编辑
+
+hierarchy = 知识脉络
+parent = 父节点
+children = 子节点
+entries = 入口点
+root = 入口点
+parent-search = 用编号或标题查找父节点
+references = 双链
+both = 脉络 + 双链
+
+new-child = 新建子卡片
+
+command-menu = 插入
+command-search = 搜索命令…
+command-empty = 没有匹配的命令
+command-heading = 标题
+command-list = 列表
+command-task = 待办
+command-quote = 引用块
+command-code = 代码块
+command-table = 表格
+more-actions = 更多操作
+
+manager-show-graph = 在关系图中定位
+
+graph-display = 显示设置
+
+graph-hierarchy = 卡片父子层级
+
+graph-links = 卡片链接（双链）
+
+graph-outgoing = 链接到
+
+graph-backlinks = 反向链接
+
+graph-open-card = 编辑卡片
+
+graph-open-source = 打开来源文献

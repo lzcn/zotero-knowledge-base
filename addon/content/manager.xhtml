@@ -1,4 +1,6 @@
 <?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?> <?xml-stylesheet
+href="chrome://zotero-platform/content/zotero.css" type="text/css"?>
 <?xml-stylesheet
 href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
@@ -16,9 +18,15 @@ type="text/css"?>
   <script src="chrome://knowledge-base/content/manager.js" />
   <html:div id="knowledge-base-root">
     <html:header id="knowledge-base-toolbar">
-      <html:button id="knowledge-base-btn-new" class="primary"></html:button>
-      <html:button id="knowledge-base-btn-graph" />
+      <toolbarbutton id="knowledge-base-btn-new" class="kb-native-tool" />
+      <toolbarbutton id="knowledge-base-btn-graph" class="kb-native-tool" />
       <html:input id="knowledge-base-search" type="search" />
+      <html:label
+        ><html:input
+          id="knowledge-base-entries"
+          type="checkbox"
+          checked="checked" /><html:span id="knowledge-base-entries-label"
+      /></html:label>
       <html:div class="spacer" />
       <html:span id="knowledge-base-stats" class="muted"></html:span>
     </html:header>
@@ -30,26 +38,45 @@ type="text/css"?>
       <html:section id="knowledge-base-detail-pane">
         <html:div id="knowledge-base-detail-empty" class="muted"></html:div>
         <html:div id="knowledge-base-detail" hidden="hidden">
-          <html:h1 id="knowledge-base-detail-title"></html:h1>
+          <html:header class="card-heading">
+            <html:h1 id="knowledge-base-detail-title" />
+            <html:div class="card-actions" role="group">
+              <toolbarbutton
+                id="knowledge-base-btn-edit"
+                class="kb-native-tool"
+              />
+              <toolbarbutton
+                id="knowledge-base-btn-local-graph"
+                class="kb-native-tool"
+              />
+              <toolbarbutton
+                id="knowledge-base-btn-delete"
+                class="kb-native-tool"
+              />
+            </html:div>
+          </html:header>
+          <html:div id="knowledge-base-detail-id" class="card-index" />
           <html:div id="knowledge-base-detail-meta" class="muted"></html:div>
           <html:div id="knowledge-base-detail-source" class="refs"></html:div>
-          <html:h2 id="knowledge-base-outgoing-head"></html:h2>
-          <html:div id="knowledge-base-outgoing" class="chips"></html:div>
-          <html:h2 id="knowledge-base-backlinks-head"></html:h2>
-          <html:ul id="knowledge-base-backlinks" class="refs"></html:ul>
           <html:h2 id="knowledge-base-preview-head"></html:h2>
           <html:div
             id="knowledge-base-preview"
             class="markdown-body"
           ></html:div>
-          <html:footer>
-            <html:button id="knowledge-base-btn-edit"></html:button>
-            <html:button id="knowledge-base-btn-local-graph" />
-            <html:button
-              id="knowledge-base-btn-delete"
-              class="danger"
-            ></html:button>
-          </html:footer>
+          <html:section class="card-family">
+            <html:div id="knowledge-base-family" class="relation-columns" />
+            <html:button id="knowledge-base-btn-child" class="family-create" />
+          </html:section>
+          <html:div class="relation-columns reference-columns">
+            <html:details open="open">
+              <html:summary id="knowledge-base-outgoing-head"></html:summary>
+              <html:div id="knowledge-base-outgoing" class="chips"></html:div>
+            </html:details>
+            <html:details open="open">
+              <html:summary id="knowledge-base-backlinks-head"></html:summary>
+              <html:ul id="knowledge-base-backlinks" class="refs"></html:ul>
+            </html:details>
+          </html:div>
         </html:div>
         <html:div id="knowledge-base-unresolved">
           <html:h2 id="knowledge-base-unresolved-head"></html:h2>

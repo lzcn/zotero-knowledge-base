@@ -14,7 +14,8 @@ const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const outputRoot = join(root, "dist");
 const addonDirectory = join(outputRoot, "addon");
 const sourceCSS = await readFile(join(root, "addon/content/manager.css"));
-const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).digest("hex").slice(0, 12)}`;
+const richCSS = await readFile(join(root, "addon/content/rich-editor.css"));
+const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).update(richCSS).digest("hex").slice(0, 12)}`;
 const replacements = {
   ...pkg.config,
   buildVersion: pkg.version,
@@ -42,7 +43,7 @@ async function copyAssets(relative = "") {
       ? join(dirname(source), `${pkg.config.addonRef}-${entry.name}`)
       : source;
     let bytes = await readFile(join(root, "addon", source));
-    if (/\.(js|json|xhtml|css|ftl)$/.test(source)) {
+    if (/\.(js|json|xhtml|html|css|ftl)$/.test(source)) {
       bytes = Buffer.from(
         bytes
           .toString("utf8")

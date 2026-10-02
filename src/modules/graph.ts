@@ -1,3 +1,4 @@
+import { hierarchy, tree } from "d3-hierarchy";
 import { getAll, type ZettelRow, type LinkRow } from "./db";
 import { getItemSummary } from "./zotero";
 
@@ -6,13 +7,15 @@ export interface GraphNode {
   title: string;
   kind: "card" | "source" | "unresolved";
   snippet: string;
+  citation?: string;
+  parentId?: string | null;
   itemKey?: string;
   libraryID?: number | null;
 }
 export interface GraphEdge {
   source: string;
   target: string;
-  kind: "link" | "source";
+  kind: "link" | "source" | "parent";
   ref: string;
   context: string;
 }
@@ -26,6 +29,8 @@ export interface GraphOptions {
   query?: string;
   includeSources?: boolean;
   includeUnresolved?: boolean;
+  relationMode?: "hierarchy" | "references" | "both";
+  entriesOnly?: boolean;
 }
 
 /** No list-view LIMIT: isolated cards and cards beyond the first 500 belong
@@ -35,6 +40,10 @@ export async function getGraphData(): Promise<GraphData> {
   const links = await getAll<LinkRow>(
     "SELECT source_id, target_id, ref FROM links",
   );
+  const parents = await getAll<{ card_id: string; parent_id: string | null }>(
+    "SELECT card_id, parent_id FROM card_parents",
+  );
+  const parentMap = new Map(parents.map((row) => [row.card_id, row.parent_id]));
   const nodes = new Map<string, GraphNode>();
   const bodies = new Map<string, string>();
   const edges: GraphEdge[] = [];
@@ -43,10 +52,20 @@ export async function getGraphData(): Promise<GraphData> {
       id: row.id,
       title: row.title || row.id,
       kind: "card",
-      snippet: row.body.slice(0, 400),
+      parentId: parentMap.get(row.id) ?? null,
+      snippet: row.body,
     });
     bodies.set(row.id, row.body);
   }
+  for (const row of parents)
+    if (row.parent_id && nodes.has(row.parent_id) && nodes.has(row.card_id))
+      edges.push({
+        source: row.parent_id,
+        target: row.card_id,
+        kind: "parent",
+        ref: row.card_id,
+        context: "",
+      });
   for (const link of links) {
     if (!nodes.has(link.source_id)) continue;
     const target =
@@ -77,9 +96,13 @@ export async function getGraphData(): Promise<GraphData> {
     const id = `source:${row.library_id ?? "unknown"}/${row.item_key}`;
     if (!nodes.has(id)) {
       let title = row.item_key;
+      let citation = "";
       try {
-        title =
-          (await getItemSummary(row.item_key, row.library_id))?.title || title;
+        const summary = await getItemSummary(row.item_key, row.library_id);
+        title = summary?.title || title;
+        citation = [summary?.creatorYear, summary?.publication]
+          .filter(Boolean)
+          .join(" · ");
       } catch {
         /* detached source is still provenance */
       }
@@ -87,7 +110,8 @@ export async function getGraphData(): Promise<GraphData> {
         id,
         title,
         kind: "source",
-        snippet: "",
+        snippet: citation,
+        citation,
         itemKey: row.item_key,
         libraryID: row.library_id,
       });
@@ -110,13 +134,28 @@ export function filterGraph(
   let nodes = graph.nodes.filter(
     (node) =>
       node.kind === "card" ||
-      (node.kind === "source" && options.includeSources) ||
-      (node.kind === "unresolved" && options.includeUnresolved !== false),
+      (options.relationMode !== "hierarchy" &&
+        node.kind === "source" &&
+        options.includeSources) ||
+      (options.relationMode !== "hierarchy" &&
+        node.kind === "unresolved" &&
+        options.includeUnresolved !== false),
   );
   let ids = new Set(nodes.map((node) => node.id));
   let edges = graph.edges.filter(
-    (edge) => ids.has(edge.source) && ids.has(edge.target),
+    (edge) =>
+      ids.has(edge.source) &&
+      ids.has(edge.target) &&
+      (options.relationMode === "hierarchy"
+        ? edge.kind === "parent"
+        : options.relationMode === "references"
+          ? edge.kind !== "parent"
+          : true),
   );
+  if (options.entriesOnly) {
+    nodes = nodes.filter((node) => node.kind === "card" && !node.parentId);
+    ids = new Set(nodes.map((node) => node.id));
+  }
   if (options.centerId) {
     const visited = new Set<string>(
       ids.has(options.centerId) ? [options.centerId] : [],
@@ -164,4 +203,117 @@ export function filterGraph(
   nodes = nodes.filter((node) => ids.has(node.id));
   edges = edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target));
   return { nodes, edges };
+}
+
+/** Two iterative passes reserve label/subtree widths, then place centered parents.
+ * Independent trees are packed into rows; no iterative force simulation. */
+export function layoutHierarchy(
+  nodes: GraphNode[],
+): Map<string, { x: number; y: number }> {
+  const cards = new Map(
+    nodes.filter((node) => node.kind === "card").map((node) => [node.id, node]),
+  );
+  const children = new Map<string, GraphNode[]>();
+  const roots: GraphNode[] = [];
+  for (const node of cards.values()) {
+    if (node.parentId && cards.has(node.parentId)) {
+      const siblings = children.get(node.parentId) || [];
+      siblings.push(node);
+      children.set(node.parentId, siblings);
+    } else roots.push(node);
+  }
+  const positions = new Map<string, { x: number; y: number }>();
+  const groups: { ids: string[]; width: number; height: number }[] = [];
+  const labelWidth = (node: GraphNode) =>
+    40 +
+    Array.from(node.title)
+      .slice(0, 24)
+      .reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7), 0);
+  const widthByID = new Map(
+    nodes.map((node) => [node.id, Math.max(128, labelWidth(node))]),
+  );
+  const layout = tree<GraphNode>()
+    .nodeSize([1, 108])
+    .separation(
+      (a, b) =>
+        ((widthByID.get(a.data.id) || 128) +
+          (widthByID.get(b.data.id) || 128)) /
+          2 +
+        32,
+    );
+  for (const root of roots) {
+    const result = layout(hierarchy(root, (node) => children.get(node.id)));
+    const descendants = result.descendants();
+    let minX = Infinity,
+      maxX = -Infinity,
+      maxY = 0;
+    for (const point of descendants) {
+      const width = widthByID.get(point.data.id) || 128;
+      minX = Math.min(minX, point.x - width / 2);
+      maxX = Math.max(maxX, point.x + width / 2);
+      maxY = Math.max(maxY, point.y);
+    }
+    for (const point of descendants)
+      positions.set(point.data.id, { x: point.x - minX + 24, y: point.y + 24 });
+    groups.push({
+      ids: descendants.map((point) => point.data.id),
+      width: maxX - minX + 48,
+      height: maxY + 108,
+    });
+  }
+  for (const node of nodes)
+    if (!positions.has(node.id)) {
+      const width = (widthByID.get(node.id) || 128) + 48;
+      positions.set(node.id, { x: width / 2, y: 24 });
+      groups.push({ ids: [node.id], width, height: 108 });
+    }
+  const area = groups.reduce(
+    (sum, group) => sum + group.width * group.height,
+    0,
+  );
+  let widest = 0;
+  for (const group of groups) widest = Math.max(widest, group.width);
+  const rowWidth = Math.max(widest, Math.sqrt(area) * 1.5);
+  let x = 0,
+    y = 0,
+    rowHeight = 0;
+  for (const group of groups) {
+    if (x && x + group.width > rowWidth) {
+      x = 0;
+      y += rowHeight + 32;
+      rowHeight = 0;
+    }
+    for (const id of group.ids) {
+      const point = positions.get(id)!;
+      point.x += x;
+      point.y += y;
+    }
+    x += group.width + 32;
+    rowHeight = Math.max(rowHeight, group.height);
+  }
+  return positions;
+}
+
+/** Clip endpoints to node circles and curve references away from the outline. */
+export function edgePath(
+  source: { x: number; y: number; id: string },
+  target: { x: number; y: number; id: string },
+  kind: GraphEdge["kind"],
+): string {
+  const dx = target.x - source.x,
+    dy = target.y - source.y;
+  const length = Math.hypot(dx, dy);
+  if (source.id === target.id || length < 1)
+    return `M ${source.x + 10} ${source.y - 6} C ${source.x + 54} ${source.y - 60}, ${source.x - 54} ${source.y - 60}, ${source.x - 10} ${source.y - 6}`;
+  const offset = Math.min(14, length / 3);
+  const sx = source.x + (dx / length) * offset,
+    sy = source.y + (dy / length) * offset;
+  const tx = target.x - (dx / length) * offset,
+    ty = target.y - (dy / length) * offset;
+  if (kind === "parent") {
+    const mid = (sy + ty) / 2;
+    return `M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`;
+  }
+  const bend = Math.min(80, length * 0.16);
+  return `M ${sx} ${sy} Q ${(sx + tx) / 2 - (dy / length) * bend} ${(sy + ty) / 2 + (dx / length) * bend}, ${tx} ${ty}`;
 }

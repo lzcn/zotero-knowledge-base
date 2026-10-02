@@ -50,6 +50,7 @@ async function onMainWindowUnload({ window }, reason) {
 
 async function shutdown({ id, version, rootURI }, reason) {
   if (reason === APP_SHUTDOWN) {
+    Zotero.__addonInstance__?.hooks.onAppShutdown();
     return;
   }
 

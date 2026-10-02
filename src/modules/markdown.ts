@@ -1,5 +1,6 @@
 import { Marked } from "marked";
 import createDOMPurify from "dompurify";
+import katex from "katex";
 
 export interface CardLink {
   ref: string;
@@ -25,6 +26,30 @@ const markdown = new Marked({
   async: false,
   extensions: [
     {
+      name: "blockMath",
+      level: "block",
+      start: (src) => src.indexOf("$$"),
+      tokenizer(src) {
+        const match =
+          /^ {0,3}\$\$[ \t]*\n?([\s\S]+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/.exec(src);
+        if (match) return { type: "blockMath", raw: match[0], latex: match[1] };
+      },
+      renderer: (token) =>
+        `<div data-type="block-math" data-latex="${escapeHTML(token.latex)}"></div>`,
+    },
+    {
+      name: "inlineMath",
+      level: "inline",
+      start: (src) => src.indexOf("$"),
+      tokenizer(src) {
+        const match = /^\$(?!\$)((?:\\.|[^$\\\n])+?)\$(?![\d$])/.exec(src);
+        if (!match || /^\s|\s$/.test(match[1])) return;
+        return { type: "inlineMath", raw: match[0], latex: match[1] };
+      },
+      renderer: (token) =>
+        `<span data-type="inline-math" data-latex="${escapeHTML(token.latex)}"></span>`,
+    },
+    {
       name: "wikilink",
       level: "inline",
       start: (src) => src.indexOf("[["),
@@ -36,7 +61,7 @@ const markdown = new Marked({
         return {
           type: "wikilink",
           raw: match[0],
-          ref: ref.trim(),
+          ref: ref.trim().replace(/^card:/, ""),
           display: alias.join("|").trim() || ref.trim(),
         };
       },
@@ -113,13 +138,41 @@ export function renderMarkdown(
   const tokens = markdown.lexer(body);
   markdown.walkTokens(tokens, (token) => {
     if (token.type === "image") token.href = resolveImage(token.href);
+    if (token.type === "wikilink" && !token.raw.includes("|"))
+      token.display = token.ref;
+    if (token.type === "link") {
+      const ref = cardRefFromURL(token.href);
+      if (ref) token.tokens = [{ type: "text", raw: ref, text: ref }];
+    }
   });
   const html = markdown.parser(tokens);
-  return createDOMPurify(win).sanitize(html, {
+  const purifier = createDOMPurify(win);
+  const fragment = purifier.sanitize(html, {
+    RETURN_DOM_FRAGMENT: true,
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP:
       /^(?:(?:https?|mailto|zotero|knowledge-base):|resource:\/\/knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     FORBID_TAGS: ["style", "form", "iframe"],
     FORBID_ATTR: ["style"],
   });
+  // Render only after sanitizing user HTML. KaTeX generates its own layout styles
+  // with trusted commands disabled; user-authored style attributes remain forbidden.
+  for (const element of Array.from(
+    fragment.querySelectorAll(
+      '[data-type="inline-math"], [data-type="block-math"]',
+    ),
+  ) as HTMLElement[]) {
+    element.innerHTML = katex.renderToString(
+      element.getAttribute("data-latex") || "",
+      {
+        displayMode: element.getAttribute("data-type") === "block-math",
+        throwOnError: false,
+        trust: false,
+        maxExpand: 1000,
+      },
+    );
+  }
+  const container = fragment.ownerDocument.createElement("div");
+  container.appendChild(fragment);
+  return container.innerHTML;
 }

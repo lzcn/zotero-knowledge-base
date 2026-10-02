@@ -30,7 +30,7 @@ export function validatePackage(bytes, pkg, required = []) {
       !name.startsWith("/") && !name.split("/").includes(".."),
       `Unsafe archive path: ${name}`,
     );
-    if (!/\.(js|json|xhtml|css|ftl)$/.test(name)) continue;
+    if (!/\.(js|json|xhtml|html|css|ftl)$/.test(name)) continue;
     const text = strFromU8(content);
     assert.ok(
       !/__(?:addon\w*|buildVersion|description|author|styleVersion|updateURL|env)__|\{\{(?:owner|repo|buildTime)\}\}/.test(
@@ -47,7 +47,7 @@ export function validatePackage(bytes, pkg, required = []) {
       }
     }
     if (name.endsWith(".js")) new Script(text, { filename: name });
-    if (name.endsWith(".xhtml")) {
+    if (/\.x?html$/.test(name)) {
       for (const match of text.matchAll(
         /(?:src|href)="([^"?#]+)(?:[?#][^"]*)?"/g,
       )) {

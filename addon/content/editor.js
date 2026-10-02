@@ -22,6 +22,15 @@ let previewTimer = null;
 let relationsTimer = null;
 let relationsVersion = 0;
 let unsubscribe = null;
+let visualEditing = false;
+/** @type {import("../../src/ui/rich-editor").RichEditorController | null} */
+let richEditor = null;
+let parentId = !zettelId ? args.prefillParentId || null : null;
+let parentSearchTimer = null;
+let parentSearchVersion = 0;
+let commandRange = null;
+let commandIndex = 0;
+let commandFromSlash = false;
 
 /** @template {keyof import("../../typings/ui").EditorElements} K
  * @param {K} id @returns {import("../../typings/ui").EditorElements[K]} */
@@ -41,7 +50,14 @@ window.addEventListener("error", (ev) => {
 async function load() {
   applyLocale();
   bindEvents();
+  $("knowledge-base-command-open").title = api.loc("command-menu");
+  $("knowledge-base-command-open").setAttribute(
+    "aria-label",
+    api.loc("command-menu"),
+  );
+  $("knowledge-base-command-search").placeholder = api.loc("command-search");
   setSource(null, false);
+  if (parentId) setDirty();
   if (!zettelId && args.prefillTitle) {
     $("knowledge-base-editor-title").value = args.prefillTitle;
     setDirty();
@@ -56,6 +72,7 @@ async function load() {
     if (z) {
       $("knowledge-base-editor-title").value = z.title;
       $("knowledge-base-editor-body").value = z.body;
+      parentId = (await api.getFamily(zettelId)).parent?.id || null;
       setStatus(`# ${z.id}`);
       if (z.item_key) {
         const s = await api.getItemSummary(z.item_key, z.library_id);
@@ -85,10 +102,18 @@ async function load() {
   }
   updatePreview();
   await refreshRelations();
-  unsubscribe = api.onDataChange(() => run(refreshRelations));
+  unsubscribe = api.onDataChange(() => {
+    if (!visualEditing) updatePreview();
+    run(refreshRelations);
+  });
 }
 
 function applyLocale() {
+  $("knowledge-base-parent-label").textContent = api.loc("parent");
+  $("knowledge-base-parent-search").placeholder = api.loc("parent-search");
+  $("knowledge-base-parent-root").textContent = api.loc("root");
+  $("knowledge-base-parent-root").title = api.loc("root");
+  $("knowledge-base-parent-root").setAttribute("aria-label", api.loc("root"));
   document.title = zettelId
     ? api.loc("editor-title-edit")
     : api.loc("editor-title-new");
@@ -130,6 +155,175 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  $("knowledge-base-command-open").addEventListener("click", () => {
+    if (!$("knowledge-base-command-menu").hidden) return closeCommands();
+    const body = $("knowledge-base-editor-body");
+    commandFromSlash = false;
+    commandRange = { start: body.selectionStart, end: body.selectionEnd };
+    openCommands("", true);
+  });
+  $("knowledge-base-command-search").addEventListener("input", () =>
+    renderCommands(),
+  );
+  $("knowledge-base-command-menu").addEventListener("keydown", commandKeydown);
+  document.addEventListener("click", (ev) => {
+    const target = /** @type {Element} */ (ev.target);
+    if (!target.closest(".parent-control")) {
+      $("knowledge-base-parent-search").hidden = true;
+      $("knowledge-base-parent-results").hidden = true;
+      $("knowledge-base-parent-display").setAttribute("aria-expanded", "false");
+    }
+    if (
+      !$("knowledge-base-command-menu").contains(target) &&
+      !$("knowledge-base-command-open").contains(target) &&
+      target !== $("knowledge-base-editor-body")
+    )
+      closeCommands();
+  });
+  for (const [id, iconName] of [
+    ["knowledge-base-link-pick", "link"],
+    ["knowledge-base-url-insert", "open-link"],
+    ["knowledge-base-image-insert", "attachment"],
+    ["knowledge-base-editor-graph", "related"],
+  ]) {
+    const button = document.getElementById(id);
+    button.title = button.textContent;
+    button.setAttribute("aria-label", button.title);
+    const icon = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    icon.className = "kb-inline-icon";
+    icon.dataset.kbIcon = iconName;
+    icon.setAttribute("aria-hidden", "true");
+    button.replaceChildren(icon);
+    button.classList.add("icon-button");
+  }
+  $("knowledge-base-parent-root").addEventListener("click", () => {
+    parentId = null;
+    $("knowledge-base-parent-search").hidden = true;
+    $("knowledge-base-parent-results").hidden = true;
+    setDirty();
+    run(refreshRelations);
+  });
+  $("knowledge-base-parent-display").addEventListener("click", () => {
+    const search = $("knowledge-base-parent-search");
+    search.hidden = !search.hidden;
+    $("knowledge-base-parent-display").setAttribute(
+      "aria-expanded",
+      String(!search.hidden),
+    );
+    if (!search.hidden) {
+      search.focus();
+      search.dispatchEvent(new window.Event("input"));
+    } else $("knowledge-base-parent-results").hidden = true;
+  });
+  $("knowledge-base-parent-search").addEventListener("input", () => {
+    const version = ++parentSearchVersion;
+    clearTimeout(parentSearchTimer);
+    parentSearchTimer = setTimeout(
+      () =>
+        run(async () => {
+          const results = await api.getParentCandidates(
+            zettelId,
+            $("knowledge-base-parent-search").value,
+          );
+          if (version !== parentSearchVersion) return;
+          const list = $("knowledge-base-parent-results");
+          list.replaceChildren();
+          list.hidden = false;
+          for (const card of results) {
+            const row = document.createElementNS(
+              "http://www.w3.org/1999/xhtml",
+              "li",
+            );
+            const button = document.createElementNS(
+              "http://www.w3.org/1999/xhtml",
+              "button",
+            );
+            button.textContent = `${card.id} · ${card.title}`;
+            button.addEventListener("click", () => {
+              parentId = card.id;
+              list.hidden = true;
+              $("knowledge-base-parent-search").hidden = true;
+              $("knowledge-base-parent-display").setAttribute(
+                "aria-expanded",
+                "false",
+              );
+              $("knowledge-base-parent-search").value = "";
+              setDirty();
+              run(refreshRelations);
+            });
+            row.appendChild(button);
+            list.appendChild(row);
+          }
+        }),
+      200,
+    );
+  });
+  const preview = $("knowledge-base-editor-preview");
+  const visualButton = document.createElementNS(
+    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+    "toolbarbutton",
+  );
+  visualButton.id = "knowledge-base-visual-toggle";
+  visualButton.classList.add("kb-native-tool");
+  visualButton.setAttribute("tooltiptext", api.loc("editor-visual"));
+  visualButton.setAttribute("aria-label", api.loc("editor-visual"));
+  visualButton.setAttribute("aria-pressed", "false");
+  $("knowledge-base-preview-toggle").after(visualButton);
+  visualButton.addEventListener("click", () =>
+    run(async () => {
+      const frame = $("knowledge-base-rich-frame");
+      if (!richEditor) {
+        if (!frame.contentWindow.KnowledgeBaseRichEditor) {
+          await new Promise((resolve) =>
+            frame.addEventListener("load", resolve, { once: true }),
+          );
+        }
+        if (window.closed) return;
+        richEditor = frame.contentWindow.KnowledgeBaseRichEditor.create({
+          html: api.renderMarkdown($("knowledge-base-editor-body").value),
+          onChange(html) {
+            $("knowledge-base-editor-body").value =
+              api.richTextToMarkdown(html);
+            setDirty();
+          },
+          async onImages(files) {
+            const snippets = [];
+            for (const file of files) {
+              const bytes = Array.from(
+                new Uint8Array(await file.arrayBuffer()),
+              );
+              const url = await api.importImage(bytes, file.type, imageDraftId);
+              snippets.push(`![image](${url})`);
+            }
+            return api.renderMarkdown(snippets.join("\n\n"));
+          },
+          onError(message) {
+            setStatus(message);
+            $("knowledge-base-editor-status").classList.add("error");
+          },
+          onShortcut(key) {
+            if (key === "s") run(() => save(false));
+            if (key === "k") openCardPicker();
+            if (key === "w") run(closeIfClean);
+          },
+        });
+      }
+      visualEditing = !visualEditing;
+      visualButton.setAttribute("aria-pressed", String(visualEditing));
+      frame.hidden = !visualEditing;
+      preview.hidden = visualEditing;
+      $("knowledge-base-editor-body").hidden = visualEditing;
+      $("knowledge-base-editor-workspace").classList.toggle(
+        "edit-only",
+        visualEditing,
+      );
+      updatePreview();
+      if (visualEditing) richEditor.focus();
+    }),
+  );
   $("knowledge-base-src-pick").addEventListener("click", toggleSourceDrop);
   $("knowledge-base-src-jump").addEventListener("click", () => {
     if (source) run(() => api.selectItem(source.key, source.libraryID));
@@ -150,6 +344,7 @@ function bindEvents() {
   $("knowledge-base-editor-body").addEventListener("input", () => {
     setDirty();
     const body = $("knowledge-base-editor-body");
+    detectSlashCommand();
     const match = /\[\[([^\]\n]*)$/.exec(
       body.value.slice(0, body.selectionStart),
     );
@@ -235,6 +430,28 @@ function bindEvents() {
   $("knowledge-base-editor-graph").addEventListener("click", () =>
     api.openGraph({ centerId: zettelId || undefined }),
   );
+  $("knowledge-base-link-search").addEventListener("keydown", (ev) => {
+    const first = $("knowledge-base-link-results").querySelector("li");
+    if (first && (ev.key === "ArrowDown" || ev.key === "Enter")) {
+      ev.preventDefault();
+      if (ev.key === "Enter") first.click();
+      else first.focus();
+    }
+  });
+  $("knowledge-base-link-results").addEventListener("keydown", (ev) => {
+    const row = document.activeElement;
+    if (!row || !$("knowledge-base-link-results").contains(row)) return;
+    const next =
+      ev.key === "ArrowDown"
+        ? row.nextElementSibling
+        : ev.key === "ArrowUp"
+          ? row.previousElementSibling
+          : null;
+    if (next instanceof window.HTMLElement) {
+      ev.preventDefault();
+      next.focus();
+    }
+  });
   $("knowledge-base-link-search").addEventListener("input", () => {
     clearTimeout(cardSearchTimer);
     cardSearchVersion++;
@@ -248,6 +465,7 @@ function bindEvents() {
     );
   }
   $("knowledge-base-preview-toggle").addEventListener("click", () => {
+    if (visualEditing) return;
     const preview = $("knowledge-base-editor-preview");
     preview.hidden = !preview.hidden;
     $("knowledge-base-editor-workspace").classList.toggle(
@@ -261,6 +479,7 @@ function bindEvents() {
     if (!preview.hidden) updatePreview();
   });
   $("knowledge-base-editor-preview").addEventListener("click", (ev) => {
+    if (visualEditing) return;
     const target = /** @type {Element} */ (ev.target);
     if (target.localName === "img") {
       api.openImage(target.getAttribute("src"));
@@ -276,7 +495,17 @@ function bindEvents() {
       ev.preventDefault();
       save(false);
     } else if (ev.key === "Escape") {
-      if (!$("knowledge-base-link-drop").hidden)
+      if (!$("knowledge-base-command-menu").hidden) {
+        closeCommands();
+        $("knowledge-base-editor-body").focus();
+      } else if (!$("knowledge-base-parent-search").hidden) {
+        $("knowledge-base-parent-search").hidden = true;
+        $("knowledge-base-parent-results").hidden = true;
+        $("knowledge-base-parent-display").setAttribute(
+          "aria-expanded",
+          "false",
+        );
+      } else if (!$("knowledge-base-link-drop").hidden)
         $("knowledge-base-link-drop").hidden = true;
       else if (!$("knowledge-base-anno-layer").hidden) closeAnnoPicker();
       else if (!$("knowledge-base-src-drop").hidden) toggleSourceDrop();
@@ -404,10 +633,16 @@ function run(fn) {
 function updatePreview() {
   api.updateImageDraft(imageDraftId, $("knowledge-base-editor-body").value);
   try {
-    window.ZoteroKnowledgeBaseMarkdown.render(
-      $("knowledge-base-editor-preview"),
-      $("knowledge-base-editor-body").value,
-    );
+    if (visualEditing && richEditor) {
+      richEditor.setHTML(
+        api.renderMarkdown($("knowledge-base-editor-body").value),
+      );
+    } else {
+      window.ZoteroKnowledgeBaseMarkdown.render(
+        $("knowledge-base-editor-preview"),
+        $("knowledge-base-editor-body").value,
+      );
+    }
   } catch (error) {
     $("knowledge-base-editor-preview").textContent = String(
       error.message || error,
@@ -429,11 +664,23 @@ async function insertImages(files, range) {
 
 async function refreshRelations() {
   const version = ++relationsVersion;
-  const [outgoing, backlinks] = await Promise.all([
+  const [outgoing, backlinks, family, parent] = await Promise.all([
     api.getDraftLinks($("knowledge-base-editor-body").value),
     zettelId ? api.getBacklinks(zettelId) : [],
+    zettelId ? api.getFamily(zettelId) : { parent: null, children: [] },
+    parentId ? api.getZettel(parentId) : null,
   ]);
   if (version !== relationsVersion) return;
+  $("knowledge-base-parent-root").hidden = !parentId;
+  $("knowledge-base-parent-display").title = api.loc("parent-search");
+  $("knowledge-base-parent-display").textContent = parent
+    ? `${parent.id} · ${parent.title}`
+    : api.loc("root");
+  window.ZoteroKnowledgeBaseMarkdown.renderFamily(
+    $("knowledge-base-editor-family"),
+    { parent, children: family.children },
+    api,
+  );
   const renderList = (id, links, inbound) => {
     const list = $(id);
     list.textContent = "";
@@ -452,34 +699,48 @@ async function refreshRelations() {
         "http://www.w3.org/1999/xhtml",
         "li",
       );
-      row.tabIndex = 0;
-      row.textContent =
-        (inbound ? "← " : "→ ") +
-        (inbound ? link.sourceTitle || link.sourceId : link.display);
+      const button = document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "button",
+      );
+      button.className = "relation-link";
+      window.ZoteroKnowledgeBaseMarkdown.identity(
+        button,
+        targetId || link.ref,
+        inbound ? link.sourceTitle || "" : link.display,
+      );
+      row.appendChild(button);
       row.classList.toggle("unresolved", !targetId);
       const open = () =>
         targetId
           ? api.openManager({ selectId: targetId })
           : api.openEditor({ prefillTitle: link.ref });
-      row.addEventListener("click", open);
-      row.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") open();
-      });
+      button.addEventListener("click", open);
       list.appendChild(row);
     }
   };
+  $("knowledge-base-editor-outgoing-label").textContent =
+    `${api.loc("manager-outgoing")} · ${outgoing.length}`;
+  $("knowledge-base-editor-backlinks-label").textContent =
+    `${api.loc("manager-backlinks")} · ${backlinks.length}`;
   renderList("knowledge-base-editor-outgoing", outgoing, false);
   renderList("knowledge-base-editor-backlinks", backlinks, true);
 }
 
 function insertText(text, range = null) {
+  if (visualEditing && richEditor) {
+    richEditor.insertHTML(api.renderMarkdown(text));
+    richEditor.focus();
+    return;
+  }
   const body = $("knowledge-base-editor-body");
   const start = range ? range.start : body.selectionStart;
   const end = range ? range.end : body.selectionEnd;
   body.setRangeText(text, start, end, "end");
-  body.focus();
   setDirty();
   updatePreview();
+  if (visualEditing) $("knowledge-base-editor-preview").focus();
+  else body.focus();
 }
 
 function markdownLabel(text) {
@@ -494,6 +755,10 @@ function insertSourceLink() {
 }
 
 function formatSelection(kind) {
+  if (visualEditing && richEditor) {
+    richEditor.format(kind);
+    return;
+  }
   const body = $("knowledge-base-editor-body");
   const edit = window.KnowledgeBaseEditing.formatEdit(
     body.value,
@@ -509,6 +774,7 @@ function formatSelection(kind) {
 }
 
 function editKeydown(ev) {
+  if (commandKeydown(ev)) return;
   const body = $("knowledge-base-editor-body");
   if (
     (ev.ctrlKey || ev.metaKey) &&
@@ -568,13 +834,14 @@ async function searchCards() {
     : api.loc("editor-link-empty");
   for (const card of cards) {
     const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
-    li.textContent = `${card.title || api.loc("manager-untitled")} · ${card.id}`;
+    window.ZoteroKnowledgeBaseMarkdown.identity(
+      li,
+      card.id,
+      card.title || api.loc("manager-untitled"),
+    );
     li.tabIndex = 0;
     const insert = () => {
-      insertText(
-        `[${markdownLabel(card.title || card.id)}](knowledge-base://card/${encodeURIComponent(card.id)})`,
-        linkRange,
-      );
+      insertText(`[[${card.id}]]`, linkRange);
       $("knowledge-base-link-drop").hidden = true;
       cardSearchVersion++;
     };
@@ -677,7 +944,7 @@ function setDirty() {
   dirty = true;
   $("knowledge-base-editor-save").classList.add("dirty");
   clearTimeout(previewTimer);
-  previewTimer = setTimeout(updatePreview, 120);
+  if (!visualEditing) previewTimer = setTimeout(updatePreview, 120);
   clearTimeout(relationsTimer);
   relationsTimer = setTimeout(() => run(refreshRelations), 180);
 }
@@ -691,6 +958,7 @@ async function save(closeAfter) {
       id: zettelId || undefined,
       title,
       body,
+      parentId,
       itemKey: source ? source.key : null,
       libraryID: source ? source.libraryID : null,
     });
@@ -733,6 +1001,13 @@ function setStatus(text) {
 window.addEventListener("load", () => run(load));
 window.addEventListener("unload", () => {
   try {
+    richEditor?.destroy();
+  } catch (error) {
+    console.error(error);
+  }
+  parentSearchVersion++;
+  clearTimeout(parentSearchTimer);
+  try {
     api
       .releaseImageDraft(imageDraftId)
       .catch((error) => Zotero.logError(error));
@@ -745,3 +1020,203 @@ window.addEventListener("unload", () => {
   clearTimeout(searchTimer);
   clearTimeout(cardSearchTimer);
 });
+
+// Commands only activate at the start of a Markdown line, outside code fences.
+function detectSlashCommand() {
+  const body = $("knowledge-base-editor-body");
+  const prefix = body.value.slice(0, body.selectionStart);
+  let fence = null;
+  for (const line of prefix.split("\n")) {
+    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (!marker) continue;
+    if (!fence) fence = marker[1];
+    else if (marker[1][0] === fence[0] && marker[1].length >= fence.length)
+      fence = null;
+  }
+  const match = /(?:^|\n)[ \t]*\/([^\s/]*)$/.exec(prefix);
+  if (!fence && match && body.selectionStart === body.selectionEnd) {
+    commandFromSlash = true;
+    commandRange = { start: prefix.lastIndexOf("/"), end: body.selectionStart };
+    openCommands(match[1], false);
+  } else closeCommands();
+}
+function openCommands(query, focus) {
+  $("knowledge-base-command-menu").hidden = false;
+  const root = $("knowledge-base-editor-root").getBoundingClientRect();
+  const toolbar = $("knowledge-base-markdown-toolbar").getBoundingClientRect();
+  $("knowledge-base-command-menu").style.top =
+    `${toolbar.bottom - root.top + 4}px`;
+  $("knowledge-base-command-open").setAttribute("aria-expanded", "true");
+  $("knowledge-base-command-search").value = query;
+  renderCommands();
+  if (focus) $("knowledge-base-command-search").focus();
+}
+function closeCommands() {
+  $("knowledge-base-command-menu").hidden = true;
+  $("knowledge-base-command-open").setAttribute("aria-expanded", "false");
+}
+function renderCommands() {
+  const query = $("knowledge-base-command-search").value.trim().toLowerCase();
+  const list = $("knowledge-base-command-list");
+  list.replaceChildren();
+  const commands = [
+    {
+      key: "editor-link-pick",
+      icon: "link",
+      aliases: "link card reference 引用 卡片",
+      target: "knowledge-base-link-pick",
+    },
+    {
+      key: "command-heading",
+      glyph: "#",
+      aliases: "heading 标题",
+      text: "## ",
+    },
+    { key: "command-list", glyph: "•", aliases: "list 列表", text: "- " },
+    {
+      key: "command-task",
+      glyph: "☑",
+      aliases: "task todo 待办",
+      text: "- [ ] ",
+    },
+    { key: "command-quote", glyph: "❞", aliases: "quote 引用块", text: "> " },
+    {
+      key: "command-code",
+      glyph: "⌘",
+      aliases: "code 代码",
+      text: "```\n\n```",
+      caret: 4,
+    },
+    {
+      key: "command-table",
+      glyph: "▦",
+      aliases: "table 表格",
+      text: "|  |  |\n| --- | --- |\n|  |  |",
+      caret: 2,
+    },
+    {
+      key: "editor-url-insert",
+      icon: "open-link",
+      aliases: "url web 网页",
+      target: "knowledge-base-url-insert",
+    },
+    {
+      key: "editor-image",
+      icon: "attachment",
+      aliases: "image 图片",
+      target: "knowledge-base-image-insert",
+    },
+    {
+      key: "editor-src-insert",
+      icon: "note",
+      aliases: "source 来源",
+      target: "knowledge-base-src-insert",
+      disabled: !source?.selectURL,
+    },
+    {
+      key: "parent",
+      icon: "related",
+      aliases: "parent 父节点",
+      target: "knowledge-base-parent-display",
+    },
+  ];
+  commandIndex = 0;
+  for (const command of commands) {
+    const label = api.loc(command.key);
+    if (!(label + " " + command.aliases).toLowerCase().includes(query))
+      continue;
+    const button = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "button",
+    );
+    button.className = "command-option";
+    button.setAttribute("role", "menuitem");
+    /** @type {HTMLButtonElement} */ (button).disabled = Boolean(
+      command.disabled,
+    );
+    const icon = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    if (command.icon) {
+      icon.className = "kb-inline-icon";
+      icon.dataset.kbIcon = command.icon;
+    } else icon.textContent = command.glyph;
+    icon.setAttribute("aria-hidden", "true");
+    const name = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    name.textContent = label;
+    button.append(icon, name);
+    button.addEventListener("click", () => {
+      closeCommands();
+      const range = commandRange;
+      commandRange = null;
+      if (command.text !== undefined) {
+        const body = $("knowledge-base-editor-body");
+        const selected =
+          !commandFromSlash && range
+            ? body.value.slice(range.start, range.end)
+            : "";
+        const replacement =
+          command.caret !== undefined
+            ? command.text.slice(0, command.caret) +
+              selected +
+              command.text.slice(command.caret)
+            : command.text + selected;
+        insertText(replacement, range);
+        if (command.caret !== undefined && range)
+          $("knowledge-base-editor-body").setSelectionRange(
+            range.start + command.caret + selected.length,
+            range.start + command.caret + selected.length,
+          );
+      } else {
+        if (range && commandFromSlash) insertText("", range);
+        else if (range)
+          $("knowledge-base-editor-body").setSelectionRange(
+            range.start,
+            range.end,
+          );
+        document.getElementById(command.target).click();
+      }
+    });
+    list.appendChild(button);
+  }
+  const first = list.querySelector("button:not([disabled])");
+  first?.classList.add("active");
+  if (!list.children.length) {
+    const empty = document.createElementNS("http://www.w3.org/1999/xhtml", "p");
+    empty.className = "muted";
+    empty.textContent = api.loc("command-empty");
+    list.appendChild(empty);
+  }
+}
+function commandKeydown(ev) {
+  if (
+    $("knowledge-base-command-menu").hidden ||
+    !["ArrowDown", "ArrowUp", "Enter"].includes(ev.key)
+  )
+    return false;
+  const buttons = /** @type {HTMLButtonElement[]} */ (
+    Array.from(
+      $("knowledge-base-command-list").querySelectorAll(
+        "button:not([disabled])",
+      ),
+    )
+  );
+  if (!buttons.length) return false;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (ev.key === "Enter") buttons[commandIndex]?.click();
+  else {
+    commandIndex =
+      (commandIndex + (ev.key === "ArrowDown" ? 1 : -1) + buttons.length) %
+      buttons.length;
+    buttons.forEach((button, index) =>
+      button.classList.toggle("active", index === commandIndex),
+    );
+    buttons[commandIndex].scrollIntoView?.({ block: "nearest" });
+  }
+  return true;
+}

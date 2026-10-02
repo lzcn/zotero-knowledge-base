@@ -36,6 +36,7 @@ await build({
       export const initDB = () => run("initDB");
       export const closeDB = () => run("closeDB");
       export const initAssets = () => run("initAssets");
+      export const stopAssets = () => run("stopAssets");
       export const closeAssets = () => run("closeAssets");
       export const cleanupImagesAfterChange = () => run("cleanupImages");
       export const rebuildCounts = () => run("rebuildCounts");
@@ -52,7 +53,7 @@ await build({
   ],
 });
 let serial = 0;
-async function fixture({ fail, deferred = false } = {}) {
+async function fixture({ fail, deferred = false, unready = false } = {}) {
   let resolve;
   const gate = deferred
     ? new Promise((r) => {
@@ -76,11 +77,21 @@ async function fixture({ fail, deferred = false } = {}) {
   globalThis.Zotero = {
     initializationPromise: Promise.resolve(),
     unlockPromise: Promise.resolve(),
-    uiReadyPromise: Promise.resolve(),
+    uiReadyPromise: unready ? new Promise(() => {}) : Promise.resolve(),
     getMainWindows: () => doms.map((dom) => dom.window),
     logError: (e) => state.errors.push(e),
   };
-  globalThis.Services = { wm: { getEnumerator: () => [] } };
+  const observers = new Map();
+  globalThis.Services = {
+    wm: { getEnumerator: () => [] },
+    obs: {
+      addObserver: (observer, topic) => observers.set(topic, observer),
+      removeObserver: (observer, topic) => {
+        assert.equal(observers.get(topic), observer);
+        observers.delete(topic);
+      },
+    },
+  };
   globalThis.addon = {
     data: { alive: true },
     api: {
@@ -99,6 +110,7 @@ async function fixture({ fail, deferred = false } = {}) {
     state,
     doms,
     resolve,
+    observers,
     close: () => doms.forEach((dom) => dom.window.close()),
   };
 }
@@ -134,6 +146,39 @@ test("two windows retain independent resources; duplicate registration and shutd
       h.doms[1].window.document.querySelectorAll("menuitem, link").length,
       0,
     );
+  } finally {
+    h.close();
+  }
+});
+
+test("granted quit stops background work before windows unload without waiting for startup", async () => {
+  const h = await fixture({ deferred: true });
+  try {
+    const starting = h.hooks.onStartup();
+    await new Promise((r) => setImmediate(r));
+    const observer = h.observers.get("quit-application-granted");
+    assert.ok(observer);
+    observer.observe();
+    assert.equal(globalThis.addon.data.alive, false);
+    assert.ok(h.state.calls.includes("stopAssets"));
+    assert.equal(h.observers.size, 0);
+    h.hooks.onAppShutdown();
+    h.resolve();
+    await starting;
+    assert.ok(!h.state.calls.includes("registerPane"));
+    await h.hooks.onShutdown();
+  } finally {
+    h.close();
+  }
+});
+
+test("disabling the plugin removes the quit observer", async () => {
+  const h = await fixture();
+  try {
+    await h.hooks.onStartup();
+    assert.equal(h.observers.size, 1);
+    await h.hooks.onShutdown();
+    assert.equal(h.observers.size, 0);
   } finally {
     h.close();
   }
@@ -193,3 +238,20 @@ test("shutdown during startup prevents late menus and closes initialized storage
 });
 
 after(async () => rm(workspace, { recursive: true, force: true }));
+test(
+  "disable before host readiness cancels the wait instead of hanging shutdown",
+  { timeout: 2000 },
+  async () => {
+    const h = await fixture({ unready: true });
+    try {
+      const starting = h.hooks.onStartup();
+      await new Promise((resolve) => setImmediate(resolve));
+      await h.hooks.onShutdown();
+      await starting;
+      assert.ok(!h.state.calls.includes("initDB"));
+      assert.equal(h.observers.size, 0);
+    } finally {
+      h.close();
+    }
+  },
+);

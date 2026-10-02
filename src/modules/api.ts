@@ -3,6 +3,7 @@
  * through `Zotero.ZoteroKnowledgeBase.api.*` - only plain data crosses the boundary.
  */
 
+import { richTextToMarkdown } from "./rich-text";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { cardRefFromURL, renderMarkdown } from "./markdown";
@@ -13,6 +14,7 @@ import {
   updateImageDraft,
   releaseImageDraft,
 } from "./assets";
+import { getFamily, getParentCandidates } from "./hierarchy";
 import { getGraphData } from "./graph";
 import { onDataChange } from "./events";
 import {
@@ -20,6 +22,7 @@ import {
   type CreateCardsResult,
 } from "./annotations";
 import {
+  getCardTitleSync,
   countByAnnotationKeys,
   countByItem,
   deleteZettel,
@@ -57,6 +60,7 @@ export interface EditorArgs {
   zettelId?: string | null;
   prefillTitle?: string;
   prefillBody?: string;
+  prefillParentId?: string;
   imageDraftId?: string;
   /** preselect this Zotero item as the card's source */
   sourceItem?: { key: string; libraryID: number };
@@ -83,6 +87,12 @@ export const api = {
     return getString(key, { args });
   },
 
+  richTextToMarkdown(html: string): string {
+    const win = mainWindow() as unknown as { DOMParser: typeof DOMParser };
+    const doc = new win.DOMParser().parseFromString(html, "text/html");
+    return richTextToMarkdown(doc.body);
+  },
+
   renderMarkdown(body: string): string {
     return renderMarkdown(
       body,
@@ -96,6 +106,8 @@ export const api = {
   updateImageDraft,
   releaseImageDraft,
   getGraph: getGraphData,
+  getFamily,
+  getParentCandidates,
   onDataChange,
 
   openImage(url: string): void {
@@ -118,6 +130,8 @@ export const api = {
     const resolved = await resolveRefs(links.map((link) => link.ref));
     return links.map((link) => ({
       ...link,
+      display:
+        getCardTitleSync(resolved.get(link.ref) || link.ref) || link.display,
       targetId: resolved.get(link.ref) ?? null,
     }));
   },
@@ -159,8 +173,8 @@ export const api = {
 
   /* ---------------- data ---------------- */
 
-  listZettels(query = ""): Promise<Zettel[]> {
-    return listZettels(query);
+  listZettels(query = "", entriesOnly = false): Promise<Zettel[]> {
+    return listZettels(query, entriesOnly);
   },
 
   listByItem(itemKey: string): Promise<Zettel[]> {
@@ -191,6 +205,7 @@ export const api = {
     id?: string;
     title: string;
     body: string;
+    parentId?: string | null;
     itemKey?: string | null;
     libraryID?: number | null;
   }): Promise<string> {
