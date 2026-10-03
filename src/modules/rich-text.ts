@@ -31,8 +31,12 @@ export function richTextToMarkdown(html: string | HTMLElement): string {
     filter: (node) =>
       node.nodeName === "A" &&
       !!cardRefFromURL(node.getAttribute("href") || ""),
-    replacement: (_content, node) =>
-      `[[${cardRefFromURL((node as HTMLElement).getAttribute("href") || "")}]]`,
+    replacement: (_content, node) => {
+      const link = node as HTMLElement;
+      const id = cardRefFromURL(link.getAttribute("href") || "");
+      const alias = link.getAttribute("data-card-alias");
+      return `[[${id}${alias ? "|" + alias.replace(/[[\]\n]/g, " ") : ""}]]`;
+    },
   });
   converter.addRule("managedImage", {
     filter: (node) =>

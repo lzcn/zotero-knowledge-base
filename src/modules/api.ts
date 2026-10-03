@@ -3,6 +3,12 @@
  * through `Zotero.ZoteroKnowledgeBase.api.*` - only plain data crosses the boundary.
  */
 
+import {
+  getEditorDraft,
+  listEditorDrafts,
+  saveEditorDraft,
+  discardEditorDraft,
+} from "./editor-drafts";
 import { richTextToMarkdown } from "./rich-text";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
@@ -16,6 +22,7 @@ import {
 } from "./assets";
 import { getFamily, getParentCandidates } from "./hierarchy";
 import { getGraphData } from "./graph";
+import { getGraphOptions, onGraphOptionsChange } from "./preferences";
 import { onDataChange } from "./events";
 import {
   createCardsFromAnnotations,
@@ -35,6 +42,7 @@ import {
   resolveRefs,
   parseLinks,
   saveZettel,
+  saveEditorCard,
   type Backlink,
   type ResolvedLink,
   type Zettel,
@@ -58,6 +66,7 @@ export type HighlightWithCards = HighlightInfo & { cards: number };
 
 export interface EditorArgs {
   zettelId?: string | null;
+  draftId?: string;
   prefillTitle?: string;
   prefillBody?: string;
   prefillParentId?: string;
@@ -98,9 +107,15 @@ export const api = {
       body,
       mainWindow() as unknown as Parameters<typeof renderMarkdown>[1],
       resolveAssetURL,
+      getCardTitleSync,
     );
   },
 
+  saveEditorDraft,
+  discardEditorDraft,
+  getEditorDraft,
+  listEditorDrafts,
+  saveEditorCard,
   importImage,
   pickImage,
   updateImageDraft,
@@ -109,6 +124,8 @@ export const api = {
   getFamily,
   getParentCandidates,
   onDataChange,
+  getGraphOptions,
+  onGraphOptionsChange,
 
   openImage(url: string): void {
     if (
@@ -284,6 +301,19 @@ export const api = {
   },
 
   openEditor(args: EditorArgs = {}): void {
+    for (const win of Services.wm.getEnumerator("knowledge-base:editor")) {
+      const editor = win as unknown as Window & {
+        knowledgeBaseCardId?: string;
+        knowledgeBaseDraftId?: string;
+      };
+      if (
+        (args.zettelId && editor.knowledgeBaseCardId === args.zettelId) ||
+        (args.draftId && editor.knowledgeBaseDraftId === args.draftId)
+      ) {
+        editor.focus();
+        return;
+      }
+    }
     mainWindow().openDialog(
       EDITOR_URL,
       "knowledge-base:editor",

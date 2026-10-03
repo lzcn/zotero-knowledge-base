@@ -215,8 +215,9 @@ const bundle = path.join(workspace, "bundle.mjs");
 
 await writeFile(
   entry,
-  // Absolute paths so esbuild does not need the entry to sit in the project.
-  `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
+  `export * as drafts from ${JSON.stringify(path.join(ROOT, "src/modules/editor-drafts.ts"))};\n` +
+    // Absolute paths so esbuild does not need the entry to sit in the project.
+    `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
     `export * as zettel from ${JSON.stringify(path.join(ROOT, "src/modules/zettel.ts"))};\n` +
     `export * as graph from ${JSON.stringify(path.join(ROOT, "src/modules/graph.ts"))};\n` +
     `export * as hierarchy from ${JSON.stringify(path.join(ROOT, "src/modules/hierarchy.ts"))};\n`,
@@ -232,7 +233,7 @@ await build({
 
 // One bundle, one module instance: both modules must share the same
 // connection object for the flow checks to mean anything.
-const { db, zettel, graph, hierarchy } = await import(
+const { db, zettel, graph, hierarchy, drafts } = await import(
   pathToFileURL(bundle).href
 );
 
@@ -286,7 +287,7 @@ async function initialize(label, dataDir, prepare) {
   }
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
-  check("schemaVersion is 4", schema.version === "4", `got ${schema.version}`);
+  check("schemaVersion is 5", schema.version === "5", `got ${schema.version}`);
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
     "all required columns present",
@@ -626,6 +627,72 @@ if (currentSchema) {
       allGraph.nodes.some(
         (node) => node.kind === "unresolved" && node.title === "Future concept",
       ),
+  );
+  const original = await zettel.getZettel(leafId);
+  const draft = {
+    id: leafId,
+    title: "Recovered",
+    body: "unsaved words",
+    expectedUpdatedAt: original.updated_at,
+    draftId: "recovery-test",
+    draftRevision: 1,
+  };
+  await drafts.saveEditorDraft(draft);
+  await db.closeDB();
+  await db.initDB();
+  check(
+    "Recovery drafts survive database reopening",
+    (await drafts.getEditorDraft(draft.draftId)).body === "unsaved words",
+  );
+  await zettel.saveZettel({
+    id: leafId,
+    title: "Elsewhere",
+    body: "Do not overwrite",
+  });
+  let conflict = false;
+  try {
+    await zettel.saveEditorCard(draft);
+  } catch (error) {
+    conflict = error.message === "CARD_CONFLICT";
+  }
+  check(
+    "A stale editor cannot overwrite a newer card",
+    conflict && (await zettel.getZettel(leafId)).body === "Do not overwrite",
+  );
+  check(
+    "Conflict retains the recovery draft",
+    !!(await drafts.getEditorDraft(draft.draftId)),
+  );
+  const latest = await zettel.getZettel(leafId);
+  await zettel.saveEditorCard({
+    ...draft,
+    expectedUpdatedAt: latest.updated_at,
+  });
+  check(
+    "Card save removes only its committed draft atomically",
+    !(await drafts.getEditorDraft(draft.draftId)) &&
+      (await zettel.getZettel(leafId)).body === "unsaved words",
+  );
+  const newer = { ...draft, draftRevision: 3, body: "newer draft" };
+  await drafts.saveEditorDraft(newer);
+  await drafts.saveEditorDraft({ ...draft, draftRevision: 2 });
+  check(
+    "Late draft writes cannot replace a newer draft",
+    (await drafts.getEditorDraft(draft.draftId)).body === "newer draft",
+  );
+  await zettel.deleteZettel(leafId);
+  conflict = false;
+  try {
+    await zettel.saveEditorCard({
+      ...newer,
+      expectedUpdatedAt: latest.updated_at,
+    });
+  } catch (error) {
+    conflict = error.message === "CARD_CONFLICT";
+  }
+  check(
+    "A stale editor cannot resurrect a deleted card",
+    conflict && !(await zettel.getZettel(leafId)),
   );
   await db.transaction(async () => {
     for (let i = 0; i < 505; i++)

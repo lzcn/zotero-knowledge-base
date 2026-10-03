@@ -30,6 +30,7 @@ let zoomBehavior;
 let drag = null;
 let refreshTimer;
 let unsubscribe;
+let unsubscribeOptions;
 let layoutKey = "";
 
 function svgElement(tag, attrs = {}) {
@@ -54,20 +55,18 @@ async function refresh() {
   $("graph-error").textContent = "";
   render();
 }
-function enabled(id) {
-  return document.getElementById(id).getAttribute("checked") === "true";
-}
 function visibleGraph() {
+  const options = api.getGraphOptions();
   const data = filterGraph(graph, {
-    includeSources: enabled("graph-sources"),
+    includeSources: options.sources,
     includeUnresolved: true,
   });
   data.edges = data.edges.filter((edge) =>
     edge.kind === "parent"
-      ? enabled("graph-outline")
+      ? options.outline
       : edge.kind === "link"
-        ? enabled("graph-references")
-        : enabled("graph-sources"),
+        ? options.references
+        : options.sources,
   );
   return data;
 }
@@ -158,7 +157,7 @@ function fit() {
   else applyTransform();
 }
 function render() {
-  $("graph-legend-sources").hidden = !enabled("graph-sources");
+  $("graph-legend-sources").hidden = !api.getGraphOptions().sources;
   const data = visibleGraph();
   const nextKey = JSON.stringify(
     data.nodes.map((node) => [node.id, node.parentId, node.title]),
@@ -429,39 +428,19 @@ async function load() {
     $(
       /** @type {keyof import("../../typings/ui").GraphElements} */ (id),
     ).textContent = api.loc(key);
-  for (const id of ["graph-fit", "graph-refresh", "graph-settings"]) {
+  for (const id of ["graph-fit", "graph-refresh"]) {
     const button = document.getElementById(id);
-    const label = api.loc(id === "graph-settings" ? "graph-display" : id);
+    const label = api.loc(id);
     button.setAttribute("label", label);
     button.setAttribute("tooltiptext", label);
     button.setAttribute("aria-label", label);
   }
-  const menu = $("graph-display-menu");
-  for (const [id, key] of Object.entries({
-    "graph-outline": "graph-hierarchy",
-    "graph-references": "graph-links",
-    "graph-sources": "graph-sources",
-    "graph-menu-fit": "graph-fit",
-    "graph-menu-refresh": "graph-refresh",
-  }))
-    document.getElementById(id).setAttribute("label", api.loc(key));
   $("graph-search").placeholder = api.loc("graph-search");
-  $("graph-canvas").addEventListener("contextmenu", (event) => {
-    event.preventDefault();
-    menu.openPopupAtScreen(event.screenX, event.screenY, true);
-  });
-  document.getElementById("graph-menu-fit").addEventListener("command", fit);
-  document
-    .getElementById("graph-menu-refresh")
-    .addEventListener("command", () => run(refresh));
   $("graph-fit").addEventListener("click", fit);
   $("graph-refresh").addEventListener("click", () => run(refresh));
   $("graph-node-open").addEventListener("click", () =>
     run(() => openNode(graphNodes.get(selectedId))),
   );
-  for (const id of ["graph-outline", "graph-references", "graph-sources"]) {
-    document.getElementById(id).addEventListener("command", render);
-  }
   $("graph-search").addEventListener("input", () => {
     const query = $("graph-search").value.trim().toLowerCase();
     if (!query) return;
@@ -540,6 +519,7 @@ async function load() {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => run(refresh), 180);
   });
+  unsubscribeOptions = api.onGraphOptionsChange(() => run(render));
   await refresh();
 }
 window.addEventListener("load", () => run(load));
@@ -547,5 +527,6 @@ window.addEventListener("unload", () => {
   d3Select($("graph-svg")).on(".zoom", null);
   refreshVersion++;
   unsubscribe?.();
+  unsubscribeOptions?.();
   clearTimeout(refreshTimer);
 });

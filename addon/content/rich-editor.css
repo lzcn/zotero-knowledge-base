@@ -4,14 +4,17 @@
 body {
   margin: 0;
   font:
-    13px/1.65 system-ui,
+    15px/1.85 system-ui,
     sans-serif;
   color: CanvasText;
-  background: Canvas;
+  background: light-dark(#fffefa, #242421);
 }
 .tiptap {
   min-height: calc(100vh - 32px);
-  padding: 16px;
+  box-sizing: border-box;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 24px 32px;
   outline: none;
   overflow-wrap: anywhere;
 }

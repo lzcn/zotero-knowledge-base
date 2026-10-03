@@ -15,6 +15,11 @@ import {
   reportStartupFailure,
 } from "./modules/startup-errors";
 
+import {
+  registerPreferences,
+  unregisterPreferences,
+} from "./modules/preferences";
+
 const windows = new Map<Window, Element[]>();
 let ready = false;
 let generation = 0;
@@ -60,6 +65,7 @@ async function start(token: number): Promise<void> {
       ["initAssets", initAssets],
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
+      ["registerPreferences", registerPreferences],
       ["registerItemPaneUI", registerItemPaneUI],
       ["registerReaderUI", registerReaderUI],
     ];
@@ -176,6 +182,7 @@ async function releaseResources(): Promise<void> {
           win.close();
       }
     },
+    unregisterPreferences,
     unregisterItemPaneUI,
     unregisterReaderUI,
     closeAssets,
@@ -194,10 +201,28 @@ async function releaseResources(): Promise<void> {
 }
 
 function onAppShutdown(): void {
+  // Start pending draft writes before the database shutdown blocker drains them.
+  for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {
+    const editor = win as unknown as Window & {
+      knowledgeBaseFlushDraft?: () => Promise<void>;
+      knowledgeBaseStopping?: boolean;
+    };
+    try {
+      editor
+        .knowledgeBaseFlushDraft?.()
+        .catch((error) => Zotero.logError(error));
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+    editor.knowledgeBaseStopping = true;
+  }
   ++generation;
   ready = false;
   addon.data.alive = false;
   stopAssets();
+  unregisterPreferences();
   cancelReadiness?.();
   removeQuitObserver();
 }

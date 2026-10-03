@@ -112,7 +112,6 @@ graph-title = 卡片关系图
 graph-all = 全部卡片
 graph-local-one = 在关系图中查看
 graph-local-two = 间接关联
-graph-sources = 文献来源
 graph-unresolved = 待创建的卡片
 graph-fit = 适应视图
 graph-refresh = 刷新
@@ -177,3 +176,26 @@ graph-open-card = 编辑卡片
 graph-open-source = 打开来源文献
 
 column-card-count = 卡片
+
+preferences-graph = 图谱显示
+pref-outline =
+    .label = 显示父子关系
+pref-references =
+    .label = 显示卡片链接
+pref-sources =
+    .label = 显示来源文献
+
+editor-source-mode = Markdown 源码
+editor-unsaved = 等待保存…
+editor-saving = 正在保存…
+editor-saved = 已保存
+editor-save-conflict = 此卡片已在其他位置修改，草稿已保留。请打开最新卡片后合并修改。
+editor-close-with-draft = 卡片未能保存。关闭窗口并保留恢复草稿？
+editor-draft-restored = 已恢复草稿，请检查后保存。
+editor-draft-missing = 此草稿已保存或不可用。
+manager-back = 后退
+manager-forward = 前进
+manager-drafts = 可恢复草稿
+manager-restore-draft = 打开草稿
+editor-save-copy = 另存为新卡片
+editor-remove-source = 移除来源

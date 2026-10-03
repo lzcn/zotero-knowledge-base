@@ -40,6 +40,8 @@ await build({
       export const closeAssets = () => run("closeAssets");
       export const cleanupImagesAfterChange = () => run("cleanupImages");
       export const rebuildCounts = () => run("rebuildCounts");
+      export const registerPreferences = () => run("registerPreferences");
+      export const unregisterPreferences = () => {};
       export const registerItemPaneUI = () => run("registerPane");
       export const unregisterItemPaneUI = () => run("unregisterPane");
       export const registerReaderUI = () => run("registerReader");

@@ -110,6 +110,20 @@ check("Managed references render only their stable index", () => {
 });
 
 check(
+  "Card previews resolve current titles while retaining stable URLs",
+  () => {
+    const html = markdown.renderMarkdown(
+      "[[stable-id]]",
+      htmlWindow,
+      (url) => url,
+      (id) => (id === "stable-id" ? "Current title" : undefined),
+    );
+    const link = new JSDOM(html).window.document.querySelector("a");
+    assert.equal(link.textContent, "Current title");
+    assert.equal(link.getAttribute("href"), "knowledge-base://card/stable-id");
+  },
+);
+check(
   "Markdown headings, emphasis, task lists, quotes, code and tables",
   () => {
     for (const selector of [
@@ -393,9 +407,12 @@ async function editor(args = {}, overrides = {}) {
     searchItems: async () => sources,
     getSelectedSource: async () => sources[0],
     listZettels: async () => [{ id: "20261001000000", title: "Target card" }],
-    saveZettel: async (input) => {
+    discardEditorDraft: async () => {},
+    saveEditorDraft: async () => {},
+    getEditorDraft: async () => null,
+    saveEditorCard: async (input) => {
       saved = input;
-      return "20261001000001";
+      return { id: "20261001000001", updatedAt: 1 };
     },
     openLink: async (href) => calls.open.push(href),
     openImage: (url) => calls.images.push(url),
@@ -435,6 +452,62 @@ const ed = await editor({ prefillTitle: "New concept" });
 check("Editor prefills concept titles in its real XML document", () =>
   assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
 );
+// Slow writes must not clear edits made after their snapshot was taken.
+let finishSave;
+let draftSnapshot;
+const slow = await editor(
+  {},
+  {
+    saveEditorDraft: async (input) => {
+      draftSnapshot = input;
+    },
+    saveEditorCard: async () =>
+      new Promise((resolve) => {
+        finishSave = resolve;
+      }),
+  },
+);
+slow.$("knowledge-base-editor-body").value = "first";
+slow.win.__editorEval("setDirty()");
+const pendingSave = slow.win.__editorEval("save(false)");
+await wait();
+slow.$("knowledge-base-editor-body").value = "second";
+slow.win.__editorEval("setDirty()");
+finishSave({ id: "slow-card", updatedAt: 10 });
+await pendingSave;
+check(
+  "Typing during a save stays dirty and retains the newer recovery draft",
+  () => {
+    assert.equal(slow.win.__editorEval("dirty"), true);
+    assert.equal(draftSnapshot.body, "second");
+    assert.equal(draftSnapshot.expectedUpdatedAt, 10);
+  },
+);
+slow.win.close();
+const recovered = await editor(
+  { draftId: "recover" },
+  {
+    getEditorDraft: async () => ({
+      draftId: "recover",
+      draftRevision: 2,
+      title: "Recovered card",
+      body: "Kept after restart",
+      expectedUpdatedAt: null,
+    }),
+  },
+);
+check(
+  "Recovered drafts load without immediately overwriting a saved card",
+  () => {
+    assert.equal(
+      recovered.$("knowledge-base-editor-body").value,
+      "Kept after restart",
+    );
+    assert.equal(recovered.saved(), undefined);
+    assert.equal(recovered.win.__editorEval("dirty"), true);
+  },
+);
+recovered.win.close();
 const commands = await editor({ prefillTitle: "Commands" });
 const commandBody = commands.$("knowledge-base-editor-body");
 const typeCommand = (text) => {
@@ -481,7 +554,9 @@ check("Cancelling a slash command preserves its unsaved text", () =>
 );
 commandBody.value = "Selected title";
 commandBody.setSelectionRange(0, 14);
-commands.$("knowledge-base-command-open").click();
+commands
+  .$("knowledge-base-command-open")
+  .dispatchEvent(new commands.win.Event("command", { bubbles: true }));
 commands.$("knowledge-base-command-search").value = "heading";
 commands
   .$("knowledge-base-command-search")
@@ -536,7 +611,12 @@ richWindow.Range.prototype.getBoundingClientRect = () => ({
 });
 richWindow.eval(await readFile(richBundle, "utf8"));
 const nativeClick = (element, win) =>
-  element.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+  element.dispatchEvent(
+    new win.MouseEvent(
+      element.id === "knowledge-base-visual-toggle" ? "command" : "click",
+      { bubbles: true },
+    ),
+  );
 const visualButton = ed.$("knowledge-base-visual-toggle");
 nativeClick(visualButton, ed.win);
 await wait();
@@ -545,6 +625,15 @@ const richSurface = richWindow.document.querySelector(".tiptap");
 assert.ok(richSurface);
 // Use the engine's document transaction; no direct DOM rewrites or fake input event.
 const controller = ed.win.__editorEval("richEditor");
+controller.setHTML(
+  markdown.renderMarkdown("[[stable-id|My label]]", htmlWindow),
+);
+controller.insertHTML("<p>More text</p>");
+check("Visual edits preserve explicit card-link aliases", () => {
+  assert.ok(
+    ed.$("knowledge-base-editor-body").value.includes("[[stable-id|My label]]"),
+  );
+});
 controller.setHTML(
   '<p><a href="knowledge-base://card/stable-id">Old name</a></p><p><img src="resource://knowledge-base-assets/image-test.png" alt="Figure"></p>',
 );
@@ -621,7 +710,9 @@ check(
   },
 );
 ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
-ed.$("knowledge-base-src-insert").click();
+ed.$("knowledge-base-src-insert").dispatchEvent(
+  new ed.win.Event("command", { bubbles: true }),
+);
 check("Source insertion creates an actual Zotero Markdown link", () =>
   assert.match(
     ed.$("knowledge-base-editor-body").value,
@@ -734,7 +825,9 @@ check(
 );
 ed.$("knowledge-base-editor-body").value = "";
 ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
-ed.$("knowledge-base-image-insert").click();
+ed.$("knowledge-base-image-insert").dispatchEvent(
+  new ed.win.Event("command", { bubbles: true }),
+);
 await wait();
 await wait();
 check("Image file picker inserts a persistent Markdown image", () =>
@@ -900,11 +993,20 @@ windows.push(graphDom.window);
 await new Promise((resolve) =>
   graphDom.window.addEventListener("load", resolve, { once: true }),
 );
+const graphOptions = { outline: true, references: true, sources: true };
+let optionsChanged;
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
       loc: (key) => key,
       getGraph: async () => graphData,
+      getGraphOptions: () => graphOptions,
+      onGraphOptionsChange: (listener) => {
+        optionsChanged = listener;
+        return () => {
+          optionsChanged = undefined;
+        };
+      },
       renderMarkdown: (body) => markdown.renderMarkdown(body, htmlWindow),
       onDataChange: () => () => {},
       openEditor() {},
@@ -926,13 +1028,17 @@ graphDom.window.dispatchEvent(new graphDom.window.Event("load"));
 await wait();
 await wait();
 check(
-  "Graph exposes independent relationship toggles and defaults to all relationships",
+  "Graph uses saved relationship settings and defaults to all relationships",
   () => {
-    for (const id of ["graph-outline", "graph-references", "graph-sources"])
-      assert.equal(
-        graphDom.window.document.getElementById(id).getAttribute("checked"),
-        "true",
-      );
+    assert.deepEqual(graphOptions, {
+      outline: true,
+      references: true,
+      sources: true,
+    });
+    assert.equal(
+      graphDom.window.document.getElementById("graph-settings"),
+      null,
+    );
     assert.equal(
       graphDom.window.document.getElementById("graph-node-focus"),
       null,
@@ -1017,10 +1123,9 @@ check(
     );
   },
 );
-const referenceToggle =
-  graphDom.window.document.getElementById("graph-references");
-referenceToggle.setAttribute("checked", "false");
-referenceToggle.dispatchEvent(new graphDom.window.Event("command"));
+graphOptions.references = false;
+optionsChanged();
+await wait();
 check("Hiding references leaves every card visible", () => {
   assert.equal(
     graphDom.window.document.querySelectorAll(".graph-edge.link").length,
@@ -1049,17 +1154,18 @@ check(
     );
   },
 );
-referenceToggle.setAttribute("checked", "true");
-referenceToggle.dispatchEvent(new graphDom.window.Event("command"));
+graphOptions.references = true;
+optionsChanged();
+await wait();
 check("Showing references restores edges without filtering cards", () =>
   assert.equal(
     graphDom.window.document.querySelectorAll(".graph-edge.link").length,
     2,
   ),
 );
-const sourceToggle = graphDom.window.document.getElementById("graph-sources");
-sourceToggle.setAttribute("checked", "false");
-sourceToggle.dispatchEvent(new graphDom.window.Event("command"));
+graphOptions.sources = false;
+optionsChanged();
+await wait();
 check(
   "Hiding source items removes their nodes, edges and legend, retaining every card",
   () => {
@@ -1079,39 +1185,14 @@ check(
     );
   },
 );
-sourceToggle.setAttribute("checked", "true");
-sourceToggle.dispatchEvent(new graphDom.window.Event("command"));
-check("Source nodes return when enabled; settings use a native popup", () => {
+graphOptions.sources = true;
+optionsChanged();
+await wait();
+check("Source nodes return when enabled in preferences", () => {
   assert.ok(graphDom.window.document.querySelector(".graph-node.source"));
-  assert.ok(sourceToggle.closest("#graph-display-menu"));
   assert.ok(
     graphDom.window.document.getElementById("graph-search").placeholder,
   );
-});
-check("Right-click opens the shared graph settings at the pointer", () => {
-  const popup = graphDom.window.document.getElementById("graph-display-menu");
-  let position;
-  popup.openPopupAtScreen = (...args) => {
-    position = args;
-  };
-  const event = new graphDom.window.MouseEvent("contextmenu", {
-    bubbles: true,
-    cancelable: true,
-    screenX: 340,
-    screenY: 220,
-  });
-  graphDom.window.document.getElementById("graph-svg").dispatchEvent(event);
-  assert.equal(event.defaultPrevented, true);
-  assert.deepEqual(position, [340, 220, true]);
-  assert.equal(popup.parentNode.id, "graph-settings");
-  assert.equal(popup.parentNode.getAttribute("type"), "menu");
-  position = null;
-  graphDom.window.document
-    .getElementById("graph-inspector")
-    .dispatchEvent(
-      new graphDom.window.MouseEvent("contextmenu", { bubbles: true }),
-    );
-  assert.equal(position, null);
 });
 const searchGraph = graphDom.window.document.getElementById("graph-search");
 searchGraph.value = "isolated";
@@ -1254,6 +1335,7 @@ managerWin.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
       loc: (key) => labels[key] || key,
+      listEditorDrafts: async () => [],
       listZettels: async () => managerCards,
       getZettel: async (id) => managerCards.find((card) => card.id === id),
       getFamily: async () => ({

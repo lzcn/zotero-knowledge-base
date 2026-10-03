@@ -138,7 +138,6 @@ graph-title = Card graph
 graph-all = All cards
 graph-local-one = Show in graph
 graph-local-two = Extended connections
-graph-sources = Source items
 graph-unresolved = Missing cards
 graph-fit = Fit view
 graph-refresh = Refresh
@@ -203,3 +202,26 @@ graph-open-card = Edit card
 graph-open-source = Open source item
 
 column-card-count = Cards
+
+preferences-graph = Graph display
+pref-outline =
+    .label = Show parent–child connections
+pref-references =
+    .label = Show card links
+pref-sources =
+    .label = Show source items
+
+editor-source-mode = Markdown source
+editor-unsaved = Waiting to save…
+editor-saving = Saving…
+editor-saved = Saved
+editor-save-conflict = This card changed elsewhere. Your draft is preserved. Reopen the latest card before merging your changes.
+editor-close-with-draft = The card could not be saved. Close and keep the recovery draft?
+editor-draft-restored = Draft restored. Review it, then save.
+editor-draft-missing = This draft has already been saved or is unavailable.
+manager-back = Back
+manager-forward = Forward
+manager-drafts = Recovery drafts
+manager-restore-draft = Open draft
+editor-save-copy = Save as new card
+editor-remove-source = Remove source

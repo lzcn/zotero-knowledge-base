@@ -319,7 +319,7 @@ async function refreshAnnotationCount(
  * from; it is used for de-duplication and for the "has card" indicators.
  * On update, omitting it preserves the stored value.
  */
-export async function saveZettel(input: {
+export interface SaveCardInput {
   id?: string;
   title: string;
   body: string;
@@ -327,8 +327,19 @@ export async function saveZettel(input: {
   libraryID?: number | null;
   annotationKey?: string | null;
   parentId?: string | null;
-}): Promise<string> {
-  const now = Date.now();
+  expectedUpdatedAt?: number | null;
+  draftId?: string;
+  draftRevision?: number;
+}
+
+export async function saveZettel(input: SaveCardInput): Promise<string> {
+  return (await saveEditorCard(input)).id;
+}
+
+export async function saveEditorCard(
+  input: SaveCardInput,
+): Promise<{ id: string; updatedAt: number }> {
+  let now = Date.now();
   const title = input.title.trim();
   const body = input.body;
 
@@ -336,7 +347,15 @@ export async function saveZettel(input: {
     let id: string;
     let previousItemKey: string | null = null;
     let effectiveAnnotationKey: string | null = input.annotationKey ?? null;
-    if (input.id && (await exists(input.id))) {
+    const previous = input.id ? await getZettel(input.id) : null;
+    if (
+      input.expectedUpdatedAt !== undefined &&
+      (previous?.updated_at ?? null) !== input.expectedUpdatedAt
+    ) {
+      throw new Error("CARD_CONFLICT");
+    }
+    if (previous) now = Math.max(now, previous.updated_at + 1);
+    if (input.id && previous) {
       id = input.id;
       const old = await getOne<{
         item_key: string | null;
@@ -386,6 +405,11 @@ export async function saveZettel(input: {
     await saveParent(id, input.parentId);
     await reindexLinks(id, body);
     await resolveUnresolvedLinks();
+    if (input.draftId && input.draftRevision !== undefined)
+      await exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
+        input.draftId,
+        input.draftRevision,
+      ]);
     return { id, previousItemKey, effectiveAnnotationKey };
   });
 
@@ -397,7 +421,7 @@ export async function saveZettel(input: {
   cardTitles.set(result.id, title);
   notifyDataChange();
   await cleanupImagesAfterChange();
-  return result.id;
+  return { id: result.id, updatedAt: now };
 }
 
 export async function deleteZettel(id: string): Promise<void> {
@@ -418,14 +442,6 @@ export async function deleteZettel(id: string): Promise<void> {
   await refreshAnnotationCount(row?.annotation_key ?? null);
   notifyDataChange();
   await cleanupImagesAfterChange();
-}
-
-async function exists(id: string): Promise<boolean> {
-  const row = await getOne<{ id: string }>(
-    `SELECT id FROM zettels WHERE id = ?`,
-    [id],
-  );
-  return !!row;
 }
 
 async function reindexLinks(zettelId: string, body: string): Promise<void> {

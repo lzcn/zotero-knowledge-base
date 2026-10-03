@@ -82,7 +82,7 @@ assert.deepEqual(
   sourceCSS,
 );
 for (const name of await readdir(join(addonDirectory, "content"))) {
-  if (!name.endsWith(".xhtml")) continue;
+  if (!name.endsWith(".xhtml") || name === "preferences.xhtml") continue;
   const text = await readFile(join(addonDirectory, "content", name), "utf8");
   assert.ok(
     text.includes(`manager.css?v=${styleVersion}`),

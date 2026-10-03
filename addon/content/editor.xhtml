@@ -21,16 +21,18 @@ type="text/css"?>
     <html:div id="knowledge-base-editor-toolbar">
       <html:span id="knowledge-base-src-label" class="lbl"></html:span>
       <html:span id="knowledge-base-src-display" class="muted"></html:span>
-      <html:button id="knowledge-base-src-pick"></html:button>
-      <html:button id="knowledge-base-src-jump" hidden="hidden"></html:button>
-      <html:button id="knowledge-base-src-anno" hidden="hidden"></html:button>
-      <html:button id="knowledge-base-src-clear" class="icon" hidden="hidden"
-        >&#10005;</html:button
-      >
+      <button id="knowledge-base-src-pick"></button>
+      <button id="knowledge-base-src-jump" hidden="hidden"></button>
+      <button id="knowledge-base-src-anno" hidden="hidden"></button>
+      <button
+        id="knowledge-base-src-clear"
+        class="icon"
+        hidden="hidden"
+      ></button>
     </html:div>
     <html:div id="knowledge-base-src-drop" hidden="hidden">
       <html:input id="knowledge-base-src-search" type="search" />
-      <html:button id="knowledge-base-src-selected"></html:button>
+      <button id="knowledge-base-src-selected"></button>
       <html:div id="knowledge-base-src-status" class="muted" role="status" />
       <html:ul id="knowledge-base-src-results" class="refs"></html:ul>
     </html:div>
@@ -40,8 +42,8 @@ type="text/css"?>
         id="knowledge-base-parent-label"
         for="knowledge-base-parent-search"
       />
-      <html:button id="knowledge-base-parent-display" />
-      <html:button id="knowledge-base-parent-root">⌂</html:button>
+      <button id="knowledge-base-parent-display" />
+      <button id="knowledge-base-parent-root"></button>
       <html:input
         id="knowledge-base-parent-search"
         type="search"
@@ -54,24 +56,17 @@ type="text/css"?>
       />
     </html:div>
     <html:div id="knowledge-base-markdown-toolbar">
-      <html:button
+      <button
         id="knowledge-base-command-open"
         class="icon-button"
         aria-expanded="false"
-        >➕</html:button
-      >
-      <html:button id="knowledge-base-link-pick"></html:button>
-      <html:button id="knowledge-base-url-insert" />
-      <html:button id="knowledge-base-image-insert" />
-      <html:button
-        id="knowledge-base-src-insert"
-        disabled="disabled"
-      ></html:button>
+      ></button>
+      <button id="knowledge-base-link-pick"></button>
+      <button id="knowledge-base-url-insert" />
+      <button id="knowledge-base-image-insert" />
+      <button id="knowledge-base-src-insert" disabled="disabled"></button>
       <html:div class="spacer" />
-      <html:button
-        id="knowledge-base-preview-toggle"
-        aria-pressed="true"
-      ></html:button>
+      <button id="knowledge-base-preview-toggle" aria-pressed="true"></button>
     </html:div>
     <html:div
       id="knowledge-base-command-menu"
@@ -102,7 +97,7 @@ type="text/css"?>
       </html:div>
       <html:details id="knowledge-base-editor-relations">
         <html:summary id="knowledge-base-editor-relations-summary" />
-        <html:button id="knowledge-base-editor-graph" />
+        <button id="knowledge-base-editor-graph" />
         <html:div id="knowledge-base-editor-family" />
         <html:h3 id="knowledge-base-editor-outgoing-label" />
         <html:ul id="knowledge-base-editor-outgoing" class="refs" />
@@ -111,13 +106,16 @@ type="text/css"?>
       </html:details>
     </html:div>
     <html:footer id="knowledge-base-editor-footer">
-      <html:span id="knowledge-base-editor-status" class="muted"></html:span>
+      <html:span
+        id="knowledge-base-editor-status"
+        class="muted"
+        role="status"
+        aria-live="polite"
+      ></html:span>
       <html:div class="spacer" />
-      <html:button id="knowledge-base-editor-cancel"></html:button>
-      <html:button
-        id="knowledge-base-editor-save"
-        class="primary"
-      ></html:button>
+      <button id="knowledge-base-editor-save-copy" hidden="true" />
+      <button id="knowledge-base-editor-cancel"></button>
+      <button id="knowledge-base-editor-save" default="true"></button>
     </html:footer>
     <html:div id="knowledge-base-anno-layer" hidden="hidden">
       <html:div id="knowledge-base-anno-box">
@@ -130,11 +128,8 @@ type="text/css"?>
         ></html:div>
         <html:footer>
           <html:div class="spacer" />
-          <html:button id="knowledge-base-anno-cancel"></html:button>
-          <html:button
-            id="knowledge-base-anno-insert"
-            class="primary"
-          ></html:button>
+          <button id="knowledge-base-anno-cancel"></button>
+          <button id="knowledge-base-anno-insert" default="true"></button>
         </html:footer>
       </html:div>
     </html:div>

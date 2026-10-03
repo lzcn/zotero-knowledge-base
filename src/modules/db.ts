@@ -10,7 +10,7 @@
  */
 
 const DB_FILENAME = "knowledge-base.sqlite";
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 export interface ZettelRow {
   id: string;
@@ -31,6 +31,7 @@ export interface LinkRow {
 }
 
 const SCHEMA_TABLES: string[] = [
+  `CREATE TABLE IF NOT EXISTS editor_drafts (id TEXT PRIMARY KEY, body TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_parents (card_id TEXT PRIMARY KEY, parent_id TEXT, CHECK(card_id <> parent_id))`,
   `CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,

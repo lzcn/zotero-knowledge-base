@@ -9,6 +9,10 @@ declare global {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
   }
   interface Window {
+    knowledgeBaseCardId?: string | null;
+    knowledgeBaseDraftId?: string;
+    knowledgeBaseStopping?: boolean;
+    knowledgeBaseFlushDraft?: () => Promise<void>;
     KnowledgeBaseRichEditor: {
       create(
         options: import("../src/ui/rich-editor").RichEditorOptions,
@@ -152,13 +156,10 @@ export interface AnnotationsElements {
 
 export interface GraphElements {
   "graph-display-menu": XULMenuPopupElement;
-  "graph-outline": Element;
-  "graph-references": Element;
   "knowledge-base-graph": Element;
   "knowledge-base-graph-root": HTMLElementTagNameMap["div"];
   "knowledge-base-graph-toolbar": HTMLElementTagNameMap["header"];
   "graph-search": HTMLElementTagNameMap["input"];
-  "graph-sources": Element;
   "graph-fit": HTMLElementTagNameMap["button"];
   "graph-refresh": HTMLElementTagNameMap["button"];
   "graph-stats": HTMLElementTagNameMap["span"];

@@ -5,6 +5,10 @@ let zettels = [];
 let selectedId = null;
 let searchTimer = null;
 let detailVersion = 0;
+let listVersion = 0;
+const history = [];
+let historyIndex = -1;
+const scrollPositions = new Map();
 
 /** @template {keyof import("../../typings/ui").ManagerElements} K
  * @param {K} id @returns {import("../../typings/ui").ManagerElements[K]} */
@@ -56,6 +60,7 @@ const load = wrap(async function () {
   );
   applyLocale();
   bindEvents();
+  await refreshDrafts();
   if (args.selectId) $("knowledge-base-entries").checked = false;
   await refresh();
   const wanted =
@@ -87,6 +92,18 @@ window.ZoteroKnowledgeBase_selectZettel = function (id) {
 };
 
 function applyLocale() {
+  for (const [id, key] of [
+    ["knowledge-base-back", "manager-back"],
+    ["knowledge-base-forward", "manager-forward"],
+    ["knowledge-base-restore-draft", "manager-restore-draft"],
+  ]) {
+    const element = document.getElementById(id);
+    element.setAttribute("label", api.loc(key));
+    element.setAttribute("tooltiptext", api.loc(key));
+  }
+  document
+    .getElementById("knowledge-base-drafts-label")
+    .setAttribute("value", api.loc("manager-drafts"));
   $("knowledge-base-entries-label").textContent = api.loc("entries");
   document.title = api.loc("manager-title");
   $("knowledge-base-search").placeholder = api.loc(
@@ -117,6 +134,38 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  document
+    .getElementById("knowledge-base-back")
+    .addEventListener("command", () => safeCall(navigateHistory, -1));
+  document
+    .getElementById("knowledge-base-forward")
+    .addEventListener("command", () => safeCall(navigateHistory, 1));
+  document
+    .getElementById("knowledge-base-restore-draft")
+    .addEventListener("command", () => {
+      const menu = /** @type {XULMenuListElement} */ (
+        /** @type {unknown} */ (
+          document.getElementById("knowledge-base-draft-list")
+        )
+      );
+      if (menu.value) api.openEditor({ draftId: menu.value });
+    });
+  window.addEventListener("focus", () => safeCall(refreshDrafts));
+  $("knowledge-base-list").addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    const rows = /** @type {HTMLLIElement[]} */ (
+      Array.from($("knowledge-base-list").querySelectorAll("li"))
+    );
+    const index = rows.indexOf(
+      /** @type {HTMLLIElement} */ (document.activeElement),
+    );
+    const next = rows[index + (event.key === "ArrowDown" ? 1 : -1)];
+    if (next) {
+      event.preventDefault();
+      next.focus();
+      select(next.dataset.id);
+    }
+  });
   $("knowledge-base-btn-child").addEventListener("click", () => {
     if (!selectedId) return;
     api.openEditor({
@@ -175,8 +224,12 @@ function bindEvents() {
 }
 
 const refresh = wrap(async function () {
+  const version = ++listVersion;
   const q = $("knowledge-base-search").value || "";
-  zettels = await api.listZettels(q, $("knowledge-base-entries").checked);
+  const rows = await api.listZettels(q, $("knowledge-base-entries").checked);
+  if (version !== listVersion || window.closed) return;
+  zettels = rows;
+  const titles = new Map(rows.map((card) => [card.id, card.title]));
   const list = $("knowledge-base-list");
   list.textContent = "";
   for (const z of zettels) {
@@ -199,6 +252,29 @@ const refresh = wrap(async function () {
     title.className = "title";
     title.textContent = z.title || api.loc("manager-untitled");
     li.appendChild(title);
+    const snippet = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    snippet.className = "card-snippet";
+    const plain = (z.body || "")
+      .replace(
+        /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+        (_match, id, alias) => alias || titles.get(id) || id,
+      )
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/[#*`>_$]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    const match = q
+      ? plain.toLocaleLowerCase().indexOf(q.toLocaleLowerCase())
+      : 0;
+    const start = Math.max(0, match - 30);
+    snippet.textContent =
+      (start ? "…" : "") +
+      plain.slice(start, start + 110) +
+      (plain.length > start + 110 ? "…" : "");
+    li.appendChild(snippet);
 
     const badges = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
@@ -246,7 +322,20 @@ const refreshUnresolved = wrap(async function () {
   }
 });
 
-function select(id) {
+function select(id, record = true) {
+  if (selectedId)
+    scrollPositions.set(selectedId, $("knowledge-base-detail-pane").scrollTop);
+  if (record && history[historyIndex] !== id) {
+    history.splice(historyIndex + 1);
+    history.push(id);
+    historyIndex = history.length - 1;
+  }
+  document
+    .getElementById("knowledge-base-back")
+    .toggleAttribute("disabled", historyIndex <= 0);
+  document
+    .getElementById("knowledge-base-forward")
+    .toggleAttribute("disabled", historyIndex >= history.length - 1);
   selectedId = id;
   for (const li of /** @type {HTMLLIElement[]} */ (
     Array.from($("knowledge-base-list").children)
@@ -254,7 +343,47 @@ function select(id) {
     li.classList.toggle("active", li.dataset.id === id);
     li.setAttribute("aria-current", li.dataset.id === id ? "true" : "false");
   }
-  safeCall(renderDetail, id);
+  safeCall(async () => {
+    await renderDetail(id);
+    if (selectedId === id)
+      $("knowledge-base-detail-pane").scrollTop = scrollPositions.get(id) || 0;
+  });
+}
+
+async function navigateHistory(direction) {
+  const index = historyIndex + direction;
+  if (index < 0 || index >= history.length) return;
+  const card = await api.getZettel(history[index]);
+  if (!card) return;
+  historyIndex = index;
+  $("knowledge-base-search").value = "";
+  $("knowledge-base-entries").checked = false;
+  await refresh();
+  select(card.id, false);
+}
+
+async function refreshDrafts() {
+  if (!api) return;
+  const drafts = await api.listEditorDrafts();
+  if (window.closed) return;
+  const popup = document.getElementById("knowledge-base-draft-menu");
+  popup.replaceChildren();
+  for (const draft of drafts) {
+    const item = document.createElementNS(
+      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+      "menuitem",
+    );
+    item.setAttribute("value", draft.draftId);
+    item.setAttribute("label", draft.title || api.loc("manager-untitled"));
+    popup.appendChild(item);
+  }
+  const menu = /** @type {XULMenuListElement} */ (
+    /** @type {unknown} */ (
+      document.getElementById("knowledge-base-draft-list")
+    )
+  );
+  menu.value = drafts[0]?.draftId || "";
+  document.getElementById("knowledge-base-drafts").hidden = !drafts.length;
 }
 
 const renderDetail = wrap(async function (id) {

@@ -1,4 +1,4 @@
-import { Editor } from "@tiptap/core";
+import { Editor, Extension } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table";
@@ -9,6 +9,7 @@ import Mathematics from "@tiptap/extension-mathematics";
 export interface RichEditorOptions {
   html: string;
   onChange(html: string): void;
+  onOpenLink(href: string): void;
   onImages(files: File[]): Promise<string>;
   onShortcut(key: string): void;
   onError(message: string): void;
@@ -82,6 +83,27 @@ export function createRichEditor(
       StarterKit.configure({
         link: { openOnClick: false, protocols: ["knowledge-base", "zotero"] },
       }),
+      Extension.create({
+        name: "cardAlias",
+        addGlobalAttributes() {
+          return [
+            {
+              types: ["link"],
+              attributes: {
+                cardAlias: {
+                  default: null,
+                  parseHTML: (element) =>
+                    element.getAttribute("data-card-alias"),
+                  renderHTML: (attributes) =>
+                    attributes.cardAlias
+                      ? { "data-card-alias": attributes.cardAlias }
+                      : {},
+                },
+              },
+            },
+          ];
+        },
+      }),
       Image.configure({ inline: true }),
       TableKit.configure({ table: { resizable: false } }),
       TaskList,
@@ -110,6 +132,15 @@ export function createRichEditor(
         role: "textbox",
         "aria-multiline": "true",
         spellcheck: "true",
+      },
+      handleClick: (_view, _pos, event) => {
+        const link = (event.target as Element).closest("a");
+        if (link && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          options.onOpenLink(link.getAttribute("href") || "");
+          return true;
+        }
+        return false;
       },
       handleKeyDown: (_view, event) => {
         if (

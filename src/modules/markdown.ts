@@ -66,7 +66,7 @@ const markdown = new Marked({
         };
       },
       renderer(token) {
-        return `<a href="knowledge-base://card/${encodeURIComponent(token.ref)}" class="zettel-link">${escapeHTML(token.display)}</a>`;
+        return `<a href="knowledge-base://card/${encodeURIComponent(token.ref)}" class="zettel-link"${token.raw.includes("|") ? ` data-card-alias="${escapeHTML(token.display)}"` : ""}>${escapeHTML(token.display)}</a>`;
       },
     },
   ],
@@ -134,15 +134,19 @@ export function renderMarkdown(
   body: string,
   win: Parameters<typeof createDOMPurify>[0],
   resolveImage: (url: string) => string = (url) => url,
+  resolveTitle: (id: string) => string | undefined = () => undefined,
 ): string {
   const tokens = markdown.lexer(body);
   markdown.walkTokens(tokens, (token) => {
     if (token.type === "image") token.href = resolveImage(token.href);
     if (token.type === "wikilink" && !token.raw.includes("|"))
-      token.display = token.ref;
+      token.display = resolveTitle(token.ref) || token.ref;
     if (token.type === "link") {
       const ref = cardRefFromURL(token.href);
-      if (ref) token.tokens = [{ type: "text", raw: ref, text: ref }];
+      if (ref)
+        token.tokens = [
+          { type: "text", raw: ref, text: resolveTitle(ref) || ref },
+        ];
     }
   });
   const html = markdown.parser(tokens);

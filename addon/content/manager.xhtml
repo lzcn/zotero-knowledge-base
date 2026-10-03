@@ -18,14 +18,14 @@ type="text/css"?>
   <script src="chrome://knowledge-base/content/manager.js" />
   <html:div id="knowledge-base-root">
     <html:header id="knowledge-base-toolbar">
+      <toolbarbutton id="knowledge-base-back" />
+      <toolbarbutton id="knowledge-base-forward" />
       <toolbarbutton id="knowledge-base-btn-new" class="kb-native-tool" />
       <toolbarbutton id="knowledge-base-btn-graph" class="kb-native-tool" />
       <html:input id="knowledge-base-search" type="search" />
       <html:label
-        ><html:input
-          id="knowledge-base-entries"
-          type="checkbox"
-          checked="checked" /><html:span id="knowledge-base-entries-label"
+        ><html:input id="knowledge-base-entries" type="checkbox" /><html:span
+          id="knowledge-base-entries-label"
       /></html:label>
       <html:div class="spacer" />
       <html:span id="knowledge-base-stats" class="muted"></html:span>
@@ -84,6 +84,16 @@ type="text/css"?>
         </html:div>
       </html:section>
     </html:main>
+    <hbox id="knowledge-base-drafts" hidden="true" align="center">
+      <label
+        id="knowledge-base-drafts-label"
+        control="knowledge-base-draft-list"
+      />
+      <menulist id="knowledge-base-draft-list" native="true"
+        ><menupopup id="knowledge-base-draft-menu"
+      /></menulist>
+      <button id="knowledge-base-restore-draft" />
+    </hbox>
     <html:div id="knowledge-base-error" hidden="hidden"></html:div>
   </html:div>
 </window>
