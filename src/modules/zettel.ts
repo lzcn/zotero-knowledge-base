@@ -14,7 +14,7 @@ export interface Zettel extends ZettelRow {
 }
 
 export interface ParsedLink {
-  /** raw text inside [[...]], e.g. "20260909120000" or "某个标题" */
+  /** raw text inside [[...]], e.g. "20260909120000" or "A card title" */
   ref: string;
   /** display text after "|", defaults to ref */
   display: string;

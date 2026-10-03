@@ -1,4 +1,5 @@
 export const requiredFiles = [
+  "content/section.css",
   "content/icons/ui/plus.svg",
   "content/icons/ui/edit.svg",
   "content/icons/ui/trash.svg",

@@ -175,3 +175,5 @@ graph-backlinks = 反向链接
 graph-open-card = 编辑卡片
 
 graph-open-source = 打开来源文献
+
+column-card-count = 卡片

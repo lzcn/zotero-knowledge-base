@@ -18,7 +18,7 @@
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "start": "zotero-plugin serve",
-    "build": "npm run typecheck && node scripts/build.mjs",
+    "build": "node scripts/build.mjs",
     "lint:check": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "release": "npm run check && node scripts/package-release.mjs",
@@ -27,9 +27,10 @@
     "test:ui": "node tests/ui.mjs",
     "test:pane": "node tests/item-pane.mjs",
     "test:host": "node scripts/test-zotero-quit.mjs",
-    "check": "npm run lint:check && npm test && npm run build",
+    "check": "npm run lint:check && node scripts/build.mjs --check && npm test",
     "lint": "npm run lint:check",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ui.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ui.json",
+    "build:force": "node scripts/build.mjs --force"
   },
   "dependencies": {
     "@tiptap/core": "3.31.4",

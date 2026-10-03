@@ -1,8 +1,8 @@
 # Knowledge Base
 
-<img src="addon/content/icons/icon-256.png" width="64" height="64" alt="Knowledge Base" />
-
 [English](README.md)
+
+<img src="addon/content/icons/icon-256.png" width="64" height="64" alt="Knowledge Base" />
 
 [![Built with ChatGPT](https://img.shields.io/badge/Built_with-ChatGPT-10A37F?style=flat)](https://chatgpt.com/) [![Built with DeepSeek](https://img.shields.io/badge/Built_with-DeepSeek-4D6BFE?style=flat)](https://www.deepseek.com/)
 
@@ -43,22 +43,15 @@
 
 ## 开发
 
-需要 Node.js 22.13+（22.x）或 24+。在插件目录中执行：
+需要 Node.js 22.13+（22.x）或 24+。依次执行 `npm ci`、`npm run check`；`npm run build` 生成 `dist/<package.json 中的包名>.xpi`，`npm run release` 准备 `release/v<版本>/` 中的本地发布文件。
 
-```sh
-npm ci             # 安装锁定依赖
-npm run build      # 类型检查并生成 XPI
-npm run check      # 格式、静态检查、测试与构建
-npm run release    # 完整检查并准备本地发布文件
-```
+`npm run release` 生成 XPI、`SHA256SUMS` 和 `updates.json`。
 
-本地调试：安装 `dist/zotero-knowledge-base.xpi`，重启 Zotero 并检查插件功能。修改后重新构建并安装。
+无改动时 `npm run build` 直接复用现有产物；`npm run build:force` 强制重建。`check` 和 `release` 仍运行完整验证。
 
-`npm run test:host` 使用临时配置和数据目录，测试真实 Zotero 的启动、保存，以及管理、编辑和关系图窗口打开时的退出。默认使用 macOS 应用路径，也可以通过 `ZOTERO_BINARY` 指定其他路径。
+共同开发规范集中在插件工作区根目录的 `AGENTS.md`。修改后构建并安装 XPI，再验证 Zotero 中的实际交互；本地打包不会创建 tag 或发布远端 Release。
 
-`npm run release` 在 `release/` 下准备安装包、校验文件和更新信息，不创建 Git tag，也不发布 GitHub Release。
-
-配置本机 `.env` 中的 Zotero 路径和开发 profile 后，可用 `npm start` 启动开发调试。
+`npm run test:host` 使用临时配置与数据目录验证启动、保存和退出，可通过 `ZOTERO_BINARY` 指定宿主路径。本地 `.env` 配置开发路径后，可用 `npm start` 调试。
 
 ## 许可证
 

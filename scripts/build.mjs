@@ -1,105 +1,144 @@
-import assert from "node:assert/strict";
+// Keep this entry point self-contained for each independent repository.
 import { createHash } from "node:crypto";
-import { readFile, readdir, writeFile, mkdir, rm } from "node:fs/promises";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build } from "esbuild";
-import { zipSync } from "fflate";
-import { buildOptions } from "./build-options.mjs";
-import { validatePackage } from "./validate-package.mjs";
-import { requiredFiles } from "./package-files.mjs";
+import { spawnSync } from "node:child_process";
+import process from "node:process";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-const outputRoot = join(root, "dist");
-const addonDirectory = join(outputRoot, "addon");
-const sourceCSS = await readFile(join(root, "addon/content/manager.css"));
-const richCSS = await readFile(join(root, "addon/content/rich-editor.css"));
-const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).update(richCSS).digest("hex").slice(0, 12)}`;
-const replacements = {
-  ...pkg.config,
-  buildVersion: pkg.version,
-  description: pkg.description,
-  author: pkg.author,
-  styleVersion,
-};
-await rm(outputRoot, { recursive: true, force: true });
-
-async function copyAssets(relative = "") {
-  const directory = join(root, "addon", relative);
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
-    const source = join(relative, entry.name);
-    if (entry.isDirectory()) {
-      await copyAssets(source);
-      continue;
-    }
-    if (!entry.isFile()) continue;
-    if (
-      ["content/icons/icon.png", "content/icons/icon-256.png"].includes(source)
-    )
-      continue;
-    const target = source.startsWith("locale/")
-      ? join(dirname(source), `${pkg.config.addonRef}-${entry.name}`)
-      : source;
-    let bytes = await readFile(join(root, "addon", source));
-    if (/\.(js|json|xhtml|html|css|ftl)$/.test(source)) {
-      bytes = Buffer.from(
-        bytes
-          .toString("utf8")
-          .replace(/__([a-zA-Z]+)__/g, (token, key) =>
-            Object.hasOwn(replacements, key)
-              ? String(replacements[key])
-              : token,
-          ),
-      );
-    }
-    if (source.endsWith(".ftl")) {
-      bytes = Buffer.from(
-        bytes
-          .toString("utf8")
-          .replace(/^([a-zA-Z][\w-]*)(\s*=)/gm, `${pkg.config.addonRef}-$1$2`),
-      );
-    }
-    const destination = join(addonDirectory, target);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, bytes);
+const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+const args = new Set(process.argv.slice(2));
+for (const arg of args) {
+  if (!["--force", "--check"].includes(arg)) {
+    throw new Error(`Unknown build argument: ${arg}`);
   }
 }
-await copyAssets();
-for (const options of buildOptions(pkg, "production", addonDirectory)) {
-  await build({ ...options, absWorkingDir: root });
-}
-assert.deepEqual(
-  await readFile(join(addonDirectory, "content/manager.css")),
-  sourceCSS,
-);
-for (const name of await readdir(join(addonDirectory, "content"))) {
-  if (!name.endsWith(".xhtml")) continue;
-  const text = await readFile(join(addonDirectory, "content", name), "utf8");
-  assert.ok(
-    text.includes(`manager.css?v=${styleVersion}`),
-    `${name}: missing stylesheet cache key`,
-  );
+const stateFile = join(root, "build", "state.json");
+const output = join(root, "dist", `${pkg.name}.xpi`);
+
+function fingerprint(paths, metadataOnly = false) {
+  const hash = createHash("sha256");
+  function visit(path, ancestry = new Set()) {
+    const absolute = join(root, path);
+    if (!existsSync(absolute)) {
+      hash.update(JSON.stringify([path, "missing"]));
+      return;
+    }
+    const info = lstatSync(absolute, { bigint: true });
+    if (info.isSymbolicLink()) {
+      hash.update(JSON.stringify([path, "link", readlinkSync(absolute)]));
+    }
+    const target = info.isSymbolicLink()
+      ? statSync(absolute, { bigint: true })
+      : info;
+    if (target.isDirectory()) {
+      const real = realpathSync(absolute);
+      if (ancestry.has(real))
+        throw new Error(`Circular directory link: ${path}`);
+      const next = new Set(ancestry).add(real);
+      hash.update(JSON.stringify([path, "directory"]));
+      for (const entry of readdirSync(absolute).sort()) {
+        if (entry === ".DS_Store") continue;
+        visit(join(path, entry), next);
+      }
+    } else if (target.isFile()) {
+      const signature = metadataOnly
+        ? [String(target.size), String(target.mtimeNs), String(target.ctimeNs)]
+        : createHash("sha256").update(readFileSync(absolute)).digest("hex");
+      hash.update(JSON.stringify([path, String(target.mode), signature]));
+    }
+  }
+  for (const path of paths.sort()) visit(path);
+  return hash.digest("hex");
 }
 
-const files = {};
-async function collect(relative = "") {
-  const entries = await readdir(join(addonDirectory, relative), {
-    withFileTypes: true,
+function inputs() {
+  const paths = [
+    "src",
+    "addon",
+    "content",
+    "icons",
+    "locale",
+    "ml",
+    "data",
+    "licenses",
+    "types",
+    "typings",
+    "scripts",
+    "package.json",
+    "package-lock.json",
+    "manifest.json",
+    "bootstrap.js",
+    "prefs.js",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES",
+    ...readdirSync(root).filter((name) => /^tsconfig.*\.json$/.test(name)),
+  ];
+  return JSON.stringify({
+    source: fingerprint(paths),
+    // Check dependency file metadata without rereading large WASM runtimes.
+    dependencies: fingerprint(["node_modules"], true),
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
   });
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const child = relative ? `${relative}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) await collect(child);
-    else if (entry.isFile())
-      files[child] = await readFile(join(addonDirectory, child));
-  }
 }
-await collect();
-const bytes = zipSync(files, {
-  level: 9,
-  mtime: new Date("2020-01-01T00:00:00Z"),
-});
-validatePackage(bytes, pkg, requiredFiles);
-await writeFile(join(outputRoot, `${pkg.name}.xpi`), bytes);
-console.log(`Built dist/${pkg.name}.xpi`);
+
+function run(command, argv) {
+  const result = spawnSync(command, argv, { cwd: root, stdio: "inherit" });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}
+
+const before = inputs();
+let previous;
+try {
+  previous = JSON.parse(readFileSync(stateFile, "utf8"));
+} catch {
+  // A missing or corrupt cache requires a rebuild.
+}
+const fresh =
+  !args.has("--force") &&
+  previous?.input === before &&
+  existsSync(output) &&
+  previous.output === fingerprint(["dist"]);
+
+if (fresh && !args.has("--check")) {
+  console.log(`Up to date: dist/${pkg.name}.xpi; build skipped.`);
+} else {
+  // Invalidate cached success before any step that can fail.
+  rmSync(stateFile, { force: true });
+  if (process.env.npm_execpath) {
+    run(process.execPath, [process.env.npm_execpath, "run", "typecheck"]);
+  } else {
+    run(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "typecheck"]);
+  }
+  if (!fresh)
+    run(process.execPath, [join(root, "scripts", "build-package.mjs")]);
+  if (!existsSync(output))
+    throw new Error(`Build did not produce output: ${output}`);
+  const after = inputs();
+  if (after !== before)
+    throw new Error("Inputs changed during the build; run the build again.");
+  mkdirSync(dirname(stateFile), { recursive: true });
+  const temporary = `${stateFile}.${process.pid}.tmp`;
+  writeFileSync(
+    temporary,
+    JSON.stringify({ input: after, output: fingerprint(["dist"]) }) + "\n",
+  );
+  renameSync(temporary, stateFile);
+  if (fresh) console.log(`Checks passed; reusing dist/${pkg.name}.xpi.`);
+}

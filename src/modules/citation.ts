@@ -54,7 +54,7 @@ export function describeSource(source: SourceLike): string {
 }
 
 /**
- * Citation line, e.g. `出处：Smith 2020，第 12 页`. Page is omitted when the
+ * Citation line, e.g. `Source: Smith 2020, p. 12`. Page is omitted when the
  * annotation carries no page label (typical for notes and image annotations).
  */
 export function citationLine(source: SourceLike, page = ""): string {

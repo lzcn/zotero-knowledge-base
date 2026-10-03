@@ -31,7 +31,7 @@ export async function registerItemPaneUI(): Promise<void> {
   columnID = Zotero.ItemTreeManager.registerColumn({
     pluginID: config.addonID,
     dataKey: "zettelCount",
-    label: "Zettel",
+    label: getString("column-card-count"),
     dataProvider: (item: Zotero.Item) => {
       if (!item.isRegularItem()) return "";
       const n = getItemCountSync(item.key);

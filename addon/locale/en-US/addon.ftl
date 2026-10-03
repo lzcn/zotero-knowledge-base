@@ -201,3 +201,5 @@ graph-backlinks = Backlinks
 graph-open-card = Edit card
 
 graph-open-source = Open source item
+
+column-card-count = Cards
