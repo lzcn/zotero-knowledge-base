@@ -4,6 +4,7 @@ import type { NativeCardInput } from "./native-notes";
 export interface EditorDraft extends NativeCardInput {
   draftId: string;
   draftRevision: number;
+  nativeDocument?: boolean;
 }
 
 function decode(data: string): EditorDraft {
@@ -46,7 +47,9 @@ export async function listEditorDrafts(): Promise<EditorDraft[]> {
   const rows = await getAll<{ data: string }>(
     "SELECT data FROM editor_drafts ORDER BY updated_at DESC",
   );
-  return rows.map((row) => decode(row.data));
+  return rows
+    .map((row) => decode(row.data))
+    .filter((draft) => !draft.nativeDocument);
 }
 
 export async function discardEditorDraft(id: string): Promise<void> {

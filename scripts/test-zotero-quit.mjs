@@ -93,6 +93,7 @@ function runQuitTest() {
         const organizedParent = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.personalParentKey);
         await Zotero.Items.loadDataTypes([organizedLoose], ["collections"]);
         if (!organizedNote.parentItemID || organizedLoose.parentItemID !== organizedParent.id || organizedLoose.getCollections().length) throw new Error("Startup did not organize existing linked notes");
+        if (!organizedParent.hasTag("Personal Knowledge") || Zotero.Tags.getColors(organizedParent.libraryID).get("Personal Knowledge")?.color !== "#805ad5") throw new Error("Restart lost or reset the personal marker");
         const unmanaged = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.unmanagedKey);
         if (!unmanaged || unmanaged.getNote() !== "<p>Unmanaged library note</p>" || unmanaged.parentItemID !== organizedNote.parentItemID || cards.some(row => row.title === "Unmanaged library note")) throw new Error("Startup imported or moved an unmanaged library note");
         const projectCard = await kb.api.getZettel(first.thinkingID);
@@ -105,6 +106,15 @@ function runQuitTest() {
         await kb.api.releaseNativeNote(linked.noteID);
         if (!(await kb.api.listEditorDrafts()).some(draft => draft.body === "Last keystroke before quitting")) throw new Error("Restart lost the recovery draft");
         if (!(await IOUtils.exists(PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base", "assets", first.legacyImage)))) throw new Error("Migration cleanup removed the original backup image");
+        const nativeMarkdownNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.nativeMarkdownKey);
+        if (!nativeMarkdownNote.getNote().includes('External edit preserved') || nativeMarkdownNote.getNote().includes('Conflicting native draft')) throw new Error("Quit overwrote a conflicting native note");
+        const resumedInstance = await Zotero.Notes.open(nativeMarkdownNote.id, null, {openInWindow:true});
+        const resumedWin = resumedInstance._iframeWindow.browsingContext.embedderElement.ownerDocument.defaultView;
+        for (let n = 0; n < 100 && !resumedWin.document.querySelector('.knowledge-base-native-markdown'); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        resumedWin.document.querySelector('.knowledge-base-native-markdown button').dispatchEvent(new resumedWin.Event('command'));
+        const resumedSource = resumedWin.document.querySelector('.knowledge-base-native-source');
+        for (let n = 0; n < 100 && resumedSource.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (!resumedSource.value.includes('Conflicting native draft')) throw new Error("Restart lost native Markdown recovery draft");
         await IOUtils.writeUTF8(${JSON.stringify(restartMarker)}, JSON.stringify({ cards: cards.length, noteKey: restoredNote.key }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         return;
@@ -132,6 +142,69 @@ function runQuitTest() {
       unmanaged.parentItemID = item.id;
       unmanaged.setNote("<p>Unmanaged library note</p>");
       await unmanaged.saveTx({skipSelect: true});
+
+      // The extension also edits an ordinary native note without creating a KB card.
+      const nativeMarkdownNote = new Zotero.Item("note");
+      nativeMarkdownNote.libraryID = item.libraryID;
+      nativeMarkdownNote.parentItemID = item.id;
+      nativeMarkdownNote.addTag("Native Markdown test");
+      nativeMarkdownNote.setNote('<div data-schema-version="9"><h1>Native Markdown</h1><p style="color: rgb(34,34,34); background-color: white">Ordinary <strong>text</strong></p><pre class="math">$$e=mc^2$$</pre></div>');
+      await nativeMarkdownNote.saveTx({skipSelect: true});
+      async function openNativeMarkdown() {
+        const nativeInstance = await Zotero.Notes.open(nativeMarkdownNote.id, null, {openInWindow: true});
+        const nativeWindow = nativeInstance._iframeWindow.browsingContext.embedderElement.ownerDocument.defaultView;
+        for (let n = 0; n < 100 && !nativeWindow.document.querySelector('.knowledge-base-native-markdown'); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        const source = nativeWindow.document.querySelector('.knowledge-base-native-source');
+        if (!source) throw new Error("Native note Markdown switch was not attached");
+        const toggle = nativeWindow.document.querySelector('.knowledge-base-native-markdown button');
+        toggle.dispatchEvent(new nativeWindow.Event('command'));
+        for (let n = 0; n < 100 && source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (source.hidden || !nativeInstance._disableSaving) throw new Error("Native Markdown did not disable the hidden host writer");
+        return {nativeInstance, nativeWindow, source, toggle};
+      }
+      let nativeMD = await openNativeMarkdown();
+      if (!nativeMD.source.value.startsWith('# Native Markdown') || !nativeMD.source.value.includes('Ordinary **text**') || !nativeMD.source.value.includes('e=mc^2') || nativeMD.source.value.includes('style=')) throw new Error("Native Markdown remains opaque for ordinary content");
+      const beforeNativeSwitch = nativeMarkdownNote.getNote();
+      nativeMD.toggle.dispatchEvent(new nativeMD.nativeWindow.Event('command'));
+      for (let n = 0; n < 100 && !nativeMD.source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!nativeMD.source.hidden || nativeMarkdownNote.getNote() !== beforeNativeSwitch) throw new Error("Unchanged native Markdown switch rewrote the note: " + JSON.stringify({hidden:nativeMD.source.hidden, before:beforeNativeSwitch, after:nativeMarkdownNote.getNote(), status:nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status').textContent}));
+      nativeMD.toggle.dispatchEvent(new nativeMD.nativeWindow.Event('command'));
+      for (let n = 0; n < 100 && nativeMD.source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      nativeMD.source.value += "\\n\\nNative Markdown saved **in place**";
+      nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.Event('input'));
+      for (let n = 0; n < 100 && !nativeMarkdownNote.getNote().includes('in place'); n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!nativeMarkdownNote.getNote().includes('<strong>in place</strong>') || nativeMarkdownNote.parentItemID !== item.id || !nativeMarkdownNote.hasTag('Native Markdown test') || (nativeMarkdownNote.getNote().match(/<h1/g) || []).length !== 1 || (await kb.api.listZettels()).length) throw new Error("Native Markdown changed identity/placement or silently imported a note");
+      nativeMarkdownNote.setNote(nativeMarkdownNote.getNote().replace('in place', 'External edit preserved'));
+      await nativeMarkdownNote.saveTx();
+      nativeMD.source.value += "\\n\\nConflicting native draft";
+      nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.Event('input'));
+      nativeMD.nativeWindow.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'s', metaKey:true, bubbles:true, cancelable:true}));
+      const nativeStatus = nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status');
+      for (let n = 0; n < 100 && !nativeStatus.textContent.includes(kb.api.loc('native-markdown-conflict')); n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!nativeMarkdownNote.getNote().includes('External edit preserved') || nativeMarkdownNote.getNote().includes('Conflicting native draft') || nativeStatus.textContent !== kb.api.loc('native-markdown-conflict')) throw new Error("Native Markdown overwrote an external change: " + JSON.stringify({html: nativeMarkdownNote.getNote(), status:nativeStatus.outerHTML, alive:nativeMD.source.isConnected, draft:await kb.api.getEditorDraft("native-document:" + nativeMarkdownNote.libraryID + ":" + nativeMarkdownNote.key)}));
+      let nativeCloseAsked = 0;
+      const nativeChoices = ['cancel', 'extra1'];
+      const nativeCloseObserver = {observe(win, topic) {
+        if (topic !== 'domwindowopened') return;
+        win.addEventListener('load', () => {
+          if (win.document.documentURI !== 'chrome://global/content/commonDialog.xhtml') return;
+          setTimeout(() => {
+            nativeCloseAsked++;
+            win.document.getElementById('commonDialog').getButton(nativeChoices.shift()).click();
+          }, 100);
+        }, {once:true});
+      }};
+      Services.ww.registerNotification(nativeCloseObserver);
+      try {
+        nativeMD.nativeWindow.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'w', metaKey:true, bubbles:true, cancelable:true}));
+        if (nativeMD.nativeWindow.closed || nativeCloseAsked !== 1) throw new Error("Native Markdown Command-W cancellation failed");
+        nativeMD.nativeWindow.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'w', metaKey:true, bubbles:true, cancelable:true}));
+        for (let n = 0; n < 100 && !nativeMD.nativeWindow.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (!nativeMD.nativeWindow.closed) throw new Error("Native Markdown keep-draft close failed");
+      } finally { Services.ww.unregisterNotification(nativeCloseObserver); }
+      nativeMD = await openNativeMarkdown();
+      if (!nativeMD.source.value.includes('Conflicting native draft') || (await kb.api.listEditorDrafts()).some(draft => draft.nativeDocument)) throw new Error("Native Markdown draft did not restore separately from card recovery");
+      // Keep this conflicting native draft open until quit, then verify recovery after restart.
       const thinking = new Zotero.Item("note");
       thinking.libraryID = item.libraryID;
       thinking.parentItemID = item.id;
@@ -290,6 +363,8 @@ function runQuitTest() {
         const loose = await kb.api.acquireNativeNote({ id: unsourced.id, title: unsourced.title, body: unsourced.body });
         const looseNote = await Zotero.Items.getAsync(loose.noteID);
         const personalParent = await Zotero.Items.getByLibraryAndKeyAsync(item.libraryID, Zotero.Prefs.get("extensions.zotero.knowledge-base.notes.parent." + item.libraryID, true));
+        if (!personalParent.hasTag("Personal Knowledge") || Zotero.Tags.getColors(item.libraryID).get("Personal Knowledge")?.color !== "#4c8bf5") throw new Error("Personal parent has no native colored marker");
+        await Zotero.Tags.setColor(item.libraryID, "Personal Knowledge", "#805ad5", 0);
         if (!personalParent || looseNote.parentItemID !== personalParent.id || looseNote.getCollections().length) throw new Error("Unsourced note was not attached to the personal parent");
         const updatePlacement = async (source) => {
           const current = await kb.api.getZettel(unsourced.id);
@@ -313,6 +388,7 @@ function runQuitTest() {
         if (personalParent.deleted || looseNote.parentItemID !== personalParent.id || (await kb.api.getZettel(unsourced.id)).item_key) throw new Error("Clearing a source did not restore the same personal parent");
         await kb.api.releaseNativeNote(looseNote.id);
         const again = await kb.api.acquireNativeNote({ id: unsourced.id, title: unsourced.title, body: unsourced.body });
+        if (Zotero.Tags.getColors(item.libraryID).get("Personal Knowledge")?.color !== "#805ad5") throw new Error("Reopening replaced the user's personal marker color");
         if (again.noteID !== looseNote.id || looseNote.parentItemID !== personalParent.id || personalParent.getField("title") !== "Renamed personal notes" || Zotero.Collections.getByLibrary(item.libraryID).some(entry => entry.name === "Knowledge Base")) throw new Error("Reopening duplicated the note or renamed personal parent");
         await kb.api.releaseNativeNote(looseNote.id);
 
@@ -393,7 +469,7 @@ function runQuitTest() {
         await switchMode("source");
         if (!body.value.includes("[@Host2026]") || !body.value.includes("[My note](zotero://")) throw new Error("Source projection lost references");
         const protectedSource = kb.api.getMarkdownSource(nativeNote.getNote());
-        if (!body.value.includes("knowledge-base://fragment/") || !protectedSource.fragments.some(fragment => fragment.includes(migratedImage.key)) || !protectedSource.fragments.some(fragment => fragment.includes("locator%22%3A%2223"))) throw new Error("Source projection lost protected image/citation metadata");
+        if (!body.value.includes("zkb:") || !protectedSource.fragments.some(fragment => fragment.includes(migratedImage.key)) || !protectedSource.fragments.some(fragment => fragment.includes("locator%22%3A%2223"))) throw new Error("Source projection lost protected image/citation metadata");
         await switchMode("visual");
         await switchMode("source");
                 body.value += "\\n\\nProtected fragment round trip";
@@ -611,7 +687,7 @@ function runQuitTest() {
         if (thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id) throw new Error("Opening changed the original project before restart");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -619,7 +695,7 @@ function runQuitTest() {
         }
       }, 1500);
     } catch (error) {
-      await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error) }));
+      await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
       Services.startup.quit(Components.interfaces.nsIAppStartup.eForceQuit);
     }
   }
@@ -731,7 +807,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; live source metadata, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; live source metadata, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

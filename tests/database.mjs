@@ -790,6 +790,23 @@ if (currentSchema) {
     "Late draft writes cannot replace a newer draft",
     (await drafts.getEditorDraft(draft.draftId)).body === "newer draft",
   );
+  const nativeDocumentDraft = {
+    ...draft,
+    nativeDocument: true,
+    draftId: "native-document:1:TESTNOTE",
+    draftRevision: 1,
+  };
+  await drafts.saveEditorDraft(nativeDocumentDraft);
+  await db.closeDB();
+  await db.initDB();
+  check(
+    "Native Markdown drafts survive restart without appearing as card recovery drafts",
+    (await drafts.getEditorDraft(nativeDocumentDraft.draftId)).nativeDocument &&
+      !(await drafts.listEditorDrafts()).some(
+        (row) => row.draftId === nativeDocumentDraft.draftId,
+      ),
+  );
+  await drafts.discardEditorDraft(nativeDocumentDraft.draftId);
   await zettel.deleteZettel(leafId);
   conflict = false;
   try {

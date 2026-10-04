@@ -35,6 +35,9 @@ await build({
       export const getString = (key) => key;
       export const initDB = () => run("initDB");
       export const closeDB = () => run("closeDB");
+      export const initNativeMarkdown = () => run("nativeMarkdown");
+      export const stopNativeMarkdown = () => run("stopNativeMarkdown");
+      export const closeNativeMarkdown = () => run("closeNativeMarkdown");
       export const initNativeNotes = () => run("nativeNotes");
       export const stopNativeNotes = () => run("stopNativeNotes");
       export const closeNativeNotes = () => run("closeNativeNotes");

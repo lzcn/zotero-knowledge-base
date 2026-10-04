@@ -6,6 +6,11 @@ import {
   closeNativeNotes,
   stopNativeNotes,
 } from "./modules/native-notes";
+import {
+  initNativeMarkdown,
+  stopNativeMarkdown,
+  closeNativeMarkdown,
+} from "./modules/native-markdown";
 import { rebuildCounts } from "./modules/zettel";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import {
@@ -66,6 +71,7 @@ async function start(token: number): Promise<void> {
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
       ["registerItemPaneUI", registerItemPaneUI],
+      ["nativeMarkdown", initNativeMarkdown],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -181,6 +187,7 @@ async function releaseResources(): Promise<void> {
       }
     },
     unregisterItemPaneUI,
+    closeNativeMarkdown,
     closeNativeNotes,
     closeAssets,
     () => ztoolkit.unregisterAll(),
@@ -217,6 +224,7 @@ function onAppShutdown(): void {
     }
     editor.knowledgeBaseStopping = true;
   }
+  stopNativeMarkdown();
   stopNativeNotes();
   ++generation;
   ready = false;

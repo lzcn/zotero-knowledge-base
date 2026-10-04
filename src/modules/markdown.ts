@@ -189,7 +189,7 @@ export function renderMarkdown(
     RETURN_DOM_FRAGMENT: true,
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP:
-      /^(?:(?:https?|mailto|zotero|knowledge-base):|resource:\/\/knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+      /^(?:(?:https?|mailto|zotero|knowledge-base|zkb):|resource:\/\/knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     FORBID_TAGS: ["style", "form", "iframe"],
     FORBID_ATTR: ["style"],
   });

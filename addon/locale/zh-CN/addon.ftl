@@ -236,3 +236,10 @@ graph-sources = 来源
 metadata-creators = 作者
 
 preview-image-missing = 图片不可用
+
+native-markdown-label = Markdown 笔记
+native-markdown-reload = 重新载入
+native-markdown-conflict = 笔记已在其他位置修改，草稿已保留。
+native-markdown-failed = 保存失败，草稿已保留。
+native-markdown-draft = 已恢复草稿
+native-markdown-close = 关闭前保存修改吗？

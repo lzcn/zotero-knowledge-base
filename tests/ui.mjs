@@ -1091,15 +1091,70 @@ const protectedProjection = native_notes.getMarkdownSource(structuredHTML);
 check(
   "Markdown source exposes readable protected links while retaining complete native fragments",
   () => {
-    assert.ok(
-      protectedProjection.body.includes(
-        "[Author 2026, p. 23](knowledge-base://fragment/0)",
-      ),
-    );
-    assert.ok(protectedProjection.body.includes("knowledge-base://fragment/1"));
+    assert.ok(protectedProjection.body.includes("[Author 2026, p. 23](zkb:0)"));
+    assert.ok(protectedProjection.body.includes("zkb:1"));
     assert.equal(protectedProjection.fragments.length, 2);
     assert.ok(protectedProjection.fragments[0].includes("locator%22%3A%2223"));
     assert.ok(protectedProjection.fragments[1].includes("IMAG1234"));
+  },
+);
+const copiedParagraph =
+  '<div data-schema-version="9"><h1>Copied note</h1><p style="color: rgb(34,34,34); background-color: white">Ordinary <strong>editable</strong> text</p></div>';
+check(
+  "Copied neutral colors leave ordinary paragraphs editable as Markdown",
+  () => {
+    const projection = native_notes.getMarkdownSource(copiedParagraph);
+    assert.equal(projection.body, "Ordinary **editable** text");
+    assert.equal(projection.fragments.length, 0);
+    assert.equal(
+      native_notes.getMarkdownDocument(copiedParagraph),
+      "# Copied note\n\nOrdinary **editable** text",
+    );
+  },
+);
+const legacyFragmentProjection = native_notes.getMarkdownSource(
+  copiedParagraph,
+  true,
+);
+const legacyFragmentRoundTrip = await native_notes.markdownNoteHTML(
+  legacyFragmentProjection.title,
+  legacyFragmentProjection.body + "\n\nRecovered old draft",
+  copiedParagraph,
+);
+check(
+  "Older draft fragment indices still restore the original rich formatting",
+  () => {
+    assert.ok(legacyFragmentRoundTrip.includes("Recovered old draft"));
+    assert.ok(legacyFragmentRoundTrip.includes("background-color: white"));
+    assert.ok(!legacyFragmentRoundTrip.includes("knowledge-base://fragment/"));
+  },
+);
+const documentRoundTrip = await native_notes.markdownDocumentHTML(
+  "# Renamed\n\nOrdinary **editable** text\n\n$e=mc^2$",
+  copiedParagraph,
+);
+check(
+  "Full native Markdown documents retain one heading and native math",
+  () => {
+    const doc = new JSDOM(documentRoundTrip).window.document;
+    assert.equal(doc.querySelectorAll("h1").length, 1);
+    assert.equal(doc.querySelector("h1").textContent, "Renamed");
+    assert.ok(doc.querySelector(".math").textContent.includes("$e=mc^2$"));
+  },
+);
+const paragraphDocument = await native_notes.markdownDocumentHTML(
+  "First paragraph\n\n# Added heading",
+  '<div data-schema-version="9"><p>First paragraph</p></div>',
+);
+check(
+  "Full native Markdown documents do not invent titles for paragraph-led notes",
+  () => {
+    assert.equal(
+      new JSDOM(paragraphDocument).window.document.querySelector("h1")
+        .textContent,
+      "Added heading",
+    );
+    assert.equal((paragraphDocument.match(/First paragraph/g) || []).length, 1);
   },
 );
 const styledOriginal =
@@ -1162,7 +1217,7 @@ check(
       ).citationItems[0].locator,
       "23",
     );
-    assert.ok(!fragmentRestore.includes("knowledge-base://fragment/"));
+    assert.ok(!fragmentRestore.includes("zkb:"));
   },
 );
 await chooseMode(ed, "source");

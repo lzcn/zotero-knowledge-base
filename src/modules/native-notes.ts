@@ -124,7 +124,7 @@ export function projectNativeNote(html: string): {
 }
 
 export async function nativeNoteHTML(
-  title: string,
+  title: string | null,
   body: string,
 ): Promise<string> {
   await prepareCitations(body);
@@ -203,10 +203,13 @@ export async function nativeNoteHTML(
   const heading = doc.createElement("h1");
   heading.textContent = title;
   // Schema 2 is understood by Zotero 7+; the host handles later upgrades.
-  return `<div data-schema-version="2">${heading.outerHTML}${doc.body.innerHTML}</div>`;
+  return `<div data-schema-version="2">${title === null ? "" : heading.outerHTML}${doc.body.innerHTML}</div>`;
 }
 
-export function getMarkdownSource(html: string): {
+export function getMarkdownSource(
+  html: string,
+  legacyFragments = false,
+): {
   title: string;
   body: string;
   fragments: string[];
@@ -215,6 +218,20 @@ export function getMarkdownSource(html: string): {
   const root = doc.querySelector("div[data-schema-version]") || doc.body;
   const fragments: string[] = [];
   replaceSimpleCitations(doc, root);
+  // Copied page defaults should not turn ordinary paragraphs into opaque objects.
+  for (const node of Array.from(
+    legacyFragments ? [] : root.querySelectorAll("[style]"),
+  ) as HTMLElement[]) {
+    for (const property of ["color", "background-color"]) {
+      const value = node.style.getPropertyValue(property).replaceAll(" ", "");
+      const neutral =
+        property === "color"
+          ? /^(?:black|#000(?:000)?|rgb\((?:0,0,0|17,17,17|34,34,34|32,33,36)\)|var\(--(?:tw-prose-bold|yb-md-td-color)\))$/i
+          : /^(?:white|transparent|#fff(?:fff)?|rgb\(255,255,255\)|rgba\(255,255,255,(?:0|0\.7)\))$/i;
+      if (neutral.test(value)) node.style.removeProperty(property);
+    }
+    if (!node.getAttribute("style")?.trim()) node.removeAttribute("style");
+  }
   for (const node of Array.from(
     root.querySelectorAll(
       "img, [data-citation], [data-annotation], [style], table",
@@ -235,7 +252,10 @@ export function getMarkdownSource(html: string): {
       continue;
     const index = fragments.push(node.outerHTML) - 1;
     const marker = doc.createElement("a");
-    marker.setAttribute("href", `knowledge-base://fragment/${index}`);
+    marker.setAttribute(
+      "href",
+      legacyFragments ? `knowledge-base://fragment/${index}` : `zkb:${index}`,
+    );
     marker.textContent =
       node.getAttribute("alt") ||
       node.textContent?.trim() ||
@@ -245,19 +265,28 @@ export function getMarkdownSource(html: string): {
   return { ...projectNativeNote(root.outerHTML), fragments };
 }
 
-function restoreMarkdownFragments(html: string, original: string): string {
+function restoreMarkdownFragments(
+  html: string,
+  original: string,
+  fullDocument = false,
+): string {
   const doc = parse(html);
   const originalDoc = parse(original);
   const fragments = getMarkdownSource(original).fragments;
   for (const marker of Array.from(
-    doc.querySelectorAll('a[href^="knowledge-base://fragment/"]'),
+    doc.querySelectorAll(
+      'a[href^="knowledge-base://fragment/"], a[href^="zkb:"]',
+    ),
   ) as Element[]) {
-    const match = /^knowledge-base:\/\/fragment\/(\d+)$/.exec(
+    const match = /^(?:knowledge-base:\/\/fragment\/|zkb:)(\d+)$/.exec(
       marker.getAttribute("href") || "",
     );
-    if (!match || !fragments[Number(match[1])])
+    const available = marker.getAttribute("href")?.startsWith("knowledge-base:")
+      ? getMarkdownSource(original, true).fragments
+      : fragments;
+    if (!match || !available[Number(match[1])])
       throw new Error("CARD_CONFLICT: native fragment unavailable");
-    const fragment = parse(fragments[Number(match[1])]);
+    const fragment = parse(available[Number(match[1])]);
     const node = doc.importNode(
       fragment.body.firstElementChild!,
       true,
@@ -284,6 +313,7 @@ function restoreMarkdownFragments(html: string, original: string): string {
     element.textContent?.trim(),
   );
   if (
+    !fullDocument &&
     firstOriginal &&
     firstOriginal.tagName !== "H1" &&
     renderedHeading?.tagName === "H1" &&
@@ -303,6 +333,28 @@ export async function markdownNoteHTML(
   original: string,
 ): Promise<string> {
   return restoreMarkdownFragments(await nativeNoteHTML(title, body), original);
+}
+
+/** One complete Markdown document for ordinary Zotero notes, without a separate title. */
+export function getMarkdownDocument(html: string): string {
+  const doc = parse(html);
+  const root = doc.querySelector("div[data-schema-version]") || doc.body;
+  const first = Array.from(root?.children || []).find((node) =>
+    node.textContent?.trim(),
+  );
+  const { title, body } = getMarkdownSource(html);
+  return first?.tagName === "H1" ? `# ${title}\n\n${body}`.trimEnd() : body;
+}
+
+export async function markdownDocumentHTML(
+  source: string,
+  original: string,
+): Promise<string> {
+  return restoreMarkdownFragments(
+    await nativeNoteHTML(null, source),
+    original,
+    true,
+  );
 }
 
 export interface NoteHealth {
@@ -413,6 +465,24 @@ async function mappedNote(id: string): Promise<Zotero.Item | null> {
 }
 
 /** Keep note identity and library stable when its primary source changes. */
+async function markPersonalParent(item: Zotero.Item): Promise<void> {
+  if (!item.hasTag("Personal Knowledge")) {
+    item.addTag("Personal Knowledge");
+    await item.saveTx({ skipSelect: true });
+  }
+  const colors = Zotero.Tags.getColors(item.libraryID);
+  if (
+    !colors.has("Personal Knowledge") &&
+    colors.size < Zotero.Tags.MAX_COLORED_TAGS
+  )
+    await Zotero.Tags.setColor(
+      item.libraryID,
+      "Personal Knowledge",
+      "#4c8bf5",
+      colors.size,
+    );
+}
+
 async function organizeNativeNote(
   note: Zotero.Item,
   input: SaveCardInput,
@@ -459,12 +529,14 @@ async function organizeNativeNote(
         personal = new Zotero.Item("document");
         personal.libraryID = note.libraryID;
         personal.setField("title", getString("personal-knowledge-title"));
+        personal.addTag("Personal Knowledge");
         await personal.save({ skipSelect: true });
         Zotero.Prefs.set(pref, personal.key, true);
       } else if (personal.deleted) {
         personal.deleted = false;
         await personal.save({ skipSelect: true });
       }
+      await markPersonalParent(personal);
       destination = personal.id;
     }
     if (note.parentItemID === destination) return;
@@ -685,6 +757,20 @@ export function releaseNativeNote(noteID: number): Promise<void> {
 export async function initNativeNotes(): Promise<void> {
   if (observerID) return;
   stopping = false;
+  for (const library of Zotero.Libraries.getAll()) {
+    const key = Zotero.Prefs.get(
+      `extensions.zotero.knowledge-base.notes.parent.${library.libraryID}`,
+      true,
+    );
+    if (!library.editable || typeof key !== "string") continue;
+    const item = await Zotero.Items.getByLibraryAndKeyAsync(
+      library.libraryID,
+      key,
+    );
+    if (stopping) return;
+    if (item && item.isRegularItem() && !item.isInTrash())
+      await markPersonalParent(item);
+  }
   observerID = Zotero.Notifier.registerObserver(
     {
       notify(event: string, _type: string, ids: number[] | string[]) {

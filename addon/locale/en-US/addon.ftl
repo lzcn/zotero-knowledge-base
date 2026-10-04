@@ -262,3 +262,10 @@ graph-sources = Sources
 metadata-creators = Creators
 
 preview-image-missing = Image unavailable
+
+native-markdown-label = Markdown note
+native-markdown-reload = Reload note
+native-markdown-conflict = This note changed elsewhere. Your draft is kept.
+native-markdown-failed = Could not save. Your draft is kept.
+native-markdown-draft = Draft restored
+native-markdown-close = Save changes before closing?
