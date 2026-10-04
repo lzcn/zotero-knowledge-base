@@ -232,6 +232,15 @@ export async function listByItem(
   return rows.map((r) => rowToZettel(r));
 }
 
+export async function listUnsourcedNotes(libraryID: number): Promise<Zettel[]> {
+  const rows = await getAll<ZettelRow>(
+    `SELECT z.* FROM zettels z JOIN card_notes n ON n.card_id = z.id
+     WHERE z.item_key IS NULL AND n.library_id = ? ORDER BY z.updated_at DESC`,
+    [libraryID],
+  );
+  return rows.map((row) => rowToZettel(row));
+}
+
 export async function countByItem(itemKey: string): Promise<number> {
   const row = await getOne<{ n: number }>(
     `SELECT COUNT(*) AS n FROM zettels WHERE item_key = ?`,

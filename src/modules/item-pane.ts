@@ -6,7 +6,8 @@
 
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
-import { getItemCountSync, listByItem } from "./zettel";
+import { getItemCountSync, listByItem, listUnsourcedNotes } from "./zettel";
+import { isPersonalKnowledgeItem } from "./zotero";
 import { onDataChange } from "./events";
 
 const subscriptions = new Map<HTMLElement, () => void>();
@@ -99,7 +100,10 @@ function renderSection(body: HTMLElement, item?: Zotero.Item): void {
 }
 
 async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
-  const notes = await listByItem(item.key, item.libraryID);
+  const personal = isPersonalKnowledgeItem(item);
+  const notes = personal
+    ? await listUnsourcedNotes(item.libraryID)
+    : await listByItem(item.key, item.libraryID);
   const zettels = notes.filter((note) => note.kind !== "literature");
   if (
     !container.isConnected ||
@@ -109,15 +113,17 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   }
   container.textContent = "";
 
-  const literature = el(container, "button");
-  literature.className = "knowledge-base-mini-btn";
-  literature.textContent = getString("note-kind-literature");
-  literature.addEventListener("click", () => {
-    void addon.api
-      .openLiteratureNote(item.key, item.libraryID)
-      .catch((error: Error) => Zotero.logError(error));
-  });
-  container.appendChild(literature);
+  if (!personal) {
+    const literature = el(container, "button");
+    literature.className = "knowledge-base-mini-btn";
+    literature.textContent = getString("note-kind-literature");
+    literature.addEventListener("click", () => {
+      void addon.api
+        .openLiteratureNote(item.key, item.libraryID)
+        .catch((error: Error) => Zotero.logError(error));
+    });
+    container.appendChild(literature);
+  }
 
   const head = el(container, "div");
   head.className = "knowledge-base-count";
@@ -154,7 +160,9 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   newBtn.textContent = getString("section-new");
   newBtn.addEventListener("click", () =>
     addon.api.openEditor({
-      sourceItem: { key: item.key, libraryID: item.libraryID },
+      sourceItem: personal
+        ? undefined
+        : { key: item.key, libraryID: item.libraryID },
     }),
   );
   footer.appendChild(newBtn);

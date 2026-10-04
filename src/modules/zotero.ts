@@ -27,6 +27,16 @@ export interface HighlightInfo {
   color: string;
 }
 
+export function isPersonalKnowledgeItem(item: Zotero.Item): boolean {
+  return (
+    item.key ===
+    Zotero.Prefs.get(
+      `extensions.zotero.knowledge-base.notes.parent.${item.libraryID}`,
+      true,
+    )
+  );
+}
+
 function selectURL(item: Zotero.Item): string {
   const lib = Zotero.Libraries.get(item.libraryID);
   if (lib && lib.libraryType === "group") {

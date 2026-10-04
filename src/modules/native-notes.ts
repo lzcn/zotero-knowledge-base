@@ -445,42 +445,36 @@ async function organizeNativeNote(
       ? source.id
       : false;
   await Zotero.DB.executeTransaction(async () => {
-    if (parent) {
-      if (note.parentItemID === parent) return;
-      // Zotero otherwise moves a standalone note's collections onto its parent.
-      if (note.getCollections().length) {
-        note.setCollections([]);
-        await note.save();
+    let destination = parent;
+    if (!destination) {
+      const pref = `extensions.zotero.knowledge-base.notes.parent.${note.libraryID}`;
+      const key = Zotero.Prefs.get(pref, true);
+      let personal =
+        typeof key === "string"
+          ? await Zotero.Items.getByLibraryAndKeyAsync(note.libraryID, key)
+          : null;
+      if (personal && !personal.isRegularItem())
+        throw new Error("Personal knowledge parent is not a regular item");
+      if (!personal) {
+        personal = new Zotero.Item("document");
+        personal.libraryID = note.libraryID;
+        personal.setField("title", getString("personal-knowledge-title"));
+        await personal.save({ skipSelect: true });
+        Zotero.Prefs.set(pref, personal.key, true);
+      } else if (personal.deleted) {
+        personal.deleted = false;
+        await personal.save({ skipSelect: true });
       }
-      note.parentItemID = parent;
-      await note.save();
-      return;
+      destination = personal.id;
     }
-    const pref = `extensions.zotero.knowledge-base.notes.collection.${note.libraryID}`;
-    const key = Zotero.Prefs.get(pref, true);
-    let collection =
-      typeof key === "string"
-        ? await Zotero.Collections.getByLibraryAndKeyAsync(note.libraryID, key)
-        : null;
-    if (!collection || collection.deleted) {
-      collection =
-        Zotero.Collections.getByLibrary(note.libraryID).find(
-          (entry) => entry.name === "Knowledge Base" && !entry.deleted,
-        ) || null;
-      if (!collection) {
-        collection = new Zotero.Collection({
-          libraryID: note.libraryID,
-          name: "Knowledge Base",
-        });
-        await collection.save();
-      }
-      Zotero.Prefs.set(pref, collection.key, true);
+    if (note.parentItemID === destination) return;
+    // Zotero otherwise moves a standalone note's collections onto its parent.
+    if (note.getCollections().length) {
+      note.setCollections([]);
+      await note.save({ skipSelect: true });
     }
-    const changed = !!note.parentItemID || !note.inCollection(collection.id);
-    if (!changed) return;
-    note.parentItemID = false;
-    note.addToCollection(collection.id);
-    await note.save();
+    note.parentItemID = destination;
+    await note.save({ skipSelect: true });
   });
 }
 

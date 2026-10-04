@@ -20,16 +20,21 @@ await build({
     {
       name: "pane-dependencies",
       setup(builder) {
-        builder.onResolve({ filter: /(?:zettel|locale|events)$/ }, (args) => ({
-          path: args.path,
-          namespace: "pane-test",
-        }));
+        builder.onResolve(
+          { filter: /(?:zettel|zotero|locale|events)$/ },
+          (args) => ({
+            path: args.path,
+            namespace: "pane-test",
+          }),
+        );
         builder.onLoad({ filter: /.*/, namespace: "pane-test" }, (args) => ({
           contents: args.path.endsWith("zettel")
-            ? `export function getItemCountSync(){ return paneTest.cards.length; } export async function listByItem(key){ return paneTest.query ? paneTest.query(key) : paneTest.cards; }`
-            : args.path.endsWith("locale")
-              ? `export function getString(key, options){ return key + (options?.args?.count ?? ""); }`
-              : `export function onDataChange(fn){ paneTest.listeners.add(fn); return () => paneTest.listeners.delete(fn); }`,
+            ? `export async function listUnsourcedNotes(libraryID){ paneTest.unsourcedLibrary = libraryID; return paneTest.unsourcedCards; } export function getItemCountSync(){ return paneTest.cards.length; } export async function listByItem(key){ return paneTest.query ? paneTest.query(key) : paneTest.cards; }`
+            : args.path.endsWith("zotero")
+              ? `export function isPersonalKnowledgeItem(item){ return item.key === "PERSONAL"; }`
+              : args.path.endsWith("locale")
+                ? `export function getString(key, options){ return key + (options?.args?.count ?? ""); }`
+                : `export function onDataChange(fn){ paneTest.listeners.add(fn); return () => paneTest.listeners.delete(fn); }`,
         }));
       },
     },
@@ -136,6 +141,21 @@ resolveA([{ id: "a", title: "Stale source A" }]);
 await settle();
 check("A late source response cannot overwrite a newly selected source", () =>
   assert.equal(body.querySelector("li").textContent, "Source B"),
+);
+state.unsourcedCards = [{ id: "idea", title: "My project", kind: "thinking" }];
+state.section.onRender({ body, item: item("PERSONAL") });
+await settle();
+check(
+  "The personal parent shows unsourced notes without a Literature Note action",
+  () => {
+    assert.equal(state.unsourcedLibrary, 1);
+    assert.equal(body.querySelector("li").textContent, "My project");
+    assert.equal(body.querySelectorAll("button").length, 1);
+  },
+);
+body.querySelector("button").click();
+check("Creating a personal note leaves its literature source empty", () =>
+  assert.deepEqual(state.opens.at(-1), { sourceItem: undefined }),
 );
 for (const language of ["en-US", "zh-CN"]) {
   const ftl = await readFile(`addon/locale/${language}/item-pane.ftl`, "utf8");

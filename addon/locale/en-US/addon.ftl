@@ -3,6 +3,8 @@ startup-finish = Knowledge Base ready
 startup-db-error = Failed to initialize the knowledge base. See Help → Debug Output Logging
 
 menu-open-manager = Knowledge Base
+personal-knowledge-title = Personal Knowledge
+
 menu-new-zettel = New Card
 
 section-header =

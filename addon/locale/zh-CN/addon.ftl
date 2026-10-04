@@ -3,6 +3,8 @@ startup-finish = 知识库已就绪
 startup-db-error = 知识库初始化失败，请通过 帮助→调试输出日志 查看详情
 
 menu-open-manager = 知识库
+personal-knowledge-title = 个人知识
+
 menu-new-zettel = 新建卡片
 
 section-header =
