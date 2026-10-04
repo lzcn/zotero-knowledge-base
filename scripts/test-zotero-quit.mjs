@@ -108,6 +108,19 @@ function runQuitTest() {
         settings.close();
         const editor = [...Services.wm.getEnumerator("knowledge-base:editor")][0];
         const body = editor.document.getElementById("knowledge-base-editor-body");
+        const modeMenu = editor.document.getElementById("knowledge-base-editor-mode");
+        const rootElement = editor.document.getElementById("knowledge-base-editor-root");
+        for (let n = 0; n < 80 && rootElement.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 100));
+        if (rootElement.dataset.mode !== "visual") throw new Error("The editor did not start in visual mode");
+        if (modeMenu.querySelectorAll("menuitem").length !== 3 || !modeMenu.getAttribute("aria-label")) throw new Error("Native three-mode control is missing");
+        async function switchMode(mode) {
+          modeMenu.value = mode;
+          modeMenu.dispatchEvent(new editor.Event("command", { bubbles: true }));
+          for (let n = 0; n < 80 && rootElement.dataset.mode !== mode; n++) await new Promise(resolve => setTimeout(resolve, 100));
+          const surfaces = [body, editor.document.getElementById("knowledge-base-editor-preview"), editor.document.getElementById("knowledge-base-rich-frame")];
+          if (rootElement.dataset.mode !== mode || surfaces.filter(surface => !surface.hidden).length !== 1) throw new Error("Editor mode is not a single surface: " + mode);
+        }
+        await switchMode("source");
         body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$.\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
         body.dispatchEvent(new editor.Event("input", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(rows[0].id)).body !== body.value; n++) await new Promise(resolve => setTimeout(resolve, 100));
@@ -118,8 +131,7 @@ function runQuitTest() {
         saveButton.dispatchEvent(new editor.Event("command", { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 150));
         if (editor.closed) throw new Error("Save unexpectedly closed the editor");
-        const visual = editor.document.getElementById("knowledge-base-visual-toggle");
-        visual.dispatchEvent(new editor.Event("command", { bubbles: true }));
+        await switchMode("visual");
         const frame = editor.document.getElementById("knowledge-base-rich-frame");
         for (let n = 0; n < 80 && (frame.hidden || !frame.contentDocument.querySelector(".tiptap")); n++) await new Promise(resolve => setTimeout(resolve, 100));
         const richSurface = frame.contentDocument.querySelector(".tiptap");
@@ -130,10 +142,28 @@ function runQuitTest() {
           frame.contentDocument.body,
           graph.document.getElementById("graph-canvas"),
         ].every(surface => surface.ownerGlobal.getComputedStyle(surface).backgroundColor === "rgb(255, 255, 255)");
-        const readableText = [manager.document.getElementById("knowledge-base-detail-pane"), body, frame.contentDocument.body]
-          .every(surface => surface.ownerGlobal.getComputedStyle(surface).color === "rgb(41, 50, 65)");
-        const modeLabel = visual.querySelector(".toolbarbutton-text");
-        if (!modeLabel || editor.getComputedStyle(modeLabel).color !== "rgb(102, 115, 136)") throw new Error("Native editor mode label is unreadable");
+        function hasReadableText(surface) {
+          const color = surface.ownerGlobal.getComputedStyle(surface).color.match(/[0-9.]+/g).slice(0, 3).map(Number);
+          const rgb = color.map(value => { const channel = value / 255; return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4); });
+          return 1.05 / (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] + 0.05) >= 4.5;
+        }
+        const readableText = [manager.document.getElementById("knowledge-base-detail-pane"), body, frame.contentDocument.body].every(hasReadableText);
+        const beforeSwitch = body.value;
+        await switchMode("reading");
+        if (!editor.document.getElementById("knowledge-base-editor-title").readOnly || !editor.document.getElementById("knowledge-base-command-open").hidden) throw new Error("Reading mode is editable");
+        await switchMode("source");
+        if (body.value !== beforeSwitch) throw new Error("Mode changes rewrote the original Markdown");
+        await switchMode("visual");
+        const editorRelations = editor.document.getElementById("knowledge-base-editor-relations");
+        editorRelations.open = true;
+        for (const details of manager.document.querySelectorAll(".card-connections details")) details.open = true;
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const workspace = editor.document.getElementById("knowledge-base-editor-workspace").getBoundingClientRect();
+        const connectionBounds = editorRelations.getBoundingClientRect();
+        const managerPreview = manager.document.getElementById("knowledge-base-preview").getBoundingClientRect();
+        const managerConnections = manager.document.querySelector(".card-connections").getBoundingClientRect();
+        const compactConnections = connectionBounds.height <= 141 && workspace.height >= connectionBounds.height * 2 && managerPreview.height >= managerConnections.height * 1.2;
+        if (!compactConnections) throw new Error("Expanded links take too much space: " + JSON.stringify({ workspace, connectionBounds, managerPreview, managerConnections }));
         const systemDark = editor.matchMedia("(prefers-color-scheme: dark)").matches;
         const expectedColorScheme = ${JSON.stringify(process.env.KB_HOST_COLOR_SCHEME || "")};
         if (expectedColorScheme && systemDark !== (expectedColorScheme === "dark")) throw new Error("Host color scheme did not match the requested test environment");
@@ -152,8 +182,9 @@ function runQuitTest() {
             await IOUtils.write(PathUtils.join(screenshotDirectory, name + ".png"), new Uint8Array(await blob.arrayBuffer()));
           }
           for (const [name, win] of [["manager", manager], ["editor", editor], ["graph", graph]]) await snapshot(name, win);
-          visual.dispatchEvent(new editor.Event("command", { bubbles: true }));
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await switchMode("reading");
+          await snapshot("reading", editor);
+          await switchMode("source");
           await snapshot("markdown", editor);
         }
         editor.close();
@@ -170,10 +201,14 @@ function runQuitTest() {
         recovered.document.getElementById("knowledge-base-editor-save").dispatchEvent(new recovered.Event("command", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(saved.id)).body !== "Recovered draft body"; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if ((await kb.api.getZettel(saved.id)).body !== "Recovered draft body") throw new Error("Recovered draft did not save");
+        const recoveredMenu = recovered.document.getElementById("knowledge-base-editor-mode");
+        recoveredMenu.value = "source";
+        recoveredMenu.dispatchEvent(new recovered.Event("command", { bubbles: true }));
+        for (let n = 0; n < 80 && recovered.document.getElementById("knowledge-base-editor-body").hidden; n++) await new Promise(resolve => setTimeout(resolve, 100));
         const pendingBody = recovered.document.getElementById("knowledge-base-editor-body");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -227,7 +262,8 @@ try {
     !state.sourcesHidden ||
     !state.preferencesVisible ||
     !state.whiteSurfaces ||
-    !state.readableText
+    !state.readableText ||
+    !state.compactConnections
   )
     throw new Error(JSON.stringify({ state, result }));
   const db = new DatabaseSync(join(data, "knowledge-base.sqlite"), {
@@ -249,7 +285,7 @@ try {
     db.close();
   }
   console.log(
-    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); native controls, icons, autosave, recovery drafts and graph preferences; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
+    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); three single-pane modes, compact expanded connections, native icons, autosave and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
   );
   passed = true;
 } finally {

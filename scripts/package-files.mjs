@@ -6,8 +6,6 @@ export const requiredFiles = [
   "content/icons/ui/plus.svg",
   "content/icons/ui/back.svg",
   "content/icons/ui/forward.svg",
-  "content/icons/ui/edit.svg",
-  "content/icons/ui/trash.svg",
   "content/icons/ui/graph.svg",
   "content/icons/ui/fit.svg",
   "content/icons/ui/refresh.svg",

@@ -66,7 +66,13 @@ type="text/css"?>
       <button id="knowledge-base-image-insert" />
       <button id="knowledge-base-src-insert" disabled="disabled"></button>
       <html:div class="spacer" />
-      <button id="knowledge-base-preview-toggle" aria-pressed="true"></button>
+      <menulist id="knowledge-base-editor-mode" native="true" value="visual">
+        <menupopup>
+          <menuitem id="knowledge-base-mode-reading" value="reading" />
+          <menuitem id="knowledge-base-mode-visual" value="visual" />
+          <menuitem id="knowledge-base-mode-source" value="source" />
+        </menupopup>
+      </menulist>
     </html:div>
     <html:div
       id="knowledge-base-command-menu"
@@ -87,8 +93,14 @@ type="text/css"?>
           id="knowledge-base-editor-body"
           wrap="soft"
           spellcheck="true"
+          hidden="hidden"
         />
-        <html:div id="knowledge-base-editor-preview" class="markdown-body" />
+        <html:div
+          id="knowledge-base-editor-preview"
+          class="markdown-body"
+          tabindex="0"
+          hidden="hidden"
+        />
         <html:iframe
           id="knowledge-base-rich-frame"
           src="chrome://knowledge-base/content/rich-editor.html"
@@ -97,12 +109,21 @@ type="text/css"?>
       </html:div>
       <html:details id="knowledge-base-editor-relations">
         <html:summary id="knowledge-base-editor-relations-summary" />
-        <button id="knowledge-base-editor-graph" />
-        <html:div id="knowledge-base-editor-family" />
-        <html:h3 id="knowledge-base-editor-outgoing-label" />
-        <html:ul id="knowledge-base-editor-outgoing" class="refs" />
-        <html:h3 id="knowledge-base-editor-backlinks-label" />
-        <html:ul id="knowledge-base-editor-backlinks" class="refs" />
+        <html:div class="editor-connections">
+          <html:div id="knowledge-base-editor-family" />
+          <html:section>
+            <html:h3 id="knowledge-base-editor-outgoing-label" />
+            <html:ul id="knowledge-base-editor-outgoing" class="refs" />
+          </html:section>
+          <html:section>
+            <html:h3 id="knowledge-base-editor-backlinks-label" />
+            <html:ul id="knowledge-base-editor-backlinks" class="refs" />
+          </html:section>
+          <toolbarbutton
+            id="knowledge-base-editor-graph"
+            class="kb-native-tool"
+          />
+        </html:div>
       </html:details>
     </html:div>
     <html:footer id="knowledge-base-editor-footer">

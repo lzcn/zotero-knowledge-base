@@ -324,7 +324,7 @@ const refreshUnresolved = wrap(async function () {
 
 function select(id, record = true) {
   if (selectedId)
-    scrollPositions.set(selectedId, $("knowledge-base-detail-pane").scrollTop);
+    scrollPositions.set(selectedId, $("knowledge-base-preview").scrollTop);
   if (record && history[historyIndex] !== id) {
     history.splice(historyIndex + 1);
     history.push(id);
@@ -346,7 +346,7 @@ function select(id, record = true) {
   safeCall(async () => {
     await renderDetail(id);
     if (selectedId === id)
-      $("knowledge-base-detail-pane").scrollTop = scrollPositions.get(id) || 0;
+      $("knowledge-base-preview").scrollTop = scrollPositions.get(id) || 0;
   });
 }
 

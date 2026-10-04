@@ -55,28 +55,35 @@ type="text/css"?>
               />
             </html:div>
           </html:header>
-          <html:div id="knowledge-base-detail-id" class="card-index" />
-          <html:div id="knowledge-base-detail-meta" class="muted"></html:div>
+          <html:div class="card-metadata">
+            <html:div id="knowledge-base-detail-id" class="card-index" />
+            <html:div id="knowledge-base-detail-meta" class="muted" />
+          </html:div>
           <html:div id="knowledge-base-detail-source" class="refs"></html:div>
           <html:h2 id="knowledge-base-preview-head"></html:h2>
           <html:div
             id="knowledge-base-preview"
             class="markdown-body"
           ></html:div>
-          <html:section class="card-family">
-            <html:div id="knowledge-base-family" class="relation-columns" />
-            <html:button id="knowledge-base-btn-child" class="family-create" />
+          <html:section class="card-connections">
+            <html:section class="card-family">
+              <html:div id="knowledge-base-family" class="relation-columns" />
+              <html:button
+                id="knowledge-base-btn-child"
+                class="family-create"
+              />
+            </html:section>
+            <html:div class="relation-columns reference-columns">
+              <html:details>
+                <html:summary id="knowledge-base-outgoing-head" />
+                <html:div id="knowledge-base-outgoing" class="chips" />
+              </html:details>
+              <html:details>
+                <html:summary id="knowledge-base-backlinks-head" />
+                <html:ul id="knowledge-base-backlinks" class="refs" />
+              </html:details>
+            </html:div>
           </html:section>
-          <html:div class="relation-columns reference-columns">
-            <html:details open="open">
-              <html:summary id="knowledge-base-outgoing-head"></html:summary>
-              <html:div id="knowledge-base-outgoing" class="chips"></html:div>
-            </html:details>
-            <html:details open="open">
-              <html:summary id="knowledge-base-backlinks-head"></html:summary>
-              <html:ul id="knowledge-base-backlinks" class="refs"></html:ul>
-            </html:details>
-          </html:div>
         </html:div>
         <html:div id="knowledge-base-unresolved">
           <html:h2 id="knowledge-base-unresolved-head"></html:h2>

@@ -20,7 +20,7 @@ Open **Tools → Knowledge Base**. Write one idea per card, select its sources, 
 
 Use Markdown or the visual editor for images, tables, code and math (`$…$` or `$$…$$`). Click a formula to edit its LaTeX. Changes save automatically after a short pause; Save and `Ctrl/Cmd+S` keep the editor open. Recovery drafts are stored in the database and can be reopened from the card browser. Conflicting edits are preserved as drafts; use **Save as new card** to keep both versions. `Ctrl/Cmd+K` finds a card to link. The **Insert** button and `/` at the start of a Markdown line offer insertion commands.
 
-Native controls follow Zotero, with white reading and writing surfaces, light gray navigation and blue accents. Switch between visual editing and Markdown source; use Ctrl/Cmd-click to follow links in the visual editor.
+Native controls follow Zotero, with white reading and writing surfaces, light gray navigation and blue accents. Choose Reading view, Visual editing or Markdown source in the native mode menu. Each mode uses the full writing area; Ctrl/Cmd+E toggles reading and editing. Connections expand into compact, scrollable lists. Use Ctrl/Cmd-click to follow links while editing visually.
 
 ## Data and backup
 

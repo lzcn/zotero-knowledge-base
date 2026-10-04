@@ -96,7 +96,8 @@ editor-src-insert = 插入来源链接
 editor-link-pick = 插入卡片链接
 editor-link-placeholder = 搜索卡片标题、正文或 ID…
 editor-link-empty = 没有匹配的卡片；也可以直接写 [[新概念]]
-editor-preview = 实时预览
+editor-reading = 浏览模式
+editor-mode = 编辑模式
 editor-body-placeholder = 用 Markdown 写正文，通过 [[ID]] 引用卡片。
 editor-format-text = 文字
 editor-searching = 搜索中…
@@ -135,7 +136,7 @@ section-load-error = 卡片加载失败，请重新选择条目重试。
 
 editor-relations = 卡片关联
 
-editor-visual = 可视化编辑
+editor-visual = 所见即所得
 
 hierarchy = 知识脉络
 parent = 父节点

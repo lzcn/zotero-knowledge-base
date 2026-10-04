@@ -36,7 +36,14 @@ let previewTimer = null;
 let relationsTimer = null;
 let relationsVersion = 0;
 let unsubscribe = null;
-let visualEditing = false;
+/** @type {"reading" | "visual" | "source"} */
+let editorMode = "source";
+/** @type {"visual" | "source"} */
+let lastEditingMode = "visual";
+let modeVersion = 0;
+let readingScroll = 0;
+/** @type {Promise<void> | null} */
+let richEditorInitialization = null;
 /** @type {import("../../src/ui/rich-editor").RichEditorController | null} */
 let richEditor = null;
 let parentId = !zettelId ? args.prefillParentId || null : null;
@@ -147,8 +154,9 @@ async function load() {
   if (dirty && !args.draftId) scheduleSave();
   updatePreview();
   await refreshRelations();
+  await setEditorMode("visual", false);
   unsubscribe = api.onDataChange(() => {
-    if (!visualEditing) updatePreview();
+    if (editorMode !== "visual") updatePreview();
     run(refreshRelations);
   });
 }
@@ -214,10 +222,16 @@ function applyLocale() {
   $("knowledge-base-link-search").placeholder = api.loc(
     "editor-link-placeholder",
   );
-  $("knowledge-base-preview-toggle").setAttribute(
-    "label",
-    api.loc("editor-preview"),
+  $("knowledge-base-editor-mode").setAttribute(
+    "aria-label",
+    api.loc("editor-mode"),
   );
+  for (const [id, key] of [
+    ["knowledge-base-mode-reading", "editor-reading"],
+    ["knowledge-base-mode-visual", "editor-visual"],
+    ["knowledge-base-mode-source", "editor-source-mode"],
+  ])
+    document.getElementById(id).setAttribute("label", api.loc(key));
   $("knowledge-base-editor-body").placeholder = api.loc(
     "editor-body-placeholder",
   );
@@ -347,92 +361,11 @@ function bindEvents() {
       200,
     );
   });
-  const preview = $("knowledge-base-editor-preview");
-  const visualButton = document.createElementNS(
-    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-    "toolbarbutton",
-  );
-  visualButton.id = "knowledge-base-visual-toggle";
-  visualButton.setAttribute("type", "checkbox");
-  visualButton.setAttribute("label", api.loc("editor-visual"));
-  visualButton.setAttribute("tooltiptext", api.loc("editor-visual"));
-  visualButton.setAttribute("aria-label", api.loc("editor-visual"));
-  visualButton.setAttribute("aria-pressed", "false");
-  $("knowledge-base-preview-toggle").after(visualButton);
-  visualButton.addEventListener("command", () =>
-    run(async () => {
-      const frame = $("knowledge-base-rich-frame");
-      if (!richEditor) {
-        if (!frame.contentWindow.KnowledgeBaseRichEditor) {
-          await new Promise((resolve) =>
-            frame.addEventListener("load", resolve, { once: true }),
-          );
-        }
-        if (window.closed) return;
-        richEditor = frame.contentWindow.KnowledgeBaseRichEditor.create({
-          html: api.renderMarkdown($("knowledge-base-editor-body").value),
-          onChange(html) {
-            $("knowledge-base-editor-body").value =
-              api.richTextToMarkdown(html);
-            richBody = $("knowledge-base-editor-body").value;
-            setDirty();
-          },
-          onOpenLink(href) {
-            run(() => api.openLink(href));
-          },
-          async onImages(files) {
-            const snippets = [];
-            for (const file of files) {
-              const bytes = Array.from(
-                new Uint8Array(await file.arrayBuffer()),
-              );
-              const url = await api.importImage(bytes, file.type, imageDraftId);
-              snippets.push(`![image](${url})`);
-            }
-            return api.renderMarkdown(snippets.join("\n\n"));
-          },
-          onError(message) {
-            setStatus(message);
-            $("knowledge-base-editor-status").classList.add("error");
-          },
-          onShortcut(key) {
-            if (key === "s") run(() => save(false));
-            if (key === "k") openCardPicker();
-            if (key === "w") run(closeIfClean);
-          },
-        });
-      }
-      const body = $("knowledge-base-editor-body");
-      if (!visualEditing)
-        sourceSelection = {
-          start: body.selectionStart,
-          end: body.selectionEnd,
-          scroll: body.scrollTop,
-        };
-      visualEditing = !visualEditing;
-      visualButton.setAttribute("checked", String(visualEditing));
-      visualButton.setAttribute(
-        "label",
-        api.loc(visualEditing ? "editor-source-mode" : "editor-visual"),
-      );
-      $("knowledge-base-preview-toggle").hidden = visualEditing;
-      visualButton.setAttribute("aria-pressed", String(visualEditing));
-      frame.hidden = !visualEditing;
-      preview.hidden = visualEditing;
-      $("knowledge-base-editor-body").hidden = visualEditing;
-      $("knowledge-base-editor-workspace").classList.toggle(
-        "edit-only",
-        visualEditing,
-      );
-      updatePreview();
-      if (visualEditing) richEditor.focus();
-      else {
-        body.focus();
-        body.setSelectionRange(sourceSelection.start, sourceSelection.end);
-        body.scrollTop = sourceSelection.scroll;
-      }
-    }),
-  );
+  $("knowledge-base-editor-mode").addEventListener("command", () => {
+    const mode = $("knowledge-base-editor-mode").value;
+    if (mode === "reading" || mode === "visual" || mode === "source")
+      run(() => setEditorMode(mode));
+  });
   $("knowledge-base-src-pick").addEventListener("command", toggleSourceDrop);
   $("knowledge-base-src-jump").addEventListener("command", () => {
     if (source) run(() => api.selectItem(source.key, source.libraryID));
@@ -575,22 +508,8 @@ function bindEvents() {
       formatSelection(button.dataset.format),
     );
   }
-  $("knowledge-base-preview-toggle").addEventListener("command", () => {
-    if (visualEditing) return;
-    const preview = $("knowledge-base-editor-preview");
-    preview.hidden = !preview.hidden;
-    $("knowledge-base-editor-workspace").classList.toggle(
-      "edit-only",
-      preview.hidden,
-    );
-    $("knowledge-base-preview-toggle").setAttribute(
-      "aria-pressed",
-      String(!preview.hidden),
-    );
-    if (!preview.hidden) updatePreview();
-  });
   $("knowledge-base-editor-preview").addEventListener("click", (ev) => {
-    if (visualEditing) return;
+    if (editorMode !== "reading") return;
     const target = /** @type {Element} */ (ev.target);
     if (target.localName === "img") {
       api.openImage(target.getAttribute("src"));
@@ -605,6 +524,9 @@ function bindEvents() {
     if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
       ev.preventDefault();
       save(false);
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "e") {
+      ev.preventDefault();
+      run(toggleReading);
     } else if (ev.key === "Escape") {
       if (!$("knowledge-base-command-menu").hidden) {
         closeCommands();
@@ -743,16 +665,128 @@ function run(fn) {
     });
 }
 
+async function ensureRichEditor() {
+  if (richEditor) return;
+  if (!richEditorInitialization) {
+    richEditorInitialization = (async () => {
+      const frame = $("knowledge-base-rich-frame");
+      if (!frame.contentWindow.KnowledgeBaseRichEditor) {
+        await new Promise((resolve) =>
+          frame.addEventListener("load", resolve, { once: true }),
+        );
+      }
+      if (disposed || window.closed) return;
+      const body = $("knowledge-base-editor-body").value;
+      richEditor = frame.contentWindow.KnowledgeBaseRichEditor.create({
+        html: api.renderMarkdown(body),
+        onChange(html) {
+          if (disposed || editorMode !== "visual") return;
+          $("knowledge-base-editor-body").value = api.richTextToMarkdown(html);
+          richBody = $("knowledge-base-editor-body").value;
+          setDirty();
+        },
+        onOpenLink(href) {
+          run(() => api.openLink(href));
+        },
+        async onImages(files) {
+          const snippets = [];
+          for (const file of files) {
+            const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+            const url = await api.importImage(bytes, file.type, imageDraftId);
+            snippets.push(`![image](${url})`);
+          }
+          return api.renderMarkdown(snippets.join("\n\n"));
+        },
+        onError(message) {
+          setStatus(message);
+          $("knowledge-base-editor-status").classList.add("error");
+        },
+        onShortcut(key) {
+          if (key === "s") run(() => save(false));
+          if (key === "k") openCardPicker();
+          if (key === "w") run(closeIfClean);
+          if (key === "e") run(toggleReading);
+        },
+      });
+      richBody = body;
+    })().finally(() => {
+      richEditorInitialization = null;
+    });
+  }
+  await richEditorInitialization;
+}
+
+/** @param {"reading" | "visual" | "source"} mode */
+async function setEditorMode(mode, focus = true) {
+  const version = ++modeVersion;
+  const body = $("knowledge-base-editor-body");
+  const preview = $("knowledge-base-editor-preview");
+  if (editorMode === "source")
+    sourceSelection = {
+      start: body.selectionStart,
+      end: body.selectionEnd,
+      scroll: body.scrollTop,
+    };
+  if (editorMode === "reading") readingScroll = preview.scrollTop;
+  if (mode === "visual") await ensureRichEditor();
+  if (disposed || window.closed || version !== modeVersion) return;
+  editorMode = mode;
+  if (mode !== "reading") lastEditingMode = mode;
+  $("knowledge-base-editor-mode").value = mode;
+  $("knowledge-base-editor-root").setAttribute("data-mode", mode);
+  body.hidden = mode !== "source";
+  preview.hidden = mode !== "reading";
+  $("knowledge-base-rich-frame").hidden = mode !== "visual";
+  $("knowledge-base-editor-title").readOnly = mode === "reading";
+  for (const id of ["knowledge-base-command-open", "knowledge-base-link-pick"])
+    document.getElementById(id).hidden = mode === "reading";
+  for (const id of [
+    "knowledge-base-src-pick",
+    "knowledge-base-src-clear",
+    "knowledge-base-src-anno",
+    "knowledge-base-parent-display",
+    "knowledge-base-parent-root",
+  ]) {
+    const button = /** @type {HTMLButtonElement} */ (
+      document.getElementById(id)
+    );
+    button.disabled = mode === "reading";
+  }
+  closeCommands();
+  $("knowledge-base-link-drop").hidden = true;
+  $("knowledge-base-src-drop").hidden = true;
+  $("knowledge-base-parent-search").hidden = true;
+  $("knowledge-base-parent-results").hidden = true;
+  cardSearchVersion++;
+  sourceSearchVersion++;
+  parentSearchVersion++;
+  updatePreview();
+  if (mode === "reading") {
+    preview.scrollTop = readingScroll;
+    if (focus) preview.focus();
+  } else if (mode === "visual") {
+    if (focus) richEditor.focus();
+  } else {
+    if (focus) body.focus();
+    body.setSelectionRange(sourceSelection.start, sourceSelection.end);
+    body.scrollTop = sourceSelection.scroll;
+  }
+}
+
+function toggleReading() {
+  return setEditorMode(editorMode === "reading" ? lastEditingMode : "reading");
+}
+
 function updatePreview() {
   api.updateImageDraft(imageDraftId, $("knowledge-base-editor-body").value);
   try {
-    if (visualEditing && richEditor) {
+    if (editorMode === "visual" && richEditor) {
       const body = $("knowledge-base-editor-body").value;
       if (richBody !== body) {
         richEditor.setHTML(api.renderMarkdown(body));
         richBody = body;
       }
-    } else {
+    } else if (editorMode === "reading") {
       window.ZoteroKnowledgeBaseMarkdown.render(
         $("knowledge-base-editor-preview"),
         $("knowledge-base-editor-body").value,
@@ -844,7 +878,8 @@ async function refreshRelations() {
 }
 
 function insertText(text, range = null) {
-  if (visualEditing && richEditor) {
+  if (editorMode === "reading") return;
+  if (editorMode === "visual" && richEditor) {
     richEditor.insertHTML(api.renderMarkdown(text));
     richEditor.focus();
     return;
@@ -855,8 +890,7 @@ function insertText(text, range = null) {
   body.setRangeText(text, start, end, "end");
   setDirty();
   updatePreview();
-  if (visualEditing) $("knowledge-base-editor-preview").focus();
-  else body.focus();
+  body.focus();
 }
 
 function markdownLabel(text) {
@@ -871,7 +905,8 @@ function insertSourceLink() {
 }
 
 function formatSelection(kind) {
-  if (visualEditing && richEditor) {
+  if (editorMode === "reading") return;
+  if (editorMode === "visual" && richEditor) {
     richEditor.format(kind);
     return;
   }
@@ -920,6 +955,7 @@ function editKeydown(ev) {
 }
 
 function openCardPicker() {
+  if (editorMode === "reading") return;
   const body = $("knowledge-base-editor-body");
   linkRange = { start: body.selectionStart, end: body.selectionEnd };
   $("knowledge-base-link-drop").hidden = false;
@@ -1111,7 +1147,7 @@ function setDirty() {
     scheduleSave();
   }
   clearTimeout(previewTimer);
-  if (!visualEditing) previewTimer = setTimeout(updatePreview, 120);
+  if (editorMode !== "visual") previewTimer = setTimeout(updatePreview, 120);
   clearTimeout(relationsTimer);
   relationsTimer = setTimeout(() => run(refreshRelations), 180);
 }

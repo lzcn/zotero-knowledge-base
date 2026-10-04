@@ -377,6 +377,15 @@ const editorXML = await readFile(
   path.join(ROOT, "addon/content/editor.xhtml"),
   "utf8",
 );
+const richBundle = path.join(workspace, "rich-editor.js");
+await build({
+  entryPoints: [path.join(ROOT, "src/ui/rich-editor.ts")],
+  bundle: true,
+  format: "iife",
+  platform: "browser",
+  outfile: richBundle,
+});
+const richScript = await readFile(richBundle, "utf8");
 const windows = [];
 async function editor(args = {}, overrides = {}) {
   const dom = new JSDOM(editorXML, {
@@ -437,11 +446,37 @@ async function editor(args = {}, overrides = {}) {
   dom.window.arguments = [args];
   dom.window.eval(previewScript);
   dom.window.eval(formattingScript);
+  const richFrame = dom.window.document.getElementById(
+    "knowledge-base-rich-frame",
+  );
+  const richWindow = richFrame.contentWindow;
+  richWindow.document.open();
+  richWindow.document.write(
+    '<!doctype html><html><body><div id="editor"></div></body></html>',
+  );
+  richWindow.document.close();
+  richWindow.requestAnimationFrame = (fn) => richWindow.setTimeout(fn, 0);
+  richWindow.cancelAnimationFrame = (id) => richWindow.clearTimeout(id);
+  richWindow.Range.prototype.getClientRects = () => [];
+  richWindow.Range.prototype.getBoundingClientRect = () => ({
+    top: 0,
+    left: 0,
+    bottom: 0,
+    right: 0,
+    width: 0,
+    height: 0,
+  });
+  richWindow.eval(richScript);
   dom.window.eval(
     editorScript + "\nwindow.__editorEval = (source) => eval(source);",
   );
   await dom.window.__editorEval("load()");
+  const initialMode = dom.window.document.getElementById(
+    "knowledge-base-editor-mode",
+  ).value;
+  await dom.window.__editorEval('setEditorMode("source", false)');
   return {
+    initialMode,
     win: dom.window,
     $: (id) => dom.window.document.getElementById(id),
     calls,
@@ -567,7 +602,7 @@ check(
   () => assert.equal(commandBody.value, "## Selected title"),
 );
 ed.$("knowledge-base-editor-body").value = sample;
-ed.win.__editorEval("updatePreview()");
+await ed.win.__editorEval('setEditorMode("reading", false)');
 check(
   "HTML Markdown including task checkbox renders in a Zotero XML window",
   () => {
@@ -583,46 +618,93 @@ check(
     );
   },
 );
-const richBundle = path.join(workspace, "rich-editor.js");
-await build({
-  entryPoints: [path.join(ROOT, "src/ui/rich-editor.ts")],
-  bundle: true,
-  format: "iife",
-  platform: "browser",
-  outfile: richBundle,
-});
 const richFrame = ed.$("knowledge-base-rich-frame");
 const richWindow = richFrame.contentWindow;
-richWindow.document.open();
-richWindow.document.write(
-  '<!doctype html><html><body><div id="editor"></div></body></html>',
-);
-richWindow.document.close();
-richWindow.requestAnimationFrame = (fn) => richWindow.setTimeout(fn, 0);
-richWindow.cancelAnimationFrame = (id) => richWindow.clearTimeout(id);
-richWindow.Range.prototype.getClientRects = () => [];
-richWindow.Range.prototype.getBoundingClientRect = () => ({
-  top: 0,
-  left: 0,
-  bottom: 0,
-  right: 0,
-  width: 0,
-  height: 0,
-});
-richWindow.eval(await readFile(richBundle, "utf8"));
 const nativeClick = (element, win) =>
-  element.dispatchEvent(
-    new win.MouseEvent(
-      element.id === "knowledge-base-visual-toggle" ? "command" : "click",
-      { bubbles: true },
-    ),
-  );
-const visualButton = ed.$("knowledge-base-visual-toggle");
-nativeClick(visualButton, ed.win);
-await wait();
-await wait();
+  element.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
+async function chooseMode(fixture, mode) {
+  fixture.$("knowledge-base-editor-mode").value = mode;
+  fixture
+    .$("knowledge-base-editor-mode")
+    .dispatchEvent(new fixture.win.Event("command", { bubbles: true }));
+  await wait();
+  await wait();
+}
+await chooseMode(ed, "visual");
 const richSurface = richWindow.document.querySelector(".tiptap");
 assert.ok(richSurface);
+check(
+  "New cards start in visual mode and the three modes show one body surface",
+  () => {
+    assert.equal(ed.initialMode, "visual");
+    assert.equal(
+      ed.$("knowledge-base-editor-mode").querySelectorAll("menuitem").length,
+      3,
+    );
+    assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
+    assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+    assert.equal(richFrame.hidden, false);
+  },
+);
+const beforeModeSwitch = ed.$("knowledge-base-editor-body").value;
+const beforeModeRevision = ed.win.__editorEval("revision");
+await chooseMode(ed, "reading");
+check(
+  "Reading mode is read-only and keeps editing actions out of the way",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-title").readOnly, true);
+    assert.equal(ed.$("knowledge-base-command-open").hidden, true);
+    assert.equal(ed.$("knowledge-base-src-pick").disabled, true);
+    assert.equal(ed.$("knowledge-base-editor-preview").hidden, false);
+    assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
+    assert.equal(richFrame.hidden, true);
+    ed.win.__editorEval('insertText("Should not be inserted")');
+    assert.equal(ed.$("knowledge-base-editor-body").value, beforeModeSwitch);
+  },
+);
+await chooseMode(ed, "source");
+check(
+  "Source mode exposes only the original Markdown without rewriting it",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-title").readOnly, false);
+    assert.equal(ed.$("knowledge-base-editor-body").hidden, false);
+    assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+    assert.equal(richFrame.hidden, true);
+    assert.equal(ed.$("knowledge-base-editor-body").value, beforeModeSwitch);
+    assert.equal(ed.win.__editorEval("revision"), beforeModeRevision);
+  },
+);
+ed.$("knowledge-base-editor-body").setSelectionRange(2, 5);
+ed.win.dispatchEvent(
+  new ed.win.KeyboardEvent("keydown", {
+    key: "e",
+    ctrlKey: true,
+    bubbles: true,
+  }),
+);
+await wait();
+await wait();
+assert.equal(ed.$("knowledge-base-editor-mode").value, "reading");
+ed.win.dispatchEvent(
+  new ed.win.KeyboardEvent("keydown", {
+    key: "e",
+    ctrlKey: true,
+    bubbles: true,
+  }),
+);
+await wait();
+await wait();
+check(
+  "Reading shortcut returns to the last editing mode and source selection",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-mode").value, "source");
+    assert.equal(ed.$("knowledge-base-editor-body").selectionStart, 2);
+    assert.equal(ed.$("knowledge-base-editor-body").selectionEnd, 5);
+  },
+);
+await chooseMode(ed, "visual");
+assert.equal(richWindow.document.querySelector(".tiptap"), richSurface);
+
 // Use the engine's document transaction; no direct DOM rewrites or fake input event.
 const controller = ed.win.__editorEval("richEditor");
 controller.setHTML(
@@ -695,8 +777,7 @@ check(
     assert.ok(richSurface.querySelector(".katex"));
   },
 );
-nativeClick(visualButton, ed.win);
-await wait();
+await chooseMode(ed, "source");
 ed.win.__editorEval("toggleSourceDrop()");
 await ed.win.__editorEval("searchSources()");
 ed.$("knowledge-base-src-results").firstElementChild.click();
@@ -836,6 +917,7 @@ check("Image file picker inserts a persistent Markdown image", () =>
     "![Figure.png](knowledge-base-asset:image-test.png)",
   ),
 );
+await chooseMode(ed, "reading");
 ed.$("knowledge-base-editor-preview").querySelector("img").click();
 check("Image preview opens the full image viewer", () =>
   assert.equal(
@@ -843,6 +925,7 @@ check("Image preview opens the full image viewer", () =>
     "resource://knowledge-base-assets/image-test.png",
   ),
 );
+await chooseMode(ed, "source");
 const paste = new ed.win.Event("paste", { bubbles: true, cancelable: true });
 Object.defineProperty(paste, "clipboardData", {
   value: {
@@ -1393,6 +1476,28 @@ check("Card browser exposes IDs and uses Zotero native toolbar actions", () => {
     "true",
   );
 });
+managerDoc.getElementById("knowledge-base-preview").scrollTop = 64;
+managerDoc.querySelectorAll(".zettel-row")[1].click();
+await wait();
+await wait();
+managerDoc
+  .getElementById("knowledge-base-back")
+  .dispatchEvent(new managerWin.Event("command", { bubbles: true }));
+await wait();
+await wait();
+check(
+  "Back navigation restores the card's independently scrolling preview",
+  () => {
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active").dataset.id,
+      managerCards[0].id,
+    );
+    assert.equal(
+      managerDoc.getElementById("knowledge-base-preview").scrollTop,
+      64,
+    );
+  },
+);
 nativeClick(managerDoc.getElementById("knowledge-base-btn-edit"), managerWin);
 nativeClick(
   managerDoc.getElementById("knowledge-base-btn-local-graph"),

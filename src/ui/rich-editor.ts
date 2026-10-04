@@ -145,7 +145,7 @@ export function createRichEditor(
       handleKeyDown: (_view, event) => {
         if (
           (event.metaKey || event.ctrlKey) &&
-          ["s", "k", "w"].includes(event.key.toLowerCase())
+          ["s", "k", "w", "e"].includes(event.key.toLowerCase())
         ) {
           event.preventDefault();
           options.onShortcut(event.key.toLowerCase());

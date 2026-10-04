@@ -1,15 +1,15 @@
 :root {
   color-scheme: light;
-  --fg: #293241;
-  --accent: #356ac3;
-  --border: #e1e7ef;
-  --muted: #667388;
-  --surface-subtle: #f7f9fc;
+  --fg: #303035;
+  --accent: #2469c9;
+  --border: #e7e7eb;
+  --muted: #6e6e73;
+  --surface-subtle: #f7f7f8;
 }
 body {
   margin: 0;
   font:
-    15px/1.85 system-ui,
+    15px/1.7 system-ui,
     sans-serif;
   color: var(--fg);
   background: #fff;
@@ -19,7 +19,7 @@ body {
   box-sizing: border-box;
   max-width: 800px;
   margin: 0 auto;
-  padding: 24px 32px;
+  padding: 20px 32px;
   outline: none;
   overflow-wrap: anywhere;
 }
