@@ -22,6 +22,10 @@ import {
   registerExistingNote,
   isExternalNote,
   ensureLiteratureNote,
+  getNoteHealth,
+  restoreNote,
+  getMarkdownSource,
+  markdownNoteHTML,
 } from "./native-notes";
 import { richTextToMarkdown } from "./rich-text";
 import { config } from "../../package.json";
@@ -41,7 +45,13 @@ import {
 } from "./assets";
 import { getFamily, getParentCandidates } from "./hierarchy";
 import { getGraphData } from "./graph";
-import { getGraphOptions, onGraphOptionsChange } from "./preferences";
+import {
+  getGraphOptions,
+  setGraphOption,
+  getPanelWidth,
+  setPanelWidth,
+  onGraphOptionsChange,
+} from "./preferences";
 import { onDataChange } from "./events";
 import {
   createCardsFromAnnotations,
@@ -67,6 +77,7 @@ import {
 import {
   getHighlights,
   getItemSummary,
+  getItemMetadata,
   getSelectedSource,
   searchItems,
   selectItem,
@@ -113,6 +124,11 @@ const editorWindows = new Map<string, Window>();
 
 export const api = {
   ensureLiteratureNote,
+  getNoteHealth,
+  restoreNote,
+  getMarkdownSource,
+  markdownNoteHTML,
+  getItemMetadata,
   registerExistingNote,
   isExternalNote,
   async openLiteratureNote(key: string, libraryID: number): Promise<void> {
@@ -163,6 +179,9 @@ export const api = {
   getParentCandidates,
   onDataChange,
   getGraphOptions,
+  setGraphOption,
+  getPanelWidth,
+  setPanelWidth,
   onGraphOptionsChange,
 
   openImage(url: string): void {

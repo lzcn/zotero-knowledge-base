@@ -140,6 +140,36 @@ function runQuitTest() {
       const literatureEditor = literatureEditors[0];
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (literatureEditor.document.getElementById("knowledge-base-kind").value !== "literature" || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the adopted native note");
+      literatureEditor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new literatureEditor.Event("command", {bubbles: true}));
+      for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "source"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      const literatureBody = literatureEditor.document.getElementById("knowledge-base-editor-body");
+      literatureBody.value += "\\n\\nLiterature synthesis";
+      literatureBody.dispatchEvent(new literatureEditor.Event("input", {bubbles: true}));
+      if (!(await literatureEditor.save(false)) || (note.getNote().match(/Linked Zotero note/g) || []).length !== 1) throw new Error("Markdown editing duplicated an existing note's title paragraph");
+      literatureEditor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new literatureEditor.Event("command", {bubbles: true}));
+      for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      const metadataBox = literatureEditor.document.getElementById("knowledge-base-metadata");
+      if (metadataBox.hidden || !metadataBox.textContent.includes("Host2026")) throw new Error("Literature Note metadata is missing");
+      item.setField("publisher", "Live metadata publisher");
+      await item.saveTx();
+      for (let n = 0; n < 100 && !metadataBox.textContent.includes("Live metadata publisher"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!metadataBox.textContent.includes("Live metadata publisher") || note.getNote().includes("Live metadata publisher")) throw new Error("Metadata did not align live without rewriting the note body");
+      const metadataShots = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
+      if (metadataShots) {
+        metadataBox.open = true;
+        await IOUtils.makeDirectory(metadataShots, {ignoreExisting: true});
+        const image = await literatureEditor.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
+        const canvas = literatureEditor.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+        canvas.width = image.width; canvas.height = image.height;
+        canvas.getContext("2d").drawImage(image, 0, 0); image.close();
+        const blob = await new Promise(resolve => canvas.toBlob(resolve));
+        await IOUtils.write(PathUtils.join(metadataShots, "literature-metadata.png"), new Uint8Array(await blob.arrayBuffer()));
+      }
+      item.deleted = true; await item.saveTx();
+      const standaloneHealth = await kb.api.getNoteHealth(literatureID);
+      if (standaloneHealth.source !== "trashed" || standaloneHealth.note !== "available") throw new Error("A standalone Literature Note was treated as deleted with its source");
+      if (!(await literatureEditor.save(false)) || (await kb.api.getZettel(literatureID)).item_key !== item.key || note.parentItemID) throw new Error("Unavailable source prevented saving or moved a standalone Literature Note");
+      await kb.api.restoreNote(literatureID);
       await literatureEditor.save(false);
       literatureEditor.close();
       for (let n = 0; n < 100 && !literatureEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 25));
@@ -168,6 +198,7 @@ function runQuitTest() {
             && text && button.ownerGlobal.getComputedStyle(text).display === "none"
             && button.getBoundingClientRect().width === (largeIcon ? 32 : 28);
         });
+        for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = true;
         const relations = [...manager.document.querySelectorAll(".relation-link")];
         const identitiesVisible = relations.length >= 2 && relations.every(button => {
           const id = button.querySelector(".relation-id");
@@ -181,17 +212,16 @@ function runQuitTest() {
         listId.dispatchEvent(new manager.MouseEvent("mousedown", { bubbles: true, detail: 1 }));
         if (manager.getSelection().toString()) throw new Error("Card ID selection was not cleared");
         const mathVisible = !!manager.document.querySelector("#knowledge-base-preview .katex") && !!graph.document.querySelector("#graph-node-snippet .katex");
-        const settings = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
-        for (let n = 0; n < 100 && !settings.document.querySelector('[preference="extensions.zotero.knowledge-base.graph.sources"]'); n++) await new Promise(resolve => setTimeout(resolve, 100));
-        const controls = [...settings.document.querySelectorAll('[preference^="extensions.zotero.knowledge-base.graph."]')];
-        const preferencesVisible = controls.length === 3 && controls.every(control => control.label && control.getBoundingClientRect().width > 0);
+        for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = true;
+        for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = false;
+        const controls = [...graph.document.querySelectorAll("#graph-outline,#graph-references,#graph-sources")];
+        const graphControlsVisible = controls.length === 3 && controls.every(control => control.label && control.getBoundingClientRect().width > 0);
         const sourceWasVisible = !!graph.document.querySelector(".graph-node.source");
-        const sourceControl = controls.find(control => control.getAttribute("preference").endsWith("sources"));
+        const sourceControl = controls.find(control => control.id === "graph-sources");
         sourceControl.checked = false;
-        sourceControl.dispatchEvent(new settings.Event("command", { bubbles: true }));
+        sourceControl.dispatchEvent(new graph.Event("command", { bubbles: true }));
         await new Promise(resolve => setTimeout(resolve, 150));
         const sourcesHidden = sourceWasVisible && !graph.document.querySelector(".graph-node.source,.graph-edge.source") && Zotero.Prefs.get("extensions.zotero.knowledge-base.graph.sources", true) === false;
-        settings.close();
         const editor = [...Services.wm.getEnumerator("knowledge-base:editor")][0];
         const body = editor.document.getElementById("knowledge-base-editor-body");
         const modeMenu = editor.document.getElementById("knowledge-base-editor-mode");
@@ -200,7 +230,9 @@ function runQuitTest() {
         if (rootElement.dataset.mode !== "visual") throw new Error("The editor did not start in visual mode");
         if (modeMenu.localName !== "button" || modeMenu.querySelectorAll("menuitem").length || !modeMenu.label) throw new Error("Native browse/edit toggle is missing");
         async function switchMode(mode) {
-          if (mode === "source" || rootElement.dataset.mode === "source") await editor.setEditorMode(mode);
+          if (mode === "source" || (rootElement.dataset.mode === "source" && mode === "visual")) {
+            if (rootElement.dataset.mode !== mode) editor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new editor.Event("command", {bubbles: true}));
+          } else if (rootElement.dataset.mode === "source") await editor.setEditorMode(mode);
           else if (rootElement.dataset.mode !== mode) modeMenu.dispatchEvent(new editor.Event("command", { bubbles: true }));
           for (let n = 0; n < 80 && rootElement.dataset.mode !== mode; n++) await new Promise(resolve => setTimeout(resolve, 100));
           const surfaces = [body, editor.document.getElementById("knowledge-base-editor-preview"), editor.document.getElementById("knowledge-base-rich-frame")];
@@ -334,8 +366,34 @@ function runQuitTest() {
         if (noteElement.mode !== "view" || !noteElement.getCurrentInstance()._readOnly) throw new Error("Native reading view is editable");
         await switchMode("source");
         if (!body.value.includes("[@Host2026]") || !body.value.includes("[My note](zotero://")) throw new Error("Source projection lost references");
-        if (!body.value.includes('data-attachment-key="' + migratedImage.key + '"') || !body.value.includes("locator%22%3A%2223") || !body.value.includes("itemData%22")) throw new Error("Source projection lost image keys or citation locator metadata");
+        const protectedSource = kb.api.getMarkdownSource(nativeNote.getNote());
+        if (!body.value.includes("knowledge-base://fragment/") || !protectedSource.fragments.some(fragment => fragment.includes(migratedImage.key)) || !protectedSource.fragments.some(fragment => fragment.includes("locator%22%3A%2223"))) throw new Error("Source projection lost protected image/citation metadata");
         await switchMode("visual");
+        await switchMode("source");
+                body.value += "\\n\\nProtected fragment round trip";
+        body.dispatchEvent(new editor.Event("input", {bubbles: true}));
+        if (!(await editor.save(false))) throw new Error("Markdown fragment save failed");
+        const fragmentCheck = nativeNote.getNote();
+        if (!fragmentCheck.includes(migratedImage.key) || !fragmentCheck.includes("locator%22%3A%2223") || !fragmentCheck.includes("Protected fragment round trip")) throw new Error("Markdown save lost native images or citation locators");
+        const sourceBeforeConflict = body.value;
+        nativeNote.setNote(nativeNote.getNote().replace("Protected fragment round trip", "Better Notes external change"));
+        await nativeNote.saveTx();
+        body.value += "\\n\\nUnsaved Markdown conflict";
+        body.dispatchEvent(new editor.Event("input", {bubbles: true}));
+        if (await editor.save(false)) throw new Error("Markdown editor overwrote an external edit");
+        if (!nativeNote.getNote().includes("Better Notes external change") || nativeNote.getNote().includes("Unsaved Markdown conflict") || !editor.document.getElementById("knowledge-base-editor-status").textContent.includes(kb.api.loc("editor-save-conflict"))) throw new Error("Markdown conflict was not visible or retained");
+        if (!noteElement.getCurrentInstance()._readOnly) throw new Error("Hidden native editor can still write during Markdown editing");
+        nativeNote.setNote(fragmentCheck); await nativeNote.saveTx();
+        body.value = sourceBeforeConflict;
+        if (!(await editor.save(false))) throw new Error("Conflict did not resolve after restoring the original baseline");
+        await switchMode("visual");
+        const listHandle = manager.document.getElementById("knowledge-base-splitter");
+        const originalWidth = manager.document.getElementById("knowledge-base-list-pane").getBoundingClientRect().width;
+        listHandle.dispatchEvent(new manager.KeyboardEvent("keydown", {key: "ArrowRight", bubbles: true}));
+        if (!(manager.document.getElementById("knowledge-base-list-pane").getBoundingClientRect().width > originalWidth) || kb.api.getPanelWidth("manager") !== 30) throw new Error("List panel did not resize and persist");
+        const transformBeforeResize = graph.document.querySelector("#graph-svg > g")?.getAttribute("transform");
+        graph.document.getElementById("graph-splitter").dispatchEvent(new graph.KeyboardEvent("keydown", {key: "ArrowLeft", bubbles: true}));
+        if (kb.api.getPanelWidth("graph") !== 28 || transformBeforeResize !== graph.document.querySelector("#graph-svg > g")?.getAttribute("transform")) throw new Error("Graph resizing changed its viewport or failed to persist");
         const editorRelations = editor.document.getElementById("knowledge-base-editor-relations");
         editorRelations.open = true;
         const compactConnections = editorRelations.getBoundingClientRect().height <= 141;
@@ -358,6 +416,8 @@ function runQuitTest() {
         }
         if (screenshotDirectory) {
           await IOUtils.makeDirectory(screenshotDirectory, { ignoreExisting: true });
+          await snapshot("manager", manager);
+          await snapshot("graph", graph);
           await snapshot("native-editor", editor);
           await switchMode("reading"); await snapshot("reading", editor);
 
@@ -402,7 +462,7 @@ function runQuitTest() {
           closeBody = body.value;
           await closeShortcut(editor);
           for (let n = 0; n < 80 && !editor.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
-          if (!editor.closed || (await kb.api.getZettel(rows[0].id)).body !== closeBody || nativeDialogs[1] !== "accept") throw new Error("Command-W did not save and close");
+          if (!editor.closed || kb.api.getMarkdownSource(nativeNote.getNote()).body !== closeBody || nativeDialogs[1] !== "accept") throw new Error("Command-W did not save and close");
           const acquired = await kb.api.acquireNativeNote({ id: rows[0].id, title: "", body: "" });
           const beforeExternal = await kb.api.getZettel(rows[0].id);
           await kb.api.saveEditorDraft({ id: rows[0].id, title: "Conflict", body: "Pending source", draftId: "native-conflict", draftRevision: 1 });
@@ -418,6 +478,57 @@ function runQuitTest() {
           for (let n = 0; n < 80 && (await kb.api.getZettel(rows[0].id)).title !== "Edited in Zotero"; n++) await new Promise(resolve => setTimeout(resolve, 50));
           const externalCard = await kb.api.getZettel(rows[0].id);
           if (externalCard.title !== "Edited in Zotero" || externalCard.item_key !== item.key || (await kb.api.getFamily(rows[0].id)).children.length !== 1) throw new Error("Native editing did not preserve card sources and hierarchy");
+          const caseSource = new Zotero.Item("book");
+          caseSource.libraryID = item.libraryID;
+          caseSource.setField("title", "Corner case source");
+          await caseSource.saveTx({skipSelect: true});
+          const caseNative = await kb.api.duplicateNativeNote(nativeNote.id, "Corner case", externalCard.body, nativeNote.getNote());
+          const caseNote = await Zotero.Items.getAsync(caseNative.noteID);
+          caseNote.parentItemID = caseSource.id; await caseNote.saveTx({skipSelect: true});
+          const caseID = await kb.api.registerExistingNote({noteID: caseNote.id, kind: "literature", itemKey: caseSource.key, libraryID: caseSource.libraryID});
+          const caseCached = await kb.api.getZettel(caseID);
+          caseSource.deleted = true; await caseSource.saveTx();
+          const sourceHealth = await kb.api.getNoteHealth(caseID);
+          if (sourceHealth.source !== "trashed" || sourceHealth.note !== "trashed" || (await kb.api.getZettel(caseID)).item_key !== caseSource.key || caseNote.parentItemID !== caseSource.id) throw new Error("Trashed source detached its note or lost its association");
+          let unavailableRejected = false;
+          try { await kb.api.acquireNativeNote({id: caseID, title: "", body: ""}); } catch(error) { unavailableRejected = String(error).includes("NOTE_UNAVAILABLE"); }
+          if (!unavailableRejected) throw new Error("Opening a trashed note created a replacement");
+          await kb.api.restoreNote(caseID);
+          if (caseNote.deleted || caseSource.deleted || (await kb.api.getNoteHealth(caseID)).note !== "available" || caseNote.parentItemID !== caseSource.id) throw new Error("Restore did not retain the note identity and parent");
+          kb.api.openEditor({zettelId: caseID});
+          let trashedEditor;
+          for (let n = 0; n < 100; n++) {
+            trashedEditor = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => win.knowledgeBaseCardId === caseID);
+            if (trashedEditor?.document.getElementById("knowledge-base-rich-frame")?.getCurrentInstance()) break;
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          caseNote.deleted = true; await caseNote.saveTx();
+          for (let n = 0; n < 100 && (!trashedEditor.document.getElementById("knowledge-base-editor-save").disabled || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden); n++) await new Promise(resolve => setTimeout(resolve, 50));
+          if (!trashedEditor.document.getElementById("knowledge-base-editor-save").disabled || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden) throw new Error("Deleting an open note left its editor writable");
+          if ((await kb.api.getNoteHealth(caseID)).note !== "trashed" || (await kb.api.getZettel(caseID)).body !== caseCached.body) throw new Error("Deleting a native note lost its cached content");
+          trashedEditor.document.getElementById("knowledge-base-editor-restore").dispatchEvent(new trashedEditor.Event("command", {bubbles: true}));
+          for (let n = 0; n < 100 && (trashedEditor.document.getElementById("knowledge-base-rich-frame").hidden || !trashedEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()); n++) await new Promise(resolve => setTimeout(resolve, 50));
+          if (trashedEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()?._item.id !== caseNote.id) throw new Error("Restoring an open note changed its identity or failed to reopen editing");
+          trashedEditor.close();
+          await kb.api.releaseNativeNote(caseNote.id);
+          await Zotero.Items.erase(caseNote.id);
+          if ((await kb.api.getNoteHealth(caseID)).note !== "missing" || !(await kb.api.getZettel(caseID))) throw new Error("Permanent deletion removed the Knowledge Base cache");
+          kb.api.openEditor({zettelId: caseID});
+          let missingEditor;
+          for (let n = 0; n < 100; n++) {
+            missingEditor = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => win.knowledgeBaseCardId === caseID);
+            if (missingEditor && !missingEditor.document.getElementById("knowledge-base-editor-preview")?.hidden && missingEditor.document.getElementById("knowledge-base-editor-save")?.disabled) break;
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          if (!missingEditor || missingEditor.document.getElementById("knowledge-base-editor-preview").hidden || missingEditor.document.getElementById("knowledge-base-editor-save-copy").hidden) throw new Error("Missing note recovery UI is unavailable");
+          missingEditor.document.getElementById("knowledge-base-editor-save-copy").dispatchEvent(new missingEditor.Event("command", {bubbles: true}));
+          for (let n = 0; n < 100 && !missingEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
+          const recovered = (await kb.api.listZettels()).find(card => card.id !== caseID && card.title === caseCached.title && card.kind === "zettel" && card.item_key === caseSource.key);
+          if (!recovered || recovered.body !== caseCached.body || !(await kb.api.getZettel(caseID))) throw new Error("Saving cached content failed to preserve both records");
+          for (const win of Services.wm.getEnumerator("knowledge-base:editor")) if (win.knowledgeBaseCardId === recovered.id) win.close();
+          await kb.api.deleteZettel(recovered.id);
+          await kb.api.deleteZettel(caseID);
+          await Zotero.Items.erase(caseSource.id);
           closeBody = externalCard.body;
           const copy = await kb.api.duplicateNativeNote(nativeNote.id, "Copied note", closeBody);
           const copyNote = await Zotero.Items.getAsync(copy.noteID);
@@ -429,7 +540,7 @@ function runQuitTest() {
           if (!copyNote.deleted || nativeNote.deleted || !(await migratedImage.fileExists())) throw new Error("Card deletion did not trash only its own note");
           nativeNote.deleted = true; await nativeNote.saveTx();
           try { await kb.api.acquireNativeNote({ id: rows[0].id, title: "", body: "" }); throw new Error("Missing note was silently replaced"); }
-          catch (error) { if (!String(error).includes(kb.api.loc("editor-note-missing"))) throw error; }
+          catch (error) { if (!String(error).includes("NOTE_UNAVAILABLE")) throw error; }
           nativeNote.deleted = false; await nativeNote.saveTx();
           kb.api.openEditor({ zettelId: rows[0].id });
           let draftEditor;
@@ -474,7 +585,7 @@ function runQuitTest() {
         if (thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id) throw new Error("Adoption changed the original project before restart");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, collectionKey: collection.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, collectionKey: collection.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -516,8 +627,8 @@ try {
     exited,
     new Promise((_, reject) => {
       timeout = setTimeout(
-        () => reject(new Error("Zotero did not exit within 45 seconds")),
-        45000,
+        () => reject(new Error("Zotero did not exit within 90 seconds")),
+        90000,
       );
     }),
   ]);
@@ -530,7 +641,7 @@ try {
     !state.identitiesVisible ||
     !state.mathVisible ||
     !state.sourcesHidden ||
-    !state.preferencesVisible ||
+    !state.graphControlsVisible ||
     !state.whiteSurfaces ||
     !state.readableText ||
     !state.compactConnections ||
@@ -594,7 +705,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, existing-note registration without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; one browse/edit toggle, automatic source/collection placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, existing-note registration without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; live source metadata, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/collection placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

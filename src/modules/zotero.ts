@@ -3,6 +3,8 @@
  * jump to items in the main window.
  */
 
+import { getString } from "../utils/locale";
+
 export interface ItemSummary {
   key: string;
   libraryID: number;
@@ -191,9 +193,49 @@ export async function getItemSummary(
   const id = Zotero.Items.getIDFromLibraryAndKey(libraryID, key);
   if (!id) return null;
   const item = await Zotero.Items.getAsync(id);
-  if (!item || (!item.isRegularItem() && !item.isNote())) return null;
+  if (!item || item.isInTrash() || (!item.isRegularItem() && !item.isNote()))
+    return null;
   await Zotero.Items.loadDataTypes([item], ["itemData"]);
   return summary(item);
+}
+
+export async function getItemMetadata(key: string, libraryID: number | null) {
+  const item = libraryID
+    ? await Zotero.Items.getByLibraryAndKeyAsync(libraryID, key)
+    : null;
+  if (!item || !item.isRegularItem() || item.isInTrash()) return null;
+  await Zotero.Items.loadDataTypes([item], ["itemData", "creators", "tags"]);
+  const fields = [
+    "title",
+    "date",
+    "publicationTitle",
+    "conferenceName",
+    "publisher",
+    "DOI",
+    "url",
+  ]
+    .map((key) => ({
+      key,
+      label: Zotero.ItemFields.getLocalizedString(key),
+      value: String(item.getField(key, false, true) || ""),
+    }))
+    .filter((field) => field.value);
+  fields.splice(1, 0, {
+    key: "creator",
+    label: getString("metadata-creators"),
+    value: item
+      .getCreators()
+      .map((creator) =>
+        [creator.firstName, creator.lastName].filter(Boolean).join(" "),
+      )
+      .join("; "),
+  });
+  return {
+    ...summary(item),
+    fields,
+    tags: item.getTags().map((tag) => tag.tag),
+    editable: (Zotero.Libraries.get(item.libraryID) || null)?.editable ?? false,
+  };
 }
 
 /** Page label of an annotation, falling back to its 1-based page index. */

@@ -41,6 +41,20 @@ type="text/css"?>
       <html:div id="knowledge-base-src-status" class="muted" role="status" />
       <html:ul id="knowledge-base-src-results" class="refs"></html:ul>
     </html:div>
+    <html:div
+      id="knowledge-base-editor-health"
+      class="note-health"
+      hidden="hidden"
+      role="status"
+    >
+      <html:span id="knowledge-base-editor-health-text" />
+      <button id="knowledge-base-editor-restore" />
+    </html:div>
+    <html:details id="knowledge-base-metadata" hidden="hidden">
+      <html:summary id="knowledge-base-metadata-summary" />
+      <html:dl id="knowledge-base-metadata-fields" />
+      <button id="knowledge-base-metadata-edit" />
+    </html:details>
     <html:input id="knowledge-base-editor-title" type="text" />
     <html:div class="parent-control">
       <html:select id="knowledge-base-kind"
@@ -75,6 +89,7 @@ type="text/css"?>
       <button id="knowledge-base-image-insert" />
       <button id="knowledge-base-src-insert" disabled="disabled"></button>
       <html:div class="spacer" />
+      <button id="knowledge-base-editor-format" />
       <button id="knowledge-base-editor-mode" />
     </html:div>
     <html:div
@@ -110,14 +125,14 @@ type="text/css"?>
         <html:summary id="knowledge-base-editor-relations-summary" />
         <html:div class="editor-connections">
           <html:div id="knowledge-base-editor-family" />
-          <html:section>
-            <html:h3 id="knowledge-base-editor-outgoing-label" />
+          <html:details>
+            <html:summary id="knowledge-base-editor-outgoing-label" />
             <html:ul id="knowledge-base-editor-outgoing" class="refs" />
-          </html:section>
-          <html:section>
-            <html:h3 id="knowledge-base-editor-backlinks-label" />
+          </html:details>
+          <html:details>
+            <html:summary id="knowledge-base-editor-backlinks-label" />
             <html:ul id="knowledge-base-editor-backlinks" class="refs" />
-          </html:section>
+          </html:details>
           <toolbarbutton
             id="knowledge-base-editor-graph"
             class="kb-native-tool"

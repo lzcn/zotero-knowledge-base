@@ -22,6 +22,7 @@ export interface NativeNoteElement extends HTMLElement {
 export interface NativeEditorOptions {
   element: NativeNoteElement;
   item: Zotero.Item;
+  readOnly?: boolean;
   onChange(html: string): void;
   onSavedHTML(html: string): void;
   onOpenLink(href: string): void;
@@ -42,11 +43,11 @@ async function create(
   options: NativeEditorOptions,
 ): Promise<NativeEditorController> {
   const { element } = options;
-  element.mode = "edit";
+  element.mode = options.readOnly ? "view" : "edit";
   element.item = options.item;
   await element._initPromise;
   let frame: NativeEditorInstance["_iframeWindow"];
-  let readOnly = false;
+  let readOnly = !!options.readOnly;
   let lastHTML = options.item.getNote();
   let destroyed = false;
   const ownedInstances = new Set<string>();
@@ -139,7 +140,11 @@ async function create(
   attach();
   const flush = async () => {
     changed();
-    if (!readOnly) await element.getCurrentInstance()._save(getData());
+    if (!readOnly) {
+      const current = await Zotero.Items.getAsync(options.item.id);
+      if (!current || current.isInTrash()) throw new Error("NOTE_UNAVAILABLE");
+      await element.getCurrentInstance()._save(getData());
+    }
   };
   return {
     getHTML: () => getData()?.html || lastHTML,

@@ -68,17 +68,6 @@ window.ZoteroKnowledgeBaseMarkdown = {
       entry.textContent = api.loc("root");
       parent.appendChild(entry);
     }
-    const children = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "details",
-    );
-    if (expanded ?? family.children.length <= 6)
-      children.setAttribute("open", "");
-    const summary = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "summary",
-    );
-    summary.textContent = `${api.loc("children")} · ${family.children.length}`;
     const list = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
       "div",
@@ -96,8 +85,23 @@ window.ZoteroKnowledgeBaseMarkdown = {
       );
       list.appendChild(button);
     }
-    children.append(summary, list);
-    container.append(parent, children);
+    const group = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "details",
+    );
+    if (expanded) group.setAttribute("open", "");
+    const label = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "summary",
+    );
+    label.textContent = `${api.loc("relations-hierarchy")} · ${family.children.length + Number(!!family.parent)}`;
+    const childHeading = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "h3",
+    );
+    childHeading.textContent = `${api.loc("children")} · ${family.children.length}`;
+    group.append(label, parent, childHeading, list);
+    container.append(group);
   },
   /** @param {Element} container @param {string} body */
   render(container, body) {
@@ -108,5 +112,78 @@ window.ZoteroKnowledgeBaseMarkdown = {
         container.ownerDocument.importNode(node, true),
       ),
     );
+  },
+};
+
+window.KnowledgeBasePanels = {
+  /** @param {HTMLElement} handle @param {HTMLElement} pane @param {"manager" | "graph"} name @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
+  attach(handle, pane, name, api) {
+    let value = api.getPanelWidth(name);
+    let dragging = false;
+    handle.classList.add("panel-splitter");
+    handle.tabIndex = 0;
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-orientation", "vertical");
+    handle.setAttribute("aria-label", api.loc("panel-resize"));
+    handle.setAttribute("aria-valuemin", "18");
+    handle.setAttribute("aria-valuemax", "55");
+    const apply = (next) => {
+      value = Math.max(18, Math.min(55, next));
+      pane.style.flexBasis = `${value}%`;
+      handle.setAttribute("aria-valuenow", String(Math.round(value)));
+      window.dispatchEvent(new window.Event("resize"));
+    };
+    const move = (event) => {
+      if (!dragging) return;
+      const rect = handle.parentElement.getBoundingClientRect();
+      if (!rect.width) return;
+      apply(
+        ((name === "graph"
+          ? rect.right - event.clientX
+          : event.clientX - rect.left) /
+          rect.width) *
+          100,
+      );
+      event.preventDefault();
+    };
+    const stop = () => {
+      if (!dragging) return;
+      dragging = false;
+      api.setPanelWidth(name, value);
+      document.documentElement.classList.remove("resizing-panels");
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button) return;
+      dragging = true;
+      document.documentElement.classList.add("resizing-panels");
+      event.preventDefault();
+    });
+    handle.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+      event.preventDefault();
+      apply(
+        event.key === "Home"
+          ? name === "manager"
+            ? 28
+            : 26
+          : value +
+              (event.key === "ArrowRight" ? 2 : -2) *
+                (name === "graph" ? -1 : 1),
+      );
+      api.setPanelWidth(name, value);
+    });
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+    window.addEventListener(
+      "unload",
+      () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+      },
+      { once: true },
+    );
+    apply(value);
   },
 };

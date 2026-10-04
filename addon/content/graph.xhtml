@@ -20,6 +20,9 @@ type="text/css"?>
   <html:div id="knowledge-base-graph-root">
     <html:header id="knowledge-base-graph-toolbar">
       <html:input id="graph-search" type="search" />
+      <checkbox id="graph-outline" />
+      <checkbox id="graph-references" />
+      <checkbox id="graph-sources" />
       <html:div class="spacer" />
       <toolbarbutton id="graph-fit" class="kb-native-tool" />
       <toolbarbutton id="graph-refresh" class="kb-native-tool" />
@@ -30,6 +33,7 @@ type="text/css"?>
         <svg:svg id="graph-svg" aria-label="Card graph" />
         <html:div id="graph-empty" class="muted" hidden="hidden" />
       </html:div>
+      <html:div id="graph-splitter" />
       <html:aside id="graph-inspector">
         <html:div id="graph-selection" hidden="hidden">
           <html:header class="graph-node-heading">

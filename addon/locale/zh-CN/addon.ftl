@@ -179,14 +179,6 @@ graph-open-source = 打开来源文献
 
 column-card-count = 笔记
 
-preferences-graph = 图谱显示
-pref-outline =
-    .label = 显示父子关系
-pref-references =
-    .label = 显示卡片链接
-pref-sources =
-    .label = 显示来源文献
-
 editor-source-mode = Markdown 源码
 editor-unsaved = 等待保存…
 editor-saving = 正在保存…
@@ -219,3 +211,26 @@ note-kind-thinking = 思考笔记
 literature-source-required = 请先选择文献条目作为来源。
 literature-exists = 这个条目已有文献笔记，请从条目侧栏打开。
 manager-confirm-remove = 从 Knowledge Base 移除“{ $title }”？原 Zotero 笔记会保留。
+
+relations-hierarchy = 层级
+panel-resize = 调整面板宽度
+health-note-trashed = 原笔记在回收站中，内容缓存仍保留。
+health-note-missing = 原笔记不可用，可以将缓存另存为新笔记。
+health-source-trashed = 来源在回收站中，原链接仍保留。
+health-source-missing = 来源不可用，可选择其他来源重新关联。
+health-restore = 恢复原记录
+health-open-cache = 打开缓存笔记
+health-read-only = 此文献库为只读。
+editor-format-native = 原生编辑器
+editor-format-markdown = Markdown
+metadata-title = 来源元信息
+metadata-edit = 在 Zotero 中修改
+metadata-citation-key = 引用键
+metadata-tags = 标签
+graph-outline = 层级
+graph-references = 引用
+graph-sources = 来源
+
+metadata-creators = 作者
+
+preview-image-missing = 图片不可用

@@ -19,11 +19,6 @@ import {
   reportStartupFailure,
 } from "./modules/startup-errors";
 
-import {
-  registerPreferences,
-  unregisterPreferences,
-} from "./modules/preferences";
-
 const windows = new Map<Window, Element[]>();
 let ready = false;
 let generation = 0;
@@ -70,7 +65,6 @@ async function start(token: number): Promise<void> {
       ["nativeNotes", initNativeNotes],
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
-      ["registerPreferences", registerPreferences],
       ["registerItemPaneUI", registerItemPaneUI],
     ];
     for (const [name, run] of steps) {
@@ -186,7 +180,6 @@ async function releaseResources(): Promise<void> {
           win.close();
       }
     },
-    unregisterPreferences,
     unregisterItemPaneUI,
     closeNativeNotes,
     closeAssets,
@@ -229,7 +222,6 @@ function onAppShutdown(): void {
   ready = false;
   addon.data.alive = false;
   stopAssets();
-  unregisterPreferences();
   cancelReadiness?.();
   removeQuitObserver();
 }

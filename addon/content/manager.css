@@ -1825,7 +1825,6 @@ summary {
   height: 20px;
 }
 
-/* Four concise connection groups share a row; IDs remain in tooltips. */
 .card-connections {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1867,4 +1866,116 @@ summary {
 
 #knowledge-base-src-clear {
   list-style-image: url("chrome://zotero/skin/16/universal/cross.svg");
+}
+
+.panel-splitter,
+#knowledge-base-splitter {
+  flex: 0 0 7px;
+  width: 7px;
+  cursor: col-resize;
+  background: linear-gradient(
+    to right,
+    transparent 3px,
+    var(--border) 3px,
+    var(--border) 4px,
+    transparent 4px
+  );
+  touch-action: none;
+}
+.panel-splitter:hover,
+.panel-splitter:focus-visible {
+  background-color: var(--accent-soft);
+}
+.resizing-panels,
+.resizing-panels * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+#knowledge-base-list-pane {
+  min-width: 160px;
+}
+#graph-inspector {
+  border-left: 0;
+}
+.card-connections,
+.editor-connections {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+#knowledge-base-detail .reference-columns {
+  display: contents;
+}
+#knowledge-base-family.relation-columns {
+  display: block;
+}
+.card-connections summary,
+.editor-connections summary {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+}
+.card-connections h3,
+.editor-connections h3 {
+  font-size: 11px;
+  margin: 12px 0 4px;
+}
+.card-connections .relation-list,
+.editor-connections .relation-list,
+.editor-connections .refs {
+  max-height: 150px;
+  overflow-y: auto;
+}
+#knowledge-base-btn-child.family-create {
+  margin: 8px 0 0 14px;
+}
+#knowledge-base-editor-graph {
+  position: absolute;
+  right: 0;
+  top: -29px;
+}
+.editor-connections {
+  position: relative;
+}
+.note-health {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+#knowledge-base-metadata {
+  margin: 0 24px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+#knowledge-base-metadata summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+#knowledge-base-metadata-fields {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 6px 14px;
+  margin: 12px 0;
+  max-height: 180px;
+  overflow-y: auto;
+}
+#knowledge-base-metadata-fields dt {
+  color: var(--muted);
+}
+#knowledge-base-metadata-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .card-connections,
+  .editor-connections {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

@@ -195,6 +195,7 @@ const makeItem = (id, libraryID, key, title) => ({
   libraryID,
   key,
   loaded: false,
+  isInTrash: () => false,
   isNote: () => false,
   isRegularItem: () => true,
   getField(field) {
@@ -224,6 +225,7 @@ const items = new Map([
 items.set(20, {
   id: 20,
   parentItemID: 1,
+  isInTrash: () => false,
   isNote: () => false,
   isRegularItem: () => false,
   isFileAttachment: () => true,
@@ -321,6 +323,7 @@ check(
 );
 const existingNote = {
   ...makeItem(30, 1, "NOTE1234", "Existing note"),
+  isInTrash: () => false,
   isNote: () => true,
   isRegularItem: () => false,
   getNoteTitle: () => "Existing note",
@@ -491,6 +494,14 @@ async function editor(args = {}, overrides = {}) {
   let nativeHTML = "";
   const calls = { open: [], images: [], graphs: [] };
   const api = {
+    getPanelWidth: () => 28,
+    setPanelWidth: () => {},
+    getNoteHealth: async () => ({
+      note: "available",
+      source: "none",
+      editable: true,
+    }),
+    getItemMetadata: async () => null,
     prepareMarkdown: async () => {},
     nativeNoteHTML: async (title, body) =>
       `<div data-schema-version="9"><h1>${title}</h1>${markdown.renderMarkdown(body, htmlWindow)}</div>`,
@@ -502,6 +513,8 @@ async function editor(args = {}, overrides = {}) {
       heading?.remove();
       return { title, body: rich_text.richTextToMarkdown(root) };
     },
+    getMarkdownSource: (html) => api.projectNativeNote(html),
+    markdownNoteHTML: async (title, body) => api.nativeNoteHTML(title, body),
     acquireNativeNote: async (input) => {
       nativeHTML = await api.nativeNoteHTML(input.title, input.body);
       return { noteID: 1, html: nativeHTML };
@@ -601,6 +614,54 @@ async function editor(args = {}, overrides = {}) {
 const ed = await editor({ prefillTitle: "New concept" });
 check("Editor prefills concept titles in its real XML document", () =>
   assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
+);
+let unavailableAcquisitions = 0;
+const unavailableEditor = await editor(
+  { zettelId: "missing-original" },
+  {
+    getZettel: async () => ({
+      id: "missing-original",
+      title: "Retained note",
+      body: "Retained **content**",
+      updated_at: 7,
+    }),
+    getNoteHealth: async () => ({
+      note: "missing",
+      source: "none",
+      editable: true,
+    }),
+    acquireNativeNote: async () => {
+      unavailableAcquisitions++;
+      throw new Error("Must not create a replacement");
+    },
+  },
+);
+check(
+  "An erased native note opens its retained cache without acquiring a replacement",
+  () => {
+    assert.equal(unavailableAcquisitions, 0);
+    assert.equal(
+      unavailableEditor.$("knowledge-base-editor-preview").hidden,
+      false,
+    );
+    assert.ok(
+      unavailableEditor
+        .$("knowledge-base-editor-preview")
+        .textContent.includes("Retained content"),
+    );
+    assert.equal(
+      unavailableEditor.$("knowledge-base-editor-save").disabled,
+      true,
+    );
+    assert.equal(
+      unavailableEditor.$("knowledge-base-editor-save-copy").hidden,
+      false,
+    );
+    assert.equal(
+      unavailableEditor.$("knowledge-base-editor-body").hidden,
+      true,
+    );
+  },
 );
 let closeChoice = 1;
 let promptCalls = 0;
@@ -856,6 +917,36 @@ check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.$("knowledge-base-editor-title").hidden, true);
   assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
 });
+ed.$("knowledge-base-editor-format").dispatchEvent(
+  new ed.win.Event("command", { bubbles: true }),
+);
+await wait();
+await wait();
+check(
+  "Markdown button exposes one source surface and keeps the hidden native editor read-only",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "source");
+    assert.equal(ed.$("knowledge-base-editor-body").hidden, false);
+    assert.equal(ed.$("knowledge-base-rich-frame").mode, "view");
+    assert.equal(
+      ed.$("knowledge-base-editor-format").getAttribute("label"),
+      "editor-format-native",
+    );
+  },
+);
+ed.$("knowledge-base-editor-format").dispatchEvent(
+  new ed.win.Event("command", { bubbles: true }),
+);
+await wait();
+await wait();
+check(
+  "Returning from Markdown restores native editing without a split preview",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "visual");
+    assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
+    assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+  },
+);
 check(
   "Native insertion uses host formatting instead of offering Markdown commands",
   () => {
@@ -993,6 +1084,85 @@ check(
       doc.querySelector("img").getAttribute("data-attachment-key"),
       "IMAG1234",
     );
+  },
+);
+globalThis.addon = { data: {} };
+const protectedProjection = native_notes.getMarkdownSource(structuredHTML);
+check(
+  "Markdown source exposes readable protected links while retaining complete native fragments",
+  () => {
+    assert.ok(
+      protectedProjection.body.includes(
+        "[Author 2026, p. 23](knowledge-base://fragment/0)",
+      ),
+    );
+    assert.ok(protectedProjection.body.includes("knowledge-base://fragment/1"));
+    assert.equal(protectedProjection.fragments.length, 2);
+    assert.ok(protectedProjection.fragments[0].includes("locator%22%3A%2223"));
+    assert.ok(protectedProjection.fragments[1].includes("IMAG1234"));
+  },
+);
+const styledOriginal =
+  '<div data-schema-version="9"><h1>Styled note</h1><p style="text-align:center">Centered paragraph</p></div>';
+const styledSource = native_notes.getMarkdownSource(styledOriginal);
+const styledRoundTrip = await native_notes.markdownNoteHTML(
+  styledSource.title,
+  styledSource.body + "\n\nAdded text",
+  styledOriginal,
+);
+check(
+  "Protected block formatting restores without nesting block nodes inside paragraphs",
+  () => {
+    assert.ok(
+      styledRoundTrip.includes(
+        '<p style="text-align:center">Centered paragraph</p>',
+      ),
+    );
+    assert.ok(!styledRoundTrip.includes("<p><p"));
+  },
+);
+const paragraphRoundTrip = await native_notes.markdownNoteHTML(
+  "Native first paragraph",
+  "Native first paragraph\n\nMy added paragraph",
+  '<div data-schema-version="9"><p>Native first paragraph</p></div>',
+);
+check(
+  "Markdown edits of existing paragraph-titled notes do not prepend a duplicate title",
+  () => {
+    assert.equal(
+      (paragraphRoundTrip.match(/Native first paragraph/g) || []).length,
+      1,
+    );
+    assert.ok(paragraphRoundTrip.includes("My added paragraph"));
+    assert.equal(
+      new JSDOM(paragraphRoundTrip).window.document.querySelector("h1"),
+      null,
+    );
+  },
+);
+const fragmentRestore = await native_notes.markdownNoteHTML(
+  protectedProjection.title,
+  protectedProjection.body + "\n\nMy Markdown draft",
+  structuredHTML,
+);
+check(
+  "Conflict copies render the user's Markdown against its original protected fragments",
+  () => {
+    const doc = new JSDOM(fragmentRestore).window.document;
+    assert.ok(doc.body.textContent.includes("My Markdown draft"));
+    assert.equal(
+      doc.querySelector("img").getAttribute("data-attachment-key"),
+      "IMAG1234",
+    );
+    assert.equal(
+      JSON.parse(
+        decodeURIComponent(
+          doc.querySelector("[data-citation]").getAttribute("data-citation"),
+        ),
+      ).citationItems[0].locator,
+      "23",
+    );
+    assert.ok(!fragmentRestore.includes("knowledge-base://fragment/"));
   },
 );
 await chooseMode(ed, "source");
@@ -1341,10 +1511,22 @@ let optionsChanged;
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
+      getPanelWidth: () => 28,
+      setPanelWidth: () => {},
+      getNoteHealth: async () => ({
+        note: "available",
+        source: "none",
+        editable: true,
+      }),
+      getItemMetadata: async () => null,
       prepareMarkdown: async () => {},
       loc: (key) => key,
       getGraph: async () => graphData,
       getGraphOptions: () => graphOptions,
+      setGraphOption: (name, enabled) => {
+        graphOptions[name] = enabled;
+        optionsChanged?.();
+      },
       onGraphOptionsChange: (listener) => {
         optionsChanged = listener;
         return () => {
@@ -1529,10 +1711,12 @@ check(
     );
   },
 );
-graphOptions.sources = true;
-optionsChanged();
+graphDom.window.document.getElementById("graph-sources").checked = true;
+graphDom.window.document
+  .getElementById("graph-sources")
+  .dispatchEvent(new graphDom.window.Event("command", { bubbles: true }));
 await wait();
-check("Source nodes return when enabled in preferences", () => {
+check("Source nodes return when enabled in the graph", () => {
   assert.ok(graphDom.window.document.querySelector(".graph-node.source"));
   assert.ok(
     graphDom.window.document.getElementById("graph-search").placeholder,
@@ -1678,6 +1862,14 @@ managerWin.Zotero = {
   },
   ZoteroKnowledgeBase: {
     api: {
+      getPanelWidth: () => 28,
+      setPanelWidth: () => {},
+      getNoteHealth: async () => ({
+        note: "available",
+        source: "none",
+        editable: true,
+      }),
+      getItemMetadata: async () => null,
       prepareMarkdown: async () => {},
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
@@ -1715,6 +1907,27 @@ await managerWin.__managerLoad();
 await wait();
 await wait();
 const managerDoc = managerWin.document;
+check(
+  "Browser panels resize by keyboard and relations start as three collapsed groups",
+  () => {
+    const handle = managerDoc.getElementById("knowledge-base-splitter");
+    const pane = managerDoc.getElementById("knowledge-base-list-pane");
+    assert.equal(handle.getAttribute("role"), "separator");
+    handle.dispatchEvent(
+      new managerWin.KeyboardEvent("keydown", {
+        key: "ArrowRight",
+        bubbles: true,
+      }),
+    );
+    assert.equal(pane.style.flexBasis, "30%");
+    assert.equal(handle.getAttribute("aria-valuenow"), "30");
+    const groups = [
+      ...managerDoc.querySelectorAll(".card-connections details"),
+    ];
+    assert.equal(groups.length, 3);
+    assert.ok(groups.every((group) => !group.open));
+  },
+);
 check("Card browser exposes IDs and uses Zotero native toolbar actions", () => {
   assert.deepEqual(
     [...managerDoc.querySelectorAll(".zettel-row .zid")].map(

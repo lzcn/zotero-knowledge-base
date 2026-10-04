@@ -1,7 +1,5 @@
 export const requiredFiles = [
   "prefs.js",
-  "content/preferences.xhtml",
-  "content/preferences.js",
   "content/section.css",
   "content/icons/ui/plus.svg",
   "content/icons/ui/back.svg",

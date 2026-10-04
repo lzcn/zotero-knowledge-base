@@ -447,6 +447,39 @@ async function load() {
     button.setAttribute("tooltiptext", label);
     button.setAttribute("aria-label", label);
   }
+  const syncOptions = () => {
+    const options = api.getGraphOptions();
+    for (const name of /** @type {("outline" | "references" | "sources")[]} */ ([
+      "outline",
+      "references",
+      "sources",
+    ])) {
+      const control = /** @type {HTMLElement & {checked: boolean}} */ (
+        document.getElementById(`graph-${name}`)
+      );
+      control.setAttribute("label", api.loc(`graph-${name}`));
+      control.checked = options[name];
+    }
+  };
+  syncOptions();
+  for (const name of /** @type {("outline" | "references" | "sources")[]} */ ([
+    "outline",
+    "references",
+    "sources",
+  ])) {
+    const control = /** @type {HTMLElement & {checked: boolean}} */ (
+      document.getElementById(`graph-${name}`)
+    );
+    control.addEventListener("command", () =>
+      api.setGraphOption(name, control.checked),
+    );
+  }
+  window.KnowledgeBasePanels.attach(
+    document.getElementById("graph-splitter"),
+    $("graph-inspector"),
+    "graph",
+    api,
+  );
   $("graph-search").placeholder = api.loc("graph-search");
   $("graph-fit").addEventListener("click", fit);
   $("graph-refresh").addEventListener("click", () => run(refresh));
@@ -525,13 +558,15 @@ async function load() {
   window.addEventListener("resize", () => {
     const { width, height } = size();
     $("graph-svg").setAttribute("viewBox", `0 0 ${width} ${height}`);
-    fit();
   });
   unsubscribe = api.onDataChange(() => {
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => run(refresh), 180);
   });
-  unsubscribeOptions = api.onGraphOptionsChange(() => run(render));
+  unsubscribeOptions = api.onGraphOptionsChange(() => {
+    syncOptions();
+    run(render);
+  });
   await refresh();
 }
 window.addEventListener("load", () => run(load));

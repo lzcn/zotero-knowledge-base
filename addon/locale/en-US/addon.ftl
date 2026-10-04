@@ -205,14 +205,6 @@ graph-open-source = Open source item
 
 column-card-count = Notes
 
-preferences-graph = Graph display
-pref-outline =
-    .label = Show parent–child connections
-pref-references =
-    .label = Show card links
-pref-sources =
-    .label = Show source items
-
 editor-source-mode = Markdown source
 editor-unsaved = Waiting to save…
 editor-saving = Saving…
@@ -245,3 +237,26 @@ note-kind-thinking = Thinking Note
 literature-source-required = Choose a literature item as the source.
 literature-exists = This item already has a Literature Note. Open it from the item pane.
 manager-confirm-remove = Remove “{ $title }” from Knowledge Base? The original Zotero note will be kept.
+
+relations-hierarchy = Hierarchy
+panel-resize = Resize panel
+health-note-trashed = The original note is in Trash. Cached content is retained.
+health-note-missing = The original note is unavailable. You can save the cached content as a new note.
+health-source-trashed = The source is in Trash. The original link is retained.
+health-source-missing = The source is unavailable. Choose another source to relink it.
+health-restore = Restore original
+health-open-cache = Open cached note
+health-read-only = This library is read-only.
+editor-format-native = Native editor
+editor-format-markdown = Markdown
+metadata-title = Source metadata
+metadata-edit = Edit in Zotero
+metadata-citation-key = Citation key
+metadata-tags = Tags
+graph-outline = Hierarchy
+graph-references = References
+graph-sources = Sources
+
+metadata-creators = Creators
+
+preview-image-missing = Image unavailable

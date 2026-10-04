@@ -60,6 +60,12 @@ const load = wrap(async function () {
   );
   applyLocale();
   bindEvents();
+  window.KnowledgeBasePanels.attach(
+    $("knowledge-base-splitter"),
+    $("knowledge-base-list-pane"),
+    "manager",
+    api,
+  );
   await refreshDrafts();
   if (args.selectId) $("knowledge-base-entries").checked = false;
   $("knowledge-base-kind").value = "";
@@ -432,11 +438,12 @@ async function refreshDrafts() {
 
 const renderDetail = wrap(async function (id) {
   const version = ++detailVersion;
-  const [z, family, outgoing, backlinks] = await Promise.all([
+  const [z, family, outgoing, backlinks, health] = await Promise.all([
     api.getZettel(id),
     api.getFamily(id),
     api.getOutgoing(id),
     api.getBacklinks(id),
+    api.getNoteHealth(id),
   ]);
   if (!z || version !== detailVersion || selectedId !== id) return;
   await api.prepareMarkdown(z.body);
@@ -455,6 +462,11 @@ const renderDetail = wrap(async function (id) {
   $("knowledge-base-detail-meta").textContent =
     `${api.loc("manager-updated")} ${new Date(z.updated_at).toLocaleString()}`;
 
+  renderHealth(
+    document.getElementById("knowledge-base-detail-health"),
+    health,
+    id,
+  );
   const srcBox = $("knowledge-base-detail-source");
   srcBox.textContent = "";
   if (z.item_key) {
@@ -593,3 +605,35 @@ const removeZettel = wrap(async function (id) {
 });
 
 window.addEventListener("load", load);
+
+function renderHealth(box, health, id) {
+  box.replaceChildren();
+  const unavailable = ["missing", "trashed"].includes(health.note);
+  box.hidden = !unavailable && !["missing", "trashed"].includes(health.source);
+  if (box.hidden) return;
+  const label = document.createElementNS(
+    "http://www.w3.org/1999/xhtml",
+    "span",
+  );
+  label.textContent = api.loc(
+    unavailable
+      ? `health-note-${health.note}`
+      : `health-source-${health.source}`,
+  );
+  box.appendChild(label);
+  const action = document.createXULElement("button");
+  if (health.note === "trashed" || health.source === "trashed") {
+    action.setAttribute("label", api.loc("health-restore"));
+    action.toggleAttribute("disabled", !health.editable);
+    action.addEventListener("command", () =>
+      safeCall(() => api.restoreNote(id)),
+    );
+  } else {
+    action.setAttribute(
+      "label",
+      api.loc(unavailable ? "health-open-cache" : "editor-src-pick"),
+    );
+    action.addEventListener("command", () => api.openEditor({ zettelId: id }));
+  }
+  box.appendChild(action);
+}

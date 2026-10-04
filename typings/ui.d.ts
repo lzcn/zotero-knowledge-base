@@ -26,6 +26,14 @@ declare global {
     Zotero: typeof Zotero;
     arguments: unknown[];
     DOMParser: typeof DOMParser;
+    KnowledgeBasePanels: {
+      attach(
+        handle: HTMLElement,
+        pane: HTMLElement,
+        name: "manager" | "graph",
+        api: KnowledgeBaseAPI,
+      ): void;
+    };
     ZoteroKnowledgeBaseMarkdown: {
       render(container: Element, body: string): void;
       identity(container: Element, id: string, title: string): void;
@@ -41,6 +49,8 @@ declare global {
 }
 
 export interface EditorElements {
+  "knowledge-base-metadata-edit": HTMLButtonElement;
+  "knowledge-base-editor-restore": HTMLButtonElement;
   "knowledge-base-kind": HTMLSelectElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;

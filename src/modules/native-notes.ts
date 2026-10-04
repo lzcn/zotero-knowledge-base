@@ -42,13 +42,7 @@ function parse(html: string): Document {
   return new win.DOMParser().parseFromString(html, "text/html");
 }
 
-/** A Markdown projection for search, links and the optional source view. */
-export function projectNativeNote(html: string): {
-  title: string;
-  body: string;
-} {
-  const doc = parse(html);
-  const root = doc.querySelector("div[data-schema-version]") || doc.body;
+function replaceSimpleCitations(doc: Document, root: Element): void {
   for (const node of Array.from(
     root.querySelectorAll("span[data-citation]"),
   ) as Element[]) {
@@ -79,6 +73,16 @@ export function projectNativeNote(html: string): {
       node.replaceWith(link);
     }
   }
+}
+
+/** A Markdown projection for search, links and the optional source view. */
+export function projectNativeNote(html: string): {
+  title: string;
+  body: string;
+} {
+  const doc = parse(html);
+  const root = doc.querySelector("div[data-schema-version]") || doc.body;
+  replaceSimpleCitations(doc, root);
   const stored = JSON.parse(
     decodeURIComponent(root.getAttribute("data-citation-items") || "%5B%5D"),
   );
@@ -203,6 +207,196 @@ export async function nativeNoteHTML(
   return `<div data-schema-version="2">${heading.outerHTML}${doc.body.innerHTML}</div>`;
 }
 
+export function getMarkdownSource(html: string): {
+  title: string;
+  body: string;
+  fragments: string[];
+} {
+  const doc = parse(html);
+  const root = doc.querySelector("div[data-schema-version]") || doc.body;
+  const fragments: string[] = [];
+  replaceSimpleCitations(doc, root);
+  for (const node of Array.from(
+    root.querySelectorAll(
+      "img, [data-citation], [data-annotation], [style], table",
+    ),
+  ) as Element[]) {
+    if (
+      !root.contains(node) ||
+      (node === root.firstElementChild && node.tagName === "H1")
+    )
+      continue;
+    if (
+      /^(TABLE|DIV|P|PRE|BLOCKQUOTE|UL|OL|H[1-6])$/.test(node.tagName) &&
+      !node.hasAttribute("style") &&
+      !node.querySelector(
+        "[colspan], [rowspan], img, [data-citation], [data-annotation], [style]",
+      )
+    )
+      continue;
+    const index = fragments.push(node.outerHTML) - 1;
+    const marker = doc.createElement("a");
+    marker.setAttribute("href", `knowledge-base://fragment/${index}`);
+    marker.textContent =
+      node.getAttribute("alt") ||
+      node.textContent?.trim() ||
+      getString("editor-image");
+    node.replaceWith(marker);
+  }
+  return { ...projectNativeNote(root.outerHTML), fragments };
+}
+
+function restoreMarkdownFragments(html: string, original: string): string {
+  const doc = parse(html);
+  const originalDoc = parse(original);
+  const fragments = getMarkdownSource(original).fragments;
+  for (const marker of Array.from(
+    doc.querySelectorAll('a[href^="knowledge-base://fragment/"]'),
+  ) as Element[]) {
+    const match = /^knowledge-base:\/\/fragment\/(\d+)$/.exec(
+      marker.getAttribute("href") || "",
+    );
+    if (!match || !fragments[Number(match[1])])
+      throw new Error("CARD_CONFLICT: native fragment unavailable");
+    const fragment = parse(fragments[Number(match[1])]);
+    const node = doc.importNode(
+      fragment.body.firstElementChild!,
+      true,
+    ) as Element;
+    if (
+      /^(TABLE|DIV|P|PRE|BLOCKQUOTE|UL|OL|H[1-6])$/.test(node.tagName) &&
+      marker.parentElement?.tagName === "P" &&
+      marker.parentElement.childNodes.length === 1
+    )
+      marker.parentElement.replaceWith(node);
+    else marker.replaceWith(node);
+  }
+  const root = doc.querySelector("div[data-schema-version]");
+  const heading = originalDoc.querySelector(
+    "div[data-schema-version] > h1:first-child",
+  );
+  const renderedHeading = root?.firstElementChild;
+  if (heading && renderedHeading?.tagName === "H1")
+    for (const attribute of Array.from(heading.attributes))
+      renderedHeading.setAttribute(attribute.name, attribute.value);
+  const originalRoot =
+    originalDoc.querySelector("div[data-schema-version]") || originalDoc.body;
+  const firstOriginal = Array.from(originalRoot.children).find((element) =>
+    element.textContent?.trim(),
+  );
+  if (
+    firstOriginal &&
+    firstOriginal.tagName !== "H1" &&
+    renderedHeading?.tagName === "H1" &&
+    renderedHeading.textContent === getMarkdownSource(original).title
+  )
+    renderedHeading.remove();
+  const data = originalDoc
+    .querySelector("[data-citation-items]")
+    ?.getAttribute("data-citation-items");
+  if (root && data) root.setAttribute("data-citation-items", data);
+  return root?.outerHTML || doc.body.innerHTML;
+}
+
+export async function markdownNoteHTML(
+  title: string,
+  body: string,
+  original: string,
+): Promise<string> {
+  return restoreMarkdownFragments(await nativeNoteHTML(title, body), original);
+}
+
+export interface NoteHealth {
+  note: "available" | "legacy" | "trashed" | "missing";
+  source: "available" | "none" | "trashed" | "missing";
+  editable: boolean;
+}
+
+export async function getNoteHealth(id: string): Promise<NoteHealth> {
+  const card = await getZettel(id);
+  const mapping = await getOne<NoteMapping>(
+    "SELECT * FROM card_notes WHERE card_id = ?",
+    [id],
+  );
+  const note = mapping
+    ? (await Zotero.Items.getByLibraryAndKeyAsync(
+        mapping.library_id,
+        mapping.note_key,
+      )) || null
+    : null;
+  const source =
+    card?.item_key && card.library_id
+      ? (await Zotero.Items.getByLibraryAndKeyAsync(
+          card.library_id,
+          card.item_key,
+        )) || null
+      : null;
+  return {
+    note: !card
+      ? "missing"
+      : !mapping
+        ? "legacy"
+        : !note?.isNote()
+          ? "missing"
+          : note.isInTrash()
+            ? "trashed"
+            : "available",
+    source: !card?.item_key
+      ? "none"
+      : !source
+        ? "missing"
+        : source.isInTrash()
+          ? "trashed"
+          : "available",
+    editable: !!(
+      Zotero.Libraries.get(
+        note?.libraryID ??
+          mapping?.library_id ??
+          card?.library_id ??
+          Zotero.Libraries.userLibraryID,
+      ) || null
+    )?.editable,
+  };
+}
+
+export async function restoreNote(id: string): Promise<void> {
+  const mapping = await getOne<NoteMapping>(
+    "SELECT * FROM card_notes WHERE card_id = ?",
+    [id],
+  );
+  const card = await getZettel(id);
+  const note = mapping
+    ? (await Zotero.Items.getByLibraryAndKeyAsync(
+        mapping.library_id,
+        mapping.note_key,
+      )) || null
+    : null;
+  const source =
+    card?.item_key && card.library_id
+      ? (await Zotero.Items.getByLibraryAndKeyAsync(
+          card.library_id,
+          card.item_key,
+        )) || null
+      : null;
+  if (mapping && !note) throw new Error("NOTE_UNAVAILABLE");
+  await Zotero.DB.executeTransaction(async () => {
+    const restore = async (item: Zotero.Item | null) => {
+      if (!item) return;
+      if (!(Zotero.Libraries.get(item.libraryID) || null)?.editable)
+        throw new Error("Library is read-only");
+      if (item.parentItemID)
+        await restore(await Zotero.Items.getAsync(item.parentItemID));
+      if (item.deleted) {
+        item.deleted = false;
+        await item.save();
+      }
+    };
+    await restore(source);
+    await restore(note);
+  });
+  notifyDataChange();
+}
+
 async function mappedNote(id: string): Promise<Zotero.Item | null> {
   const row = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE card_id = ?",
@@ -213,8 +407,8 @@ async function mappedNote(id: string): Promise<Zotero.Item | null> {
     row.library_id,
     row.note_key,
   );
-  if (!note || !note.isNote() || note.deleted)
-    throw new Error(getString("editor-note-missing"));
+  if (!note || !note.isNote() || note.isInTrash())
+    throw new Error("NOTE_UNAVAILABLE");
   await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
   return note;
 }
@@ -240,9 +434,10 @@ async function organizeNativeNote(
         input.itemKey,
       )
     : null;
-  if (source && source.deleted) source = null;
+  if (input.itemKey && (!source || source.isInTrash())) return;
   if (source && !source.isRegularItem() && source.parentItemID)
     source = await Zotero.Items.getAsync(source.parentItemID);
+  if (input.itemKey && source && source.isInTrash()) return;
   const parent =
     source &&
     source.isRegularItem() &&
@@ -301,8 +496,8 @@ export async function acquireNativeNote(
     if (note && note.id !== input.noteID)
       throw new Error("CARD_CONFLICT: note mapping changed");
     note = note || (await Zotero.Items.getAsync(input.noteID)) || null;
-    if (!note || !note.isNote() || note.deleted)
-      throw new Error(getString("editor-note-missing"));
+    if (!note || !note.isNote() || note.isInTrash())
+      throw new Error("NOTE_UNAVAILABLE");
     await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
   }
   const original = input.id ? await getZettel(input.id) : null;
@@ -350,8 +545,8 @@ export async function acquireNativeNote(
 export async function saveNativeCard(
   input: NativeCardInput,
 ): Promise<{ id: string; updatedAt: number; html?: string; noteID?: number }> {
-  const kind =
-    input.kind ?? (input.id ? (await getZettel(input.id))?.kind : null);
+  const existing = input.id ? await getZettel(input.id) : null;
+  const kind = input.kind ?? existing?.kind;
   if (kind === "literature") {
     const source =
       input.itemKey && input.libraryID
@@ -360,7 +555,14 @@ export async function saveNativeCard(
             input.itemKey,
           )
         : null;
-    if (!source || !source.isRegularItem() || source.deleted)
+    if (
+      (!source || !source.isRegularItem() || source.isInTrash()) &&
+      !(
+        existing?.kind === "literature" &&
+        existing.item_key === input.itemKey &&
+        existing.library_id === input.libraryID
+      )
+    )
       throw new Error("LITERATURE_SOURCE_REQUIRED");
   }
   if (!input.noteID) {
@@ -373,8 +575,8 @@ export async function saveNativeCard(
     };
   }
   const note = await Zotero.Items.getAsync(input.noteID!);
-  if (!note || !note.isNote() || note.deleted)
-    throw new Error(getString("editor-note-missing"));
+  if (!note || !note.isNote() || note.isInTrash())
+    throw new Error("NOTE_UNAVAILABLE");
   const mapping = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
     [note.key, note.libraryID],
@@ -395,19 +597,22 @@ export async function saveNativeCard(
   const preparedHTML = input.sourceMode
     ? input.restoreDraft && input.nativeHTML
       ? input.nativeHTML
-      : await nativeNoteHTML(input.title, input.body)
+      : input.expectedNoteHTML &&
+          getMarkdownSource(input.expectedNoteHTML).title === input.title &&
+          getMarkdownSource(input.expectedNoteHTML).body === input.body
+        ? input.expectedNoteHTML
+        : await markdownNoteHTML(
+            input.title,
+            input.body,
+            input.expectedNoteHTML || "",
+          )
     : null;
   const projection = projectNativeNote(preparedHTML ?? note.getNote());
   const result = await saveEditorCard(
     { ...input, ...projection, draftRevision: undefined },
     async () => {
       await Zotero.DB.executeTransaction(async () => {
-        if (
-          preparedHTML !== null &&
-          input.expectedNoteHTML !== note.getNote() &&
-          JSON.stringify(projectNativeNote(input.expectedNoteHTML || "")) !==
-            JSON.stringify(projectNativeNote(note.getNote()))
-        )
+        if (preparedHTML !== null && input.expectedNoteHTML !== note.getNote())
           throw new Error("CARD_CONFLICT: note changed");
         if (preparedHTML !== null) {
           note.setNote(preparedHTML);
@@ -437,7 +642,7 @@ export async function saveNativeCard(
 }
 
 async function refreshNote(note: Zotero.Item): Promise<void> {
-  if (!note.isNote() || note.deleted) return;
+  if (!note.isNote() || note.isInTrash()) return;
   await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
   const row = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
@@ -464,7 +669,7 @@ export function releaseNativeNote(noteID: number): Promise<void> {
   if (stopping) return Promise.resolve();
   pending = pending.then(async () => {
     const note = await Zotero.Items.getAsync(noteID);
-    if (note) {
+    if (note && !note.isInTrash()) {
       const projection = projectNativeNote(note.getNote());
       const mapped = await getOne<NoteMapping>(
         "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
@@ -490,7 +695,13 @@ export async function initNativeNotes(): Promise<void> {
   observerID = Zotero.Notifier.registerObserver(
     {
       notify(event: string, _type: string, ids: number[] | string[]) {
-        if (stopping || !["modify", "add"].includes(event)) return;
+        if (
+          stopping ||
+          !["modify", "add", "delete", "trash", "restore"].includes(event)
+        )
+          return;
+        previewImages.clear();
+        notifyDataChange();
         const eligibleIDs = ids.filter((id) => !activeNotes.has(Number(id)));
         if (!eligibleIDs.length) return;
         pending = pending
@@ -514,7 +725,7 @@ export async function initNativeNotes(): Promise<void> {
       row.library_id,
       row.note_key,
     );
-    if (note && !note.deleted) {
+    if (note && !note.isInTrash()) {
       activeNotes.add(note.id);
       try {
         const card = await getZettel(row.card_id);
@@ -526,6 +737,10 @@ export async function initNativeNotes(): Promise<void> {
             libraryID: card.library_id,
           });
         await refreshNote(note);
+      } catch (error) {
+        Zotero.logError(
+          error instanceof Error ? error : new Error(String(error)),
+        );
       } finally {
         activeNotes.delete(note.id);
       }
@@ -574,16 +789,25 @@ export async function prepareNativePreview(body: string): Promise<void> {
   );
   for (const key of keys) {
     if (previewImages.has(key)) continue;
-    const attachment = await Zotero.Items.getByLibraryAndKeyAsync(
-      Zotero.Libraries.userLibraryID,
-      key,
-    );
-    if (
-      attachment &&
-      attachment.isAttachment() &&
-      (await attachment.fileExists())
-    )
-      previewImages.set(key, await attachment.attachmentDataURI);
+    const matches = (
+      await Promise.all(
+        Zotero.Libraries.getAll().map(async (library) => {
+          if (!["user", "group"].includes(library.libraryType)) return null;
+          const item = await Zotero.Items.getByLibraryAndKeyAsync(
+            library.libraryID,
+            key,
+          );
+          return item &&
+            item.isAttachment() &&
+            !item.isInTrash() &&
+            (await item.fileExists())
+            ? item
+            : null;
+        }),
+      )
+    ).filter((item): item is Zotero.Item => !!item);
+    if (matches.length === 1)
+      previewImages.set(key, await matches[0].attachmentDataURI);
   }
 }
 
@@ -594,6 +818,10 @@ export function nativePreviewHTML(html: string): string {
   ) as Element[]) {
     const url = previewImages.get(image.getAttribute("data-attachment-key")!);
     if (url) image.setAttribute("src", url);
+    else {
+      image.removeAttribute("src");
+      image.setAttribute("alt", getString("preview-image-missing"));
+    }
   }
   return doc.body.innerHTML;
 }
@@ -605,8 +833,7 @@ export async function duplicateNativeNote(
   html?: string,
 ): Promise<{ noteID: number; html: string }> {
   const previous = await Zotero.Items.getAsync(noteID);
-  if (!previous?.isNote() || previous.deleted)
-    throw new Error(getString("editor-note-missing"));
+  if (!previous?.isNote()) throw new Error("NOTE_UNAVAILABLE");
   const note = new Zotero.Item("note");
   note.libraryID = previous.libraryID;
   note.setNote(html ?? (await nativeNoteHTML(title, body)));
@@ -629,7 +856,7 @@ export async function registerExistingNote(input: {
   libraryID?: number;
 }): Promise<string> {
   const note = await Zotero.Items.getAsync(input.noteID);
-  if (!note || !note.isNote() || note.deleted)
+  if (!note || !note.isNote() || note.isInTrash())
     throw new Error("Native note not found");
   await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
   const mapped = await getOne<NoteMapping>(
