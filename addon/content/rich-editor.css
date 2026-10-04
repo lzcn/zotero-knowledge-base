@@ -1,13 +1,18 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+  --fg: #293241;
+  --accent: #356ac3;
+  --border: #e1e7ef;
+  --muted: #667388;
+  --surface-subtle: #f7f9fc;
 }
 body {
   margin: 0;
   font:
     15px/1.85 system-ui,
     sans-serif;
-  color: CanvasText;
-  background: light-dark(#fffefa, #242421);
+  color: var(--fg);
+  background: #fff;
 }
 .tiptap {
   min-height: calc(100vh - 32px);
@@ -34,16 +39,17 @@ body {
   height: auto;
 }
 .tiptap a {
-  color: LinkText;
+  color: var(--accent);
   text-decoration: underline;
 }
 .tiptap blockquote {
   margin: 0.8em 0;
   padding-left: 16px;
-  border-left: 2px solid GrayText;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
 }
 .tiptap pre {
-  background: color-mix(in srgb, CanvasText 5%, Canvas);
+  background: var(--surface-subtle);
   padding: 12px;
   border-radius: 5px;
   white-space: pre-wrap;
@@ -59,13 +65,13 @@ body {
 }
 .tiptap th,
 .tiptap td {
-  border: 1px solid GrayText;
+  border: 1px solid var(--border);
   padding: 6px 8px;
   vertical-align: top;
   min-width: 40px;
 }
 .tiptap th {
-  background: color-mix(in srgb, CanvasText 5%, Canvas);
+  background: var(--surface-subtle);
 }
 .tiptap ul[data-type="taskList"] {
   padding-left: 0;

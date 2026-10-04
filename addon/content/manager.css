@@ -2,14 +2,17 @@
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 :root {
-  --bg: -moz-Dialog;
-  --fg: -moz-DialogText;
-  --border: color-mix(in srgb, currentColor 18%, transparent);
-  --hover: color-mix(in srgb, currentColor 8%, transparent);
-  --active: color-mix(in srgb, currentColor 14%, transparent);
-  --accent: AccentColor;
-  --muted: color-mix(in srgb, currentColor 55%, transparent);
-  --danger: #d9534f;
+  color-scheme: light;
+  --bg: #fff;
+  --fg: #293241;
+  --surface-subtle: #f7f9fc;
+  --border: #e1e7ef;
+  --hover: #eef3fa;
+  --active: #e8f0ff;
+  --accent: #356ac3;
+  --muted: #667388;
+  --source: #268572;
+  --danger: #bc404b;
 }
 
 html {
@@ -342,9 +345,20 @@ html|button.danger {
 
 #knowledge-base-editor-title {
   margin: 12px 14px 8px;
-  padding: 6px 10px;
-  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 18px;
   font-weight: 600;
+}
+
+#knowledge-base-editor-title:focus-visible,
+#knowledge-base-search:focus-visible,
+#graph-search:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 #knowledge-base-editor-body {
@@ -369,7 +383,6 @@ html|button.danger {
 }
 
 #knowledge-base-editor-status {
-  font-family: ui-monospace, monospace;
   font-size: 11px;
 }
 
@@ -751,6 +764,7 @@ html|button[disabled] {
   flex-wrap: wrap;
   padding: 12px;
   border-bottom: 1px solid var(--border);
+  background: var(--surface-subtle);
 }
 #graph-search {
   flex: 1;
@@ -766,7 +780,8 @@ html|button[disabled] {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  background: radial-gradient(var(--border) 1px, transparent 1px);
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
   background-size: 22px 22px;
 }
 #graph-svg {
@@ -788,6 +803,7 @@ html|button[disabled] {
   box-sizing: border-box;
   border-left: 1px solid var(--border);
   overflow-y: auto;
+  background: var(--bg);
 }
 #graph-inspector h2 {
   margin: 0 0 8px;
@@ -817,6 +833,14 @@ html|button[disabled] {
   padding: 8px 12px;
   border-top: 1px solid var(--border);
   font-size: 12px;
+  background: var(--surface-subtle);
+  color: var(--muted);
+}
+#graph-legend-cards {
+  color: var(--accent);
+}
+#graph-legend-sources {
+  color: var(--source);
 }
 #graph-error {
   color: var(--danger);
@@ -827,7 +851,7 @@ html|button[disabled] {
   opacity: 0.6;
 }
 .graph-edge.source {
-  stroke: #42a68c;
+  stroke: var(--source);
   stroke-dasharray: 5 4;
 }
 .graph-node {
@@ -839,15 +863,15 @@ html|button[disabled] {
   stroke-width: 2px;
 }
 .graph-node.source circle {
-  fill: #42a68c;
+  fill: var(--source);
 }
 .graph-node.unresolved circle {
   fill: var(--bg);
-  stroke: #dfaa4a;
+  stroke: var(--muted);
   stroke-dasharray: 3 2;
 }
 .graph-node.selected circle {
-  stroke: #dfaa4a;
+  stroke: color-mix(in srgb, var(--accent) 25%, white);
   stroke-width: 4px;
 }
 .graph-node text {
@@ -1289,22 +1313,13 @@ summary {
   color: var(--muted);
 }
 
-/* Card browser surfaces inherit Zotero’s platform theme. */
+/* White reading surfaces and a quiet navigation pane. */
 #knowledge-base-root {
-  --border: var(
-    --color-border50,
-    color-mix(in srgb, var(--fg) 10%, transparent)
-  );
-  --hover: var(--fill-quinary, color-mix(in srgb, var(--fg) 4%, transparent));
-  --muted: var(
-    --fill-secondary,
-    color-mix(in srgb, var(--fg) 52%, transparent)
-  );
-  background: Canvas;
-  color: CanvasText;
+  background: var(--bg);
+  color: var(--fg);
 }
 #knowledge-base-toolbar {
-  background: var(--material-toolbar, -moz-Dialog);
+  background: var(--surface-subtle);
   padding: 8px 12px;
   gap: 10px;
 }
@@ -1319,7 +1334,7 @@ summary {
   font: inherit;
 }
 #knowledge-base-list-pane {
-  background: var(--material-sidepane, -moz-Dialog);
+  background: var(--surface-subtle);
 }
 #knowledge-base-list {
   padding: 8px;
@@ -1333,7 +1348,11 @@ summary {
   border-radius: 7px;
 }
 #knowledge-base-list .zettel-row.active {
-  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  background: var(--active);
+  box-shadow: inset 3px 0 var(--accent);
+}
+#knowledge-base-list .zettel-row.active .title {
+  color: var(--accent);
 }
 #knowledge-base-list .zettel-row:focus-visible {
   outline: 2px solid var(--accent);
@@ -1360,8 +1379,8 @@ summary {
 }
 #knowledge-base-detail-pane {
   padding: 20px 24px;
-  background: Canvas;
-  color: CanvasText;
+  background: var(--bg);
+  color: var(--fg);
 }
 .card-heading {
   display: flex;
@@ -1473,7 +1492,7 @@ summary {
   height: 28px;
   padding: 6px;
   margin: 0;
-  color: var(--fill-secondary, var(--fg));
+  color: var(--muted);
   fill: currentColor;
   -moz-context-properties: fill, fill-opacity;
 }
@@ -1486,6 +1505,15 @@ summary {
 }
 #knowledge-base-btn-new {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/plus.svg");
+}
+#knowledge-base-back {
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/back.svg");
+}
+#knowledge-base-forward {
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/forward.svg");
+}
+.kb-native-tool[disabled="true"] {
+  opacity: 0.4;
 }
 #knowledge-base-btn-edit {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/edit.svg");
@@ -1510,8 +1538,9 @@ summary {
   height: 100%;
   min-height: 0;
   box-sizing: border-box;
-  border: 0;
-  background: Canvas;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
 }
 #knowledge-base-visual-toggle {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/edit.svg");
@@ -1629,15 +1658,12 @@ summary {
   font-size: 10px;
 }
 
-/* Reading surfaces are paper-like; native XUL controls keep the host theme. */
-:root {
-  --kb-paper: light-dark(#fffefa, #242421);
-}
+/* The source, preview and visual editor share the same white canvas. */
 #knowledge-base-detail-pane,
 #knowledge-base-editor-preview,
 #knowledge-base-editor-body {
-  background: var(--kb-paper);
-  color: CanvasText;
+  background: var(--bg);
+  color: var(--fg);
 }
 #knowledge-base-detail {
   max-width: 780px;
@@ -1682,13 +1708,16 @@ summary {
 #knowledge-base-markdown-toolbar,
 #knowledge-base-editor-footer {
   gap: 4px;
-  background: var(--material-toolbar, -moz-Dialog);
+  background: var(--bg);
 }
 #knowledge-base-editor-toolbar {
   flex-wrap: wrap;
 }
 #knowledge-base-visual-toggle {
   list-style-image: none;
+}
+#knowledge-base-visual-toggle .toolbarbutton-text {
+  color: var(--muted);
 }
 
 #knowledge-base-editor-relations:not([open]) {

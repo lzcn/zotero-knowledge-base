@@ -37,6 +37,10 @@ const prefs = {
   "extensions.update.enabled": false,
   "extensions.zotero.automaticScraperUpdates": false,
 };
+if (process.env.KB_HOST_COLOR_SCHEME) {
+  prefs["ui.systemUsesDarkTheme"] =
+    process.env.KB_HOST_COLOR_SCHEME === "dark" ? 1 : 0;
+}
 await writeFile(
   join(profile, "user.js"),
   Object.entries(prefs)
@@ -104,7 +108,7 @@ function runQuitTest() {
         settings.close();
         const editor = [...Services.wm.getEnumerator("knowledge-base:editor")][0];
         const body = editor.document.getElementById("knowledge-base-editor-body");
-        body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$.";
+        body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$.\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
         body.dispatchEvent(new editor.Event("input", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(rows[0].id)).body !== body.value; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if ((await kb.api.getZettel(rows[0].id)).body !== body.value) throw new Error("Editor autosave did not persist");
@@ -120,10 +124,24 @@ function runQuitTest() {
         for (let n = 0; n < 80 && (frame.hidden || !frame.contentDocument.querySelector(".tiptap")); n++) await new Promise(resolve => setTimeout(resolve, 100));
         const richSurface = frame.contentDocument.querySelector(".tiptap");
         if (frame.hidden || !richSurface?.querySelector("a[href^='knowledge-base:']")) throw new Error("Visual editing failed to render the linked card");
+        const whiteSurfaces = [
+          manager.document.getElementById("knowledge-base-detail-pane"),
+          body,
+          frame.contentDocument.body,
+          graph.document.getElementById("graph-canvas"),
+        ].every(surface => surface.ownerGlobal.getComputedStyle(surface).backgroundColor === "rgb(255, 255, 255)");
+        const readableText = [manager.document.getElementById("knowledge-base-detail-pane"), body, frame.contentDocument.body]
+          .every(surface => surface.ownerGlobal.getComputedStyle(surface).color === "rgb(41, 50, 65)");
+        const modeLabel = visual.querySelector(".toolbarbutton-text");
+        if (!modeLabel || editor.getComputedStyle(modeLabel).color !== "rgb(102, 115, 136)") throw new Error("Native editor mode label is unreadable");
+        const systemDark = editor.matchMedia("(prefers-color-scheme: dark)").matches;
+        const expectedColorScheme = ${JSON.stringify(process.env.KB_HOST_COLOR_SCHEME || "")};
+        if (expectedColorScheme && systemDark !== (expectedColorScheme === "dark")) throw new Error("Host color scheme did not match the requested test environment");
+        if (!whiteSurfaces || !readableText) throw new Error("White reading surfaces or readable text colors were lost");
         const screenshotDirectory = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
         if (screenshotDirectory) {
           await IOUtils.makeDirectory(screenshotDirectory, { ignoreExisting: true });
-          for (const [name, win] of [["manager", manager], ["editor", editor]]) {
+          async function snapshot(name, win) {
             const image = await win.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
             const canvas = win.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
             canvas.width = image.width;
@@ -133,6 +151,10 @@ function runQuitTest() {
             const blob = await new Promise(resolve => canvas.toBlob(resolve));
             await IOUtils.write(PathUtils.join(screenshotDirectory, name + ".png"), new Uint8Array(await blob.arrayBuffer()));
           }
+          for (const [name, win] of [["manager", manager], ["editor", editor], ["graph", graph]]) await snapshot(name, win);
+          visual.dispatchEvent(new editor.Event("command", { bubbles: true }));
+          await new Promise(resolve => setTimeout(resolve, 100));
+          await snapshot("markdown", editor);
         }
         editor.close();
         const saved = await kb.api.getZettel(rows[0].id);
@@ -151,7 +173,7 @@ function runQuitTest() {
         const pendingBody = recovered.document.getElementById("knowledge-base-editor-body");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -203,7 +225,9 @@ try {
     !state.identitiesVisible ||
     !state.mathVisible ||
     !state.sourcesHidden ||
-    !state.preferencesVisible
+    !state.preferencesVisible ||
+    !state.whiteSurfaces ||
+    !state.readableText
   )
     throw new Error(JSON.stringify({ state, result }));
   const db = new DatabaseSync(join(data, "knowledge-base.sqlite"), {
@@ -225,7 +249,7 @@ try {
     db.close();
   }
   console.log(
-    `PASS Native editor controls, autosave, recovery drafts and visual editing; icons and native preferences are visible; graph options update live; real Zotero quit with manager, editor and graph open (${result.time - state.quitting} ms); saved database is intact.`,
+    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); native controls, icons, autosave, recovery drafts and graph preferences; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
   );
   passed = true;
 } finally {
