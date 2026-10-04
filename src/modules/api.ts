@@ -76,7 +76,6 @@ import {
 import {
   getHighlights,
   getItemSummary,
-  getItemMetadata,
   getSelectedSource,
   searchItems,
   selectItem,
@@ -127,7 +126,6 @@ export const api = {
   restoreNote,
   getMarkdownSource,
   markdownNoteHTML,
-  getItemMetadata,
   isExternalNote,
   async openLiteratureNote(key: string, libraryID: number): Promise<void> {
     const id = await ensureLiteratureNote(key, libraryID);

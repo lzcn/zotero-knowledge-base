@@ -120,6 +120,18 @@ function runQuitTest() {
         return;
       }
       if ((await kb.api.listZettels()).length) throw new Error("Fresh install contains preloaded user cards");
+      async function openMarkdownMenu(frameWindow) {
+        const settings = frameWindow.document.querySelector(".toolbar .end .dropdown .toolbar-button");
+        if (!settings) throw new Error("Native editor menu button is missing");
+        settings.click();
+        let entry;
+        for (let n = 0; n < 80 && !entry; n++) {
+          entry = frameWindow.document.querySelector(".knowledge-base-markdown-option");
+          if (!entry) await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        if (!entry || entry.textContent !== kb.api.loc("editor-format-markdown")) throw new Error("Markdown entry is missing from the native menu");
+        entry.click();
+      }
       const item = new Zotero.Item("book");
       item.libraryID = Zotero.Libraries.userLibraryID;
       item.setField("title", "Isolated test source");
@@ -157,7 +169,8 @@ function runQuitTest() {
         const source = nativeWindow.document.querySelector('.knowledge-base-native-source');
         if (!source) throw new Error("Native note Markdown switch was not attached");
         const toggle = nativeWindow.document.querySelector('.knowledge-base-native-markdown button');
-        toggle.dispatchEvent(new nativeWindow.Event('command'));
+        if (!nativeWindow.document.querySelector('.knowledge-base-native-markdown').hidden) throw new Error('Markdown adds a redundant toolbar in native mode');
+        await openMarkdownMenu(nativeInstance._iframeWindow);
         for (let n = 0; n < 100 && source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
         if (source.hidden || !nativeInstance._disableSaving) throw new Error("Native Markdown did not disable the hidden host writer");
         return {nativeInstance, nativeWindow, source, toggle};
@@ -234,8 +247,8 @@ function runQuitTest() {
       if (literatureEditors.length !== 1 || (await kb.api.listZettels("", false, "literature")).length !== 1) throw new Error("Repeated literature requests opened duplicate notes or windows: " + literatureEditors.length + "/" + (await kb.api.listZettels("", false, "literature")).length);
       const literatureEditor = literatureEditors[0];
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (literatureEditor.document.getElementById("knowledge-base-kind").value !== "literature" || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
-      literatureEditor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new literatureEditor.Event("command", {bubbles: true}));
+      if (literatureEditor.document.getElementById("knowledge-base-note-kind").textContent !== kb.api.loc("note-kind-literature") || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
+      await openMarkdownMenu(literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "source"; n++) await new Promise(resolve => setTimeout(resolve, 50));
       const literatureBody = literatureEditor.document.getElementById("knowledge-base-editor-body");
       literatureBody.value += "\\n\\nLiterature synthesis";
@@ -263,23 +276,27 @@ function runQuitTest() {
       if (!reselectRow) throw new Error("Existing-note source picker did not find its source");
       reselectRow.click();
       if (!(await literatureEditor.save(false)) || note.parentItemID !== item.id || note.id !== beforeSourceReselect.id || note.key !== beforeSourceReselect.key || note.getNote() !== beforeSourceReselect.html) throw new Error("Reselecting the same source did not move the existing note intact");
-      const metadataBox = literatureEditor.document.getElementById("knowledge-base-metadata");
-      if (metadataBox.hidden || !metadataBox.textContent.includes("Host2026")) throw new Error("Literature Note metadata is missing");
+      if (literatureEditor.document.getElementById("knowledge-base-metadata") || literatureEditor.document.getElementById("knowledge-base-kind") || literatureEditor.document.getElementById("knowledge-base-editor-mode")) throw new Error("Editor still exposes metadata, a type selector or Browse mode");
+      if (literatureEditor.document.getElementById("knowledge-base-editor-status").textContent.includes(literatureID)) throw new Error("Editor exposes its internal note ID");
+      const originalLiteratureHTML = note.getNote();
+      item.setField("title", "Updated parent item title");
       item.setField("publisher", "Live metadata publisher");
       await item.saveTx();
-      for (let n = 0; n < 100 && !metadataBox.textContent.includes("Live metadata publisher"); n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (!metadataBox.textContent.includes("Live metadata publisher") || note.getNote().includes("Live metadata publisher")) throw new Error("Metadata did not align live without rewriting the note body");
+      const parentDisplay = literatureEditor.document.getElementById("knowledge-base-src-display");
+      for (let n = 0; n < 100 && parentDisplay.textContent !== "Updated parent item title"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (parentDisplay.textContent !== "Updated parent item title" || note.getNote() !== originalLiteratureHTML) throw new Error("Parent item title did not refresh without rewriting note content");
       const metadataShots = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
       if (metadataShots) {
-        metadataBox.open = true;
         await IOUtils.makeDirectory(metadataShots, {ignoreExisting: true});
         const image = await literatureEditor.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
         const canvas = literatureEditor.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
         canvas.width = image.width; canvas.height = image.height;
         canvas.getContext("2d").drawImage(image, 0, 0); image.close();
         const blob = await new Promise(resolve => canvas.toBlob(resolve));
-        await IOUtils.write(PathUtils.join(metadataShots, "literature-metadata.png"), new Uint8Array(await blob.arrayBuffer()));
+        await IOUtils.write(PathUtils.join(metadataShots, "literature-editor.png"), new Uint8Array(await blob.arrayBuffer()));
       }
+      item.setField("title", "Isolated test source");
+      await item.saveTx();
       // Explicitly detach this fixture to cover a surviving note with a trashed source.
       note.parentItemID = false; await note.saveTx({skipSelect:true});
       item.deleted = true; await item.saveTx();
@@ -341,16 +358,15 @@ function runQuitTest() {
         const sourcesHidden = sourceWasVisible && !graph.document.querySelector(".graph-node.source,.graph-edge.source") && Zotero.Prefs.get("extensions.zotero.knowledge-base.graph.sources", true) === false;
         const editor = [...Services.wm.getEnumerator("knowledge-base:editor")][0];
         const body = editor.document.getElementById("knowledge-base-editor-body");
-        const modeMenu = editor.document.getElementById("knowledge-base-editor-mode");
         const rootElement = editor.document.getElementById("knowledge-base-editor-root");
         for (let n = 0; n < 80 && rootElement.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if (rootElement.dataset.mode !== "visual") throw new Error("The editor did not start in visual mode");
-        if (modeMenu.localName !== "button" || modeMenu.querySelectorAll("menuitem").length || !modeMenu.label) throw new Error("Native browse/edit toggle is missing");
+        if (editor.document.getElementById("knowledge-base-editor-mode")) throw new Error("Browse mode is still exposed");
         async function switchMode(mode) {
-          if (mode === "source" || (rootElement.dataset.mode === "source" && mode === "visual")) {
-            if (rootElement.dataset.mode !== mode) editor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new editor.Event("command", {bubbles: true}));
-          } else if (rootElement.dataset.mode === "source") await editor.setEditorMode(mode);
-          else if (rootElement.dataset.mode !== mode) modeMenu.dispatchEvent(new editor.Event("command", { bubbles: true }));
+          if (rootElement.dataset.mode !== mode) {
+            if (mode === "source") await openMarkdownMenu(editor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
+            else editor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new editor.Event("command", {bubbles: true}));
+          }
           for (let n = 0; n < 80 && rootElement.dataset.mode !== mode; n++) await new Promise(resolve => setTimeout(resolve, 100));
           const surfaces = [body, editor.document.getElementById("knowledge-base-editor-preview"), editor.document.getElementById("knowledge-base-rich-frame")];
           if (rootElement.dataset.mode !== mode || surfaces.filter(surface => !surface.hidden).length !== 1) throw new Error("Editor mode is not a single surface: " + mode);
@@ -465,8 +481,8 @@ function runQuitTest() {
         };
         click(cardLink);
         const childID = (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id;
-        for (let n = 0; n < 80 && !manager.document.getElementById("knowledge-base-detail-id").textContent.endsWith(childID); n++) await new Promise(resolve => setTimeout(resolve, 50));
-        if (!manager.document.getElementById("knowledge-base-detail-id").textContent.endsWith(childID)) throw new Error("Native card hyperlink did not navigate");
+        for (let n = 0; n < 80 && manager.document.querySelector("#knowledge-base-list .active")?.dataset.id !== childID; n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (manager.document.querySelector("#knowledge-base-list .active")?.dataset.id !== childID) throw new Error("Native card hyperlink did not navigate");
         const math = richSurface.querySelector("math-inline .math-render");
         const mathBounds = math.getBoundingClientRect();
         for (const type of ["mousedown", "mouseup", "click"]) math.dispatchEvent(new frameWindow.MouseEvent(type, { bubbles: true, cancelable: true, clientX: mathBounds.x + mathBounds.width / 2, clientY: mathBounds.y + mathBounds.height / 2 }));
@@ -490,8 +506,6 @@ function runQuitTest() {
         if (!nativeNote.getNote().includes("Native autosave probe")) throw new Error("Zotero's editor did not save the real note");
         for (let n = 0; n < 100 && !(await kb.api.getZettel(rows[0].id)).body.includes("Native autosave probe"); n++) await new Promise(resolve => setTimeout(resolve, 100));
         if (!(await kb.api.getZettel(rows[0].id)).body.includes("Native autosave probe")) throw new Error("Native note changes did not refresh the card cache");
-        await switchMode("reading");
-        if (noteElement.mode !== "view" || !noteElement.getCurrentInstance()._readOnly) throw new Error("Native reading view is editable");
         await switchMode("source");
         if (!body.value.includes("[@Host2026]") || !body.value.includes("[My note](zotero://")) throw new Error("Source projection lost references");
         const protectedSource = kb.api.getMarkdownSource(nativeNote.getNote());
@@ -547,7 +561,6 @@ function runQuitTest() {
           await snapshot("manager", manager);
           await snapshot("graph", graph);
           await snapshot("native-editor", editor);
-          await switchMode("reading"); await snapshot("reading", editor);
 
         }
         await switchMode("source");
@@ -833,7 +846,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; live source metadata, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, parent item titles, native toolbar Markdown menus, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

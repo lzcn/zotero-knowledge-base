@@ -24,7 +24,8 @@ await writeFile(
       (name) =>
         `export * as ${name.replace(/-/g, "_")} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
     )
-    .join("\n"),
+    .join("\n") +
+    `\nexport * as native_markdown_menu from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-menu.ts"))};`,
 );
 const bundle = path.join(workspace, "bundle.mjs");
 await build({
@@ -47,6 +48,7 @@ const {
   assets,
   references,
   native_notes,
+  native_markdown_menu,
 } = await import(pathToFileURL(bundle).href);
 let checks = 0;
 function check(label, fn) {
@@ -55,6 +57,50 @@ function check(label, fn) {
   console.log(`PASS ${label}`);
 }
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
+const menuDOM = new JSDOM(
+  '<div class="toolbar"><div class="end"><div class="dropdown"><button class="toolbar-button">…</button></div></div></div>',
+);
+const dropdown = menuDOM.window.document.querySelector(".dropdown");
+let toggles = 0;
+const removeMenu = native_markdown_menu.attachMarkdownMenu(
+  menuDOM.window,
+  "Markdown",
+  () => toggles++,
+);
+dropdown.insertAdjacentHTML(
+  "beforeend",
+  '<div class="popup"><button class="option">Show in Library</button></div>',
+);
+await wait();
+check(
+  "Markdown joins the native menu without replacing its existing actions",
+  () => {
+    assert.equal(dropdown.querySelectorAll("button.option").length, 2);
+    dropdown.querySelector(".knowledge-base-markdown-option").click();
+    assert.equal(toggles, 1);
+  },
+);
+dropdown.querySelector(".popup").remove();
+dropdown.insertAdjacentHTML("beforeend", '<div class="popup"></div>');
+await wait();
+check(
+  "Recreated native menus get one Markdown action and cleanup removes its observer",
+  () => {
+    assert.equal(
+      dropdown.querySelectorAll(".knowledge-base-markdown-option").length,
+      1,
+    );
+    removeMenu();
+    assert.equal(
+      dropdown.querySelector(".knowledge-base-markdown-option"),
+      null,
+    );
+  },
+);
+dropdown.querySelector(".popup").replaceChildren();
+await wait();
+assert.equal(dropdown.querySelector(".knowledge-base-markdown-option"), null);
+menuDOM.window.close();
 const equations = String.raw`Inline $E = mc^2$.
 
 $$
@@ -501,7 +547,6 @@ async function editor(args = {}, overrides = {}) {
       source: "none",
       editable: true,
     }),
-    getItemMetadata: async () => null,
     prepareMarkdown: async () => {},
     nativeNoteHTML: async (title, body) =>
       `<div data-schema-version="9"><h1>${title}</h1>${markdown.renderMarkdown(body, htmlWindow)}</div>`,
@@ -595,12 +640,9 @@ async function editor(args = {}, overrides = {}) {
     editorScript + "\nwindow.__editorEval = (expression) => eval(expression);",
   );
   await dom.window.__editorEval("load()");
-  const initialMode =
-    dom.window.document
-      .getElementById("knowledge-base-editor-mode")
-      .getAttribute("label") === "editor-browse"
-      ? "visual"
-      : "reading";
+  const initialMode = dom.window.document.getElementById(
+    "knowledge-base-editor-root",
+  ).dataset.mode;
   if (!args.draftId)
     await dom.window.__editorEval('setEditorMode("source", false)');
   return {
@@ -891,25 +933,22 @@ async function chooseMode(fixture, mode) {
   await fixture.win.__editorEval(`setEditorMode("${mode}", false)`);
   await wait();
 }
-check("The UI exposes only one native browse/edit toggle", () => {
-  assert.equal(ed.$("knowledge-base-editor-mode").localName, "button");
-  assert.equal(
-    ed.$("knowledge-base-editor-mode").querySelectorAll("menuitem").length,
-    0,
-  );
-});
+check(
+  "Editor labels the note type without a selector, metadata or Browse control",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-mode"), null);
+    assert.equal(ed.$("knowledge-base-kind"), null);
+    assert.equal(ed.$("knowledge-base-metadata"), null);
+    assert.equal(
+      ed.$("knowledge-base-note-kind").textContent,
+      "note-kind-zettel",
+    );
+  },
+);
 ed.$("knowledge-base-editor-body").value = sample;
 ed.$("knowledge-base-editor-body").dispatchEvent(
   new ed.win.Event("input", { bubbles: true }),
 );
-await chooseMode(ed, "reading");
-check("Reading uses the host note component in view mode", () => {
-  assert.equal(ed.$("knowledge-base-rich-frame").localName, "note-editor");
-  assert.equal(ed.$("knowledge-base-rich-frame").mode, "view");
-  assert.equal(ed.$("knowledge-base-rich-frame").hidden, false);
-  assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
-  assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
-});
 await chooseMode(ed, "visual");
 check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.initialMode, "visual");
@@ -1409,7 +1448,7 @@ check("Image file picker inserts a persistent Markdown image", () =>
     "![Figure.png](knowledge-base-asset:image-test.png)",
   ),
 );
-await chooseMode(ed, "reading");
+await chooseMode(ed, "visual");
 await chooseMode(ed, "source");
 const paste = new ed.win.Event("paste", { bubbles: true, cancelable: true });
 Object.defineProperty(paste, "clipboardData", {
@@ -1573,7 +1612,6 @@ graphDom.window.Zotero = {
         source: "none",
         editable: true,
       }),
-      getItemMetadata: async () => null,
       prepareMarkdown: async () => {},
       loc: (key) => key,
       getGraph: async () => graphData,
@@ -1924,7 +1962,6 @@ managerWin.Zotero = {
         source: "none",
         editable: true,
       }),
-      getItemMetadata: async () => null,
       prepareMarkdown: async () => {},
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
@@ -1983,33 +2020,38 @@ check(
     assert.ok(groups.every((group) => !group.open));
   },
 );
-check("Card browser exposes IDs and uses Zotero native toolbar actions", () => {
-  assert.deepEqual(
-    [...managerDoc.querySelectorAll(".zettel-row .zid")].map(
-      (el) => el.textContent,
-    ),
-    managerCards.map((card) => card.id),
-  );
-  const actions = [
-    ...managerDoc.querySelectorAll(".card-actions toolbarbutton"),
-  ];
-  assert.equal(actions.length, 3);
-  for (const button of actions) {
-    assert.equal(
-      button.namespaceURI,
-      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+check(
+  "Card browser labels note types and uses Zotero native toolbar actions",
+  () => {
+    assert.deepEqual(
+      [...managerDoc.querySelectorAll(".zettel-row .zid")].map(
+        (el) => el.textContent,
+      ),
+      managerCards.map((card) => "note-kind-" + (card.kind || "zettel")),
     );
-    assert.ok(button.getAttribute("tooltiptext"));
-    assert.ok(button.getAttribute("aria-label"));
-    assert.ok(button.getAttribute("label"));
-    assert.ok(button.querySelector(".toolbarbutton-icon"));
-    assert.equal(button.textContent.trim(), "");
-  }
-  assert.equal(
-    managerDoc.querySelector(".zettel-row.active").getAttribute("aria-current"),
-    "true",
-  );
-});
+    const actions = [
+      ...managerDoc.querySelectorAll(".card-actions toolbarbutton"),
+    ];
+    assert.equal(actions.length, 3);
+    for (const button of actions) {
+      assert.equal(
+        button.namespaceURI,
+        "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+      );
+      assert.ok(button.getAttribute("tooltiptext"));
+      assert.ok(button.getAttribute("aria-label"));
+      assert.ok(button.getAttribute("label"));
+      assert.ok(button.querySelector(".toolbarbutton-icon"));
+      assert.equal(button.textContent.trim(), "");
+    }
+    assert.equal(
+      managerDoc
+        .querySelector(".zettel-row.active")
+        .getAttribute("aria-current"),
+      "true",
+    );
+  },
+);
 managerDoc.getElementById("knowledge-base-preview").scrollTop = 64;
 managerDoc.querySelectorAll(".zettel-row")[1].click();
 await wait();

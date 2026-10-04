@@ -11,6 +11,8 @@ const args = /** @type {import("../../src/modules/api").EditorArgs} */ (
 const imageDraftId =
   args.imageDraftId || `editor-${Date.now()}-${Math.random()}`;
 let zettelId = args.zettelId || null;
+/** @type {import("../../src/modules/db").NoteKind} */
+let noteKind = args.kind || "zettel";
 let dirty = false;
 let loaded = false;
 let closing = false;
@@ -29,6 +31,7 @@ window.knowledgeBaseStopEditor = () => richEditor?.destroy();
 window.knowledgeBaseCardId = zettelId;
 let richBody = null;
 let sourceSelection = { start: 0, end: 0, scroll: 0 };
+let displayedParentItem = null;
 let source = null; // {key, libraryID, title, creatorYear, selectURL}
 let sourcePickMode = "source";
 let referenceRange = null;
@@ -41,12 +44,9 @@ let previewTimer = null;
 let relationsTimer = null;
 let relationsVersion = 0;
 let unsubscribe = null;
-/** @type {"reading" | "visual" | "source"} */
-let editorMode = "source";
 /** @type {"visual" | "source"} */
-let lastEditingMode = "visual";
+let editorMode = "source";
 let modeVersion = 0;
-let readingScroll = 0;
 /** @type {Promise<void> | null} */
 let richEditorInitialization = null;
 /** @type {import("../../src/ui/native-editor").NativeEditorController | null} */
@@ -89,7 +89,6 @@ async function load() {
     api.loc("command-menu"),
   );
   $("knowledge-base-command-search").placeholder = api.loc("command-search");
-  $("knowledge-base-kind").value = args.kind || "zettel";
   setSource(null, false);
   if (parentId) setDirty();
   if (!zettelId && args.prefillTitle) {
@@ -104,12 +103,12 @@ async function load() {
   if (zettelId) {
     const z = await api.getZettel(zettelId);
     if (z) {
-      $("knowledge-base-kind").value = z.kind || "zettel";
+      noteKind = z.kind || "zettel";
       expectedUpdatedAt = z.updated_at;
       $("knowledge-base-editor-title").value = z.title;
       $("knowledge-base-editor-body").value = z.body;
       parentId = (await api.getFamily(zettelId)).parent?.id || null;
-      setStatus(`# ${z.id}`);
+
       if (z.item_key) {
         const s = await api.getItemSummary(z.item_key, z.library_id);
         setSource(
@@ -139,7 +138,7 @@ async function load() {
   if (args.draftId) {
     const draft = await api.getEditorDraft(args.draftId);
     if (!draft) throw new Error(api.loc("editor-draft-missing"));
-    $("knowledge-base-kind").value = draft.kind || "zettel";
+    noteKind = draft.kind || "zettel";
     zettelId = draft.id || null;
     expectedUpdatedAt = draft.expectedUpdatedAt ?? null;
     revision = draft.draftRevision;
@@ -169,12 +168,14 @@ async function load() {
     setStatus(api.loc("editor-draft-restored"));
   }
   window.knowledgeBaseCardId = zettelId;
+  $("knowledge-base-note-kind").textContent = api.loc("note-kind-" + noteKind);
   loaded = true;
   if (dirty && !args.draftId) scheduleSave();
   updatePreview();
   await refreshRelations();
   await refreshHealth();
-  await setEditorMode(noteUnavailable ? "reading" : "visual", false);
+  await setEditorMode("visual", false);
+  await refreshParentItem();
   unsubscribe = api.onDataChange(() => {
     if (editorMode !== "visual") updatePreview();
     run(refreshRelations);
@@ -183,12 +184,9 @@ async function load() {
 }
 
 function applyLocale() {
-  $("knowledge-base-kind").setAttribute("aria-label", api.loc("note-kind"));
-  for (const option of /** @type {HTMLOptionElement[]} */ (
-    Array.from($("knowledge-base-kind").options)
-  ))
-    option.textContent = api.loc("note-kind-" + option.value);
-  $("knowledge-base-parent-label").textContent = api.loc("parent");
+  $("knowledge-base-parent-label").textContent = api.loc(
+    "editor-outline-parent",
+  );
   $("knowledge-base-parent-search").placeholder = api.loc("parent-search");
   $("knowledge-base-parent-root").setAttribute("label", api.loc("root"));
   $("knowledge-base-parent-root").title = api.loc("root");
@@ -248,10 +246,6 @@ function applyLocale() {
   $("knowledge-base-link-search").placeholder = api.loc(
     "editor-link-placeholder",
   );
-  $("knowledge-base-editor-mode").setAttribute(
-    "aria-label",
-    api.loc("editor-mode"),
-  );
   $("knowledge-base-editor-body").placeholder = api.loc(
     "editor-body-placeholder",
   );
@@ -288,10 +282,6 @@ function applyLocale() {
 }
 
 function bindEvents() {
-  $("knowledge-base-kind").addEventListener("change", () => {
-    setDirty();
-    run(refreshMetadata);
-  });
   document
     .getElementById("knowledge-base-editor-format")
     .addEventListener("command", () =>
@@ -303,9 +293,6 @@ function bindEvents() {
       await refreshHealth();
       await setEditorMode("visual", false);
     }),
-  );
-  $("knowledge-base-metadata-edit").addEventListener("command", () =>
-    run(() => api.selectItem(source.key, source.libraryID)),
   );
   document
     .getElementById("knowledge-base-editor-save-copy")
@@ -343,8 +330,7 @@ function bindEvents() {
           editorMode = "source";
         }
         zettelId = null;
-        if ($("knowledge-base-kind").value === "literature")
-          $("knowledge-base-kind").value = "zettel";
+        if (noteKind === "literature") noteKind = "zettel";
         expectedUpdatedAt = null;
         window.knowledgeBaseCardId = null;
         document.getElementById("knowledge-base-editor-save-copy").hidden =
@@ -423,7 +409,7 @@ function bindEvents() {
               "http://www.w3.org/1999/xhtml",
               "button",
             );
-            button.textContent = `${card.id} · ${card.title}`;
+            button.textContent = card.title || api.loc("manager-untitled");
             button.addEventListener("click", () => {
               parentId = card.id;
               list.hidden = true;
@@ -443,14 +429,12 @@ function bindEvents() {
       200,
     );
   });
-  $("knowledge-base-editor-mode").addEventListener("command", () =>
-    run(toggleReading),
-  );
   $("knowledge-base-src-pick").addEventListener("command", () =>
     toggleSourceDrop(),
   );
   $("knowledge-base-src-jump").addEventListener("command", () => {
-    if (source) run(() => api.selectItem(source.key, source.libraryID));
+    const parent = displayedParentItem || source;
+    if (parent) run(() => api.selectItem(parent.key, parent.libraryID));
   });
   $("knowledge-base-src-clear").addEventListener("command", () => {
     setSource(null);
@@ -593,7 +577,7 @@ function bindEvents() {
     );
   }
   $("knowledge-base-editor-preview").addEventListener("click", (ev) => {
-    if (editorMode !== "reading") return;
+    if (!recoveryPending) return;
     const target = /** @type {Element} */ (ev.target);
     if (target.localName === "img") {
       api.openImage(target.getAttribute("src"));
@@ -611,7 +595,7 @@ function bindEvents() {
       save(false);
     } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "e") {
       ev.preventDefault();
-      run(toggleReading);
+      run(toggleMarkdown);
     } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "w") {
       ev.preventDefault();
       run(closeIfClean);
@@ -731,6 +715,7 @@ async function useSelectedSource() {
 
 function setSource(s, markDirty = false) {
   source = s;
+  displayedParentItem = s;
   const display = $("knowledge-base-src-display");
   if (s) {
     display.textContent =
@@ -748,8 +733,9 @@ function setSource(s, markDirty = false) {
     "label",
     api.loc(s ? "editor-src-change" : "editor-src-pick"),
   );
+  display.title = display.textContent;
   if (markDirty) setDirty();
-  if (loaded) run(refreshMetadata);
+  if (loaded) run(refreshParentItem);
 }
 
 /* ---------------- Markdown editing and card links ---------------- */
@@ -793,11 +779,15 @@ async function ensureRichEditor() {
         onOpenLink(href) {
           run(() => api.openLink(href));
         },
+        markdownLabel: api.loc("editor-format-markdown"),
+        onMarkdown() {
+          run(toggleMarkdown);
+        },
         onShortcut(key) {
           if (key === "s") run(() => save(false));
           if (key === "k") openCardPicker();
           if (key === "w") run(closeIfClean);
-          if (key === "e") run(toggleReading);
+          if (key === "e") run(toggleMarkdown);
         },
       });
       const content = api.projectNativeNote(note.html);
@@ -813,7 +803,7 @@ async function ensureRichEditor() {
   await richEditorInitialization;
 }
 
-/** @param {"reading" | "visual" | "source"} mode */
+/** @param {"visual" | "source"} mode */
 async function setEditorMode(mode, focus = true) {
   const version = ++modeVersion;
   const body = $("knowledge-base-editor-body");
@@ -824,7 +814,6 @@ async function setEditorMode(mode, focus = true) {
       end: body.selectionEnd,
       scroll: body.scrollTop,
     };
-  if (editorMode === "reading") readingScroll = preview.scrollTop;
   if (editorMode !== "source" && !recoveryPending && richEditor) {
     await richEditor.flush();
     expectedNoteHTML = richEditor.getSavedHTML();
@@ -864,16 +853,12 @@ async function setEditorMode(mode, focus = true) {
   }
   if (disposed || window.closed || version !== modeVersion) return;
   editorMode = mode;
-  if (mode !== "reading") lastEditingMode = mode;
-  $("knowledge-base-editor-mode").setAttribute(
-    "label",
-    api.loc(mode === "reading" ? "editor-edit" : "editor-browse"),
-  );
   $("knowledge-base-editor-root").setAttribute("data-mode", mode);
   body.hidden = mode !== "source" || noteUnavailable;
   body.readOnly = libraryReadOnly || noteUnavailable;
-  const format = document.getElementById("knowledge-base-editor-format");
-  format.hidden = recoveryPending || mode === "reading";
+  const format = $("knowledge-base-editor-format");
+  format.hidden = recoveryPending || mode === "visual";
+  format.disabled = libraryReadOnly || noteUnavailable;
   format.setAttribute(
     "label",
     api.loc(
@@ -881,13 +866,14 @@ async function setEditorMode(mode, focus = true) {
     ),
   );
   preview.hidden = !recoveryPending;
-  $("knowledge-base-rich-frame").hidden = recoveryPending || mode === "source";
+  $("knowledge-base-rich-frame").hidden =
+    recoveryPending || noteUnavailable || mode === "source";
   $("knowledge-base-editor-title").hidden =
     !recoveryPending && mode !== "source";
   $("knowledge-base-editor-title").readOnly =
-    recoveryPending || libraryReadOnly || mode === "reading";
+    recoveryPending || libraryReadOnly;
   for (const id of ["knowledge-base-command-open", "knowledge-base-link-pick"])
-    document.getElementById(id).hidden = recoveryPending || mode === "reading";
+    document.getElementById(id).hidden = recoveryPending || libraryReadOnly;
   for (const id of [
     "knowledge-base-src-pick",
     "knowledge-base-src-clear",
@@ -898,7 +884,7 @@ async function setEditorMode(mode, focus = true) {
     const button = /** @type {HTMLButtonElement} */ (
       document.getElementById(id)
     );
-    button.disabled = recoveryPending || libraryReadOnly || mode === "reading";
+    button.disabled = recoveryPending || libraryReadOnly;
   }
   closeCommands();
   $("knowledge-base-link-drop").hidden = true;
@@ -909,9 +895,7 @@ async function setEditorMode(mode, focus = true) {
   sourceSearchVersion++;
   parentSearchVersion++;
   updatePreview();
-  if (mode === "reading") {
-    if (focus) richEditor?.focus();
-  } else if (mode === "visual") {
+  if (mode === "visual") {
     if (focus) richEditor?.focus();
   } else {
     if (focus) body.focus();
@@ -920,8 +904,9 @@ async function setEditorMode(mode, focus = true) {
   }
 }
 
-function toggleReading() {
-  return setEditorMode(editorMode === "reading" ? lastEditingMode : "reading");
+function toggleMarkdown() {
+  if (recoveryPending || noteUnavailable || libraryReadOnly) return;
+  return setEditorMode(editorMode === "source" ? "visual" : "source");
 }
 
 function updatePreview() {
@@ -1019,7 +1004,7 @@ async function refreshRelations() {
 }
 
 function insertText(text, range = null) {
-  if (recoveryPending || editorMode === "reading") return;
+  if (recoveryPending || libraryReadOnly) return;
   if (editorMode === "visual" && richEditor) {
     run(async () => richEditor.insertHTML(await api.nativeNoteHTML("", text)));
     richEditor.focus();
@@ -1057,7 +1042,7 @@ async function insertItemReference(item, range) {
 }
 
 function formatSelection(kind) {
-  if (recoveryPending || editorMode === "reading") return;
+  if (recoveryPending || libraryReadOnly) return;
   if (editorMode === "visual" && richEditor) {
     return;
   }
@@ -1106,7 +1091,7 @@ function editKeydown(ev) {
 }
 
 function openCardPicker() {
-  if (editorMode === "reading") return;
+  if (libraryReadOnly) return;
   const body = $("knowledge-base-editor-body");
   linkRange = { start: body.selectionStart, end: body.selectionEnd };
   $("knowledge-base-link-drop").hidden = false;
@@ -1240,9 +1225,7 @@ function insertSelectedHighlights() {
 
 function snapshot() {
   return {
-    kind: /** @type {import("../../src/modules/db").NoteKind} */ (
-      $("knowledge-base-kind").value
-    ),
+    kind: noteKind,
     id: zettelId || undefined,
     title: $("knowledge-base-editor-title").value.trim(),
     body: $("knowledge-base-editor-body").value,
@@ -1380,6 +1363,7 @@ async function save(closeAfter) {
       } else setStatus(api.loc("editor-saved"));
       if (typeof args.onSaved === "function") args.onSaved(zettelId);
       run(refreshRelations);
+      run(refreshParentItem);
       return true;
     } catch (error) {
       reportSaveError(error);
@@ -1676,60 +1660,34 @@ function commandKeydown(ev) {
   return true;
 }
 
-async function refreshMetadata() {
-  const box = document.getElementById("knowledge-base-metadata");
+async function refreshParentItem() {
   const key = source?.key;
   const library = source?.libraryID;
-  box.hidden = $("knowledge-base-kind").value !== "literature" || !key;
-  if (box.hidden) return;
-  const metadata = await api.getItemMetadata(key, library);
-  if (source?.key !== key || source?.libraryID !== library || disposed) return;
-  const fields = document.getElementById("knowledge-base-metadata-fields");
-  fields.replaceChildren();
-  document.getElementById("knowledge-base-metadata-summary").textContent =
-    api.loc("metadata-title") +
-    (metadata?.creatorYear ? ` · ${metadata.creatorYear}` : "");
-  const edit = $("knowledge-base-metadata-edit");
-  edit.setAttribute("label", api.loc("metadata-edit"));
-  edit.disabled = !metadata;
-  if (!metadata) {
-    fields.textContent = api.loc("manager-source-missing");
-    return;
+  let summary = key ? await api.getItemSummary(key, library) : null;
+  if (!key && nativeNoteID) {
+    const note = await Zotero.Items.getAsync(nativeNoteID);
+    if (note?.parentItemID) {
+      const parent = await Zotero.Items.getAsync(note.parentItemID);
+      summary = parent
+        ? await api.getItemSummary(parent.key, parent.libraryID)
+        : null;
+    }
   }
-  source = metadata;
-  $("knowledge-base-src-display").textContent = metadata.title;
-  for (const entry of [
-    ...metadata.fields,
-    {
-      key: "citationKey",
-      label: api.loc("metadata-citation-key"),
-      value: metadata.citationKey,
-    },
-    {
-      key: "tags",
-      label: api.loc("metadata-tags"),
-      value: metadata.tags.join(", "),
-    },
-  ]) {
-    if (!entry.value) continue;
-    const label = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "dt",
-    );
-    const value = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "dd",
-    );
-    label.textContent = entry.label;
-    value.textContent = entry.value;
-    fields.append(label, value);
+  if (source?.key !== key || source?.libraryID !== library || disposed) return;
+  if (summary) {
+    displayedParentItem = summary;
+    $("knowledge-base-src-jump").hidden = false;
+    const display = $("knowledge-base-src-display");
+    display.textContent = summary.title;
+    display.title = summary.title;
+    display.classList.remove("placeholder");
   }
 }
 
 async function refreshHealth() {
   const version = ++healthVersion;
   if (!zettelId) {
-    await refreshMetadata();
+    await refreshParentItem();
     return;
   }
   const health = await api.getNoteHealth(zettelId);
@@ -1754,7 +1712,6 @@ async function refreshHealth() {
   restore.hidden = health.note !== "trashed" && health.source !== "trashed";
   restore.disabled = !health.editable;
   $("knowledge-base-editor-save").disabled = unavailable || libraryReadOnly;
-  $("knowledge-base-kind").disabled = unavailable || libraryReadOnly;
   if (unavailable && !noteUnavailable) {
     clearTimeout(autosaveTimer);
     if (dirty) await persistDraft();
@@ -1769,7 +1726,7 @@ async function refreshHealth() {
     }
     document.getElementById("knowledge-base-editor-save-copy").hidden =
       !health.editable;
-    await setEditorMode("reading", false);
+    await setEditorMode("visual", false);
   } else if (!unavailable && noteUnavailable) {
     noteUnavailable = false;
     recoveryPending = !!dirty;
@@ -1777,5 +1734,5 @@ async function refreshHealth() {
     expectedNoteHTML = null;
     document.getElementById("knowledge-base-editor-save-copy").hidden = true;
   } else if (richEditor && libraryReadOnly) await richEditor.setReadOnly(true);
-  await refreshMetadata();
+  await refreshParentItem();
 }

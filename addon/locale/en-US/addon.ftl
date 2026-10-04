@@ -46,10 +46,10 @@ manager-confirm-delete = Delete "{ $title }"? Links to this note will remain but
 editor-title-new = New Note
 editor-title-edit = Edit Note
 editor-title-placeholder = Note title
-editor-source-label = Source:
-editor-src-none = No source item linked
-editor-src-pick = Choose source
-editor-src-change = Change source
+editor-source-label = Parent item:
+editor-src-none = No parent item selected
+editor-src-pick = Choose parent item
+editor-src-change = Change parent item
 editor-src-jump = Open item
 editor-src-anno = Insert highlights
 editor-src-placeholder = Search title or author…
@@ -224,7 +224,7 @@ manager-forward = Forward
 manager-drafts = Recovery drafts
 manager-restore-draft = Open draft
 editor-save-copy = Save as new card
-editor-remove-source = Remove source
+editor-remove-source = Clear parent item
 
 editor-note-missing = The linked Zotero note is missing or in the trash. Restore it in Zotero before editing this card.
 
@@ -251,15 +251,9 @@ health-open-cache = Open cached note
 health-read-only = This library is read-only.
 editor-format-native = Native editor
 editor-format-markdown = Markdown
-metadata-title = Source metadata
-metadata-edit = Edit in Zotero
-metadata-citation-key = Citation key
-metadata-tags = Tags
 graph-outline = Hierarchy
 graph-references = References
 graph-sources = Sources
-
-metadata-creators = Creators
 
 preview-image-missing = Image unavailable
 
@@ -269,3 +263,5 @@ native-markdown-conflict = This note changed elsewhere. Your draft is kept.
 native-markdown-failed = Could not save. Your draft is kept.
 native-markdown-draft = Draft restored
 native-markdown-close = Save changes before closing?
+
+editor-outline-parent = Parent note

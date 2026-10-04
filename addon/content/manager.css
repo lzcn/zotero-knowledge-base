@@ -1732,10 +1732,6 @@ summary {
 #knowledge-base-editor-toolbar {
   flex-wrap: wrap;
 }
-#knowledge-base-editor-mode {
-  min-width: 72px;
-  color: var(--fg);
-}
 
 #knowledge-base-editor-relations:not([open]) {
   overflow: hidden;
@@ -1947,31 +1943,25 @@ summary {
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
-#knowledge-base-metadata {
-  margin: 0 24px;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 12px;
+#knowledge-base-note-kind {
+  font-size: 11px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+}
+#knowledge-base-src-display {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#knowledge-base-editor-toolbar {
+  flex-wrap: nowrap;
+}
+#knowledge-base-editor-toolbar > button,
+#knowledge-base-editor-toolbar > toolbarbutton,
+#knowledge-base-editor-toolbar > .lbl {
   flex-shrink: 0;
-}
-#knowledge-base-metadata summary {
-  cursor: pointer;
-  color: var(--muted);
-}
-#knowledge-base-metadata-fields {
-  display: grid;
-  grid-template-columns: 100px minmax(0, 1fr);
-  gap: 6px 14px;
-  margin: 12px 0;
-  max-height: 180px;
-  overflow-y: auto;
-}
-#knowledge-base-metadata-fields dt {
-  color: var(--muted);
-}
-#knowledge-base-metadata-fields dd {
-  margin: 0;
-  overflow-wrap: anywhere;
 }
 @media (max-width: 640px) {
   .card-connections,

@@ -336,8 +336,7 @@ const refresh = wrap(async function () {
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
     id.className = "zid muted";
-    id.textContent =
-      z.kind && z.kind !== "zettel" ? api.loc("note-kind-" + z.kind) : z.id;
+    id.textContent = api.loc("note-kind-" + (z.kind || "zettel"));
     id.title = z.id;
     li.appendChild(id);
 
@@ -454,8 +453,9 @@ const renderDetail = wrap(async function (id) {
   $("knowledge-base-detail-empty").hidden = true;
   $("knowledge-base-detail").hidden = false;
 
-  $("knowledge-base-detail-id").textContent =
-    api.loc("note-kind-" + (z.kind || "zettel")) + " · " + z.id;
+  $("knowledge-base-detail-id").textContent = api.loc(
+    "note-kind-" + (z.kind || "zettel"),
+  );
   $("knowledge-base-detail-title").title = z.id;
   $("knowledge-base-detail-title").textContent =
     z.title || api.loc("manager-untitled");

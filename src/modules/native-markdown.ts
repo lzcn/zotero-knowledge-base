@@ -1,3 +1,4 @@
+import { attachMarkdownMenu } from "../ui/native-markdown-menu";
 import { getString } from "../utils/locale";
 import { getMarkdownDocument, markdownDocumentHTML } from "./native-notes";
 import {
@@ -83,6 +84,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     const container = frame.parentElement!;
     const bar = doc.createXULElement("hbox") as HTMLElement;
     bar.classList.add("knowledge-base-native-markdown");
+    bar.hidden = true;
     bar.setAttribute("align", "center");
     bar.style.cssText = "padding: 3px 6px; gap: 6px;";
     const toggle = doc.createXULElement("button") as HTMLElement & {
@@ -243,6 +245,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           instance._disableSaving = previousDisableSaving;
           source.hidden = true;
           frame.hidden = false;
+          bar.hidden = true;
           toggle.setAttribute("label", "Markdown");
           status.textContent = "";
           reload.hidden = true;
@@ -260,6 +263,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           if (draft?.expectedNoteHTML) original = draft.expectedNoteHTML;
           instance._disableSaving = true;
           sourceMode = true;
+          bar.hidden = false;
           frame.hidden = true;
           source.hidden = false;
           toggle.setAttribute("label", getString("editor-format-native"));
@@ -369,6 +373,13 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       controller.dispose();
       controllers.delete(instance);
     };
+    const removeMarkdownMenu = attachMarkdownMenu(
+      instance._iframeWindow,
+      getString("editor-format-markdown"),
+      () => {
+        void changeMode();
+      },
+    );
     const controller: Controller = {
       stop() {
         if (closed) return;
@@ -397,6 +408,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           instance.applyIncrementalUpdate = nativeUpdate;
         instance._disableSaving = previousDisableSaving;
         frame.hidden = false;
+        removeMarkdownMenu();
         bar.remove();
         source.remove();
         win.removeEventListener("keydown", keydown, true);

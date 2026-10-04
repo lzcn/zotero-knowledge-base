@@ -209,45 +209,6 @@ export async function getItemSummary(
   return summary(item);
 }
 
-export async function getItemMetadata(key: string, libraryID: number | null) {
-  const item = libraryID
-    ? await Zotero.Items.getByLibraryAndKeyAsync(libraryID, key)
-    : null;
-  if (!item || !item.isRegularItem() || item.isInTrash()) return null;
-  await Zotero.Items.loadDataTypes([item], ["itemData", "creators", "tags"]);
-  const fields = [
-    "title",
-    "date",
-    "publicationTitle",
-    "conferenceName",
-    "publisher",
-    "DOI",
-    "url",
-  ]
-    .map((key) => ({
-      key,
-      label: Zotero.ItemFields.getLocalizedString(key),
-      value: String(item.getField(key, false, true) || ""),
-    }))
-    .filter((field) => field.value);
-  fields.splice(1, 0, {
-    key: "creator",
-    label: getString("metadata-creators"),
-    value: item
-      .getCreators()
-      .map((creator) =>
-        [creator.firstName, creator.lastName].filter(Boolean).join(" "),
-      )
-      .join("; "),
-  });
-  return {
-    ...summary(item),
-    fields,
-    tags: item.getTags().map((tag) => tag.tag),
-    editable: (Zotero.Libraries.get(item.libraryID) || null)?.editable ?? false,
-  };
-}
-
 /** Page label of an annotation, falling back to its 1-based page index. */
 export function annotationPage(ann: Zotero.Item): string {
   const label = (ann.annotationPageLabel || "").trim();

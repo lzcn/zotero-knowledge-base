@@ -50,17 +50,9 @@ type="text/css"?>
       <html:span id="knowledge-base-editor-health-text" />
       <button id="knowledge-base-editor-restore" />
     </html:div>
-    <html:details id="knowledge-base-metadata" hidden="hidden">
-      <html:summary id="knowledge-base-metadata-summary" />
-      <html:dl id="knowledge-base-metadata-fields" />
-      <button id="knowledge-base-metadata-edit" />
-    </html:details>
     <html:input id="knowledge-base-editor-title" type="text" />
     <html:div class="parent-control">
-      <html:select id="knowledge-base-kind"
-        ><html:option value="literature" /><html:option
-          value="zettel" /><html:option value="thinking"
-      /></html:select>
+      <html:span id="knowledge-base-note-kind" class="muted" />
       <html:label
         id="knowledge-base-parent-label"
         for="knowledge-base-parent-search"
@@ -90,7 +82,6 @@ type="text/css"?>
       <button id="knowledge-base-src-insert" disabled="disabled"></button>
       <html:div class="spacer" />
       <button id="knowledge-base-editor-format" />
-      <button id="knowledge-base-editor-mode" />
     </html:div>
     <html:div
       id="knowledge-base-command-menu"

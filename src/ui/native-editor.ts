@@ -1,3 +1,5 @@
+import { attachMarkdownMenu } from "./native-markdown-menu";
+
 /** Thin adapter around Zotero's editor; the host owns editing and note storage. */
 export interface NativeEditorInstance {
   instanceID: string;
@@ -27,6 +29,8 @@ export interface NativeEditorOptions {
   onSavedHTML(html: string): void;
   onOpenLink(href: string): void;
   onShortcut(key: string): void;
+  markdownLabel: string;
+  onMarkdown(): void;
 }
 export interface NativeEditorController {
   getHTML(): string;
@@ -50,6 +54,7 @@ async function create(
   let readOnly = !!options.readOnly;
   let lastHTML = options.item.getNote();
   let destroyed = false;
+  let removeMarkdownMenu = () => {};
   const ownedInstances = new Set<string>();
   const observerID = Zotero.Notifier.registerObserver(
     {
@@ -110,6 +115,7 @@ async function create(
     if (event.key === "Escape") event.stopPropagation();
   };
   const detach = () => {
+    removeMarkdownMenu();
     if (!frame) return;
     frame.document.removeEventListener("input", input, true);
     frame.document.removeEventListener("keydown", keydown, true);
@@ -131,6 +137,12 @@ async function create(
     `;
     frame.document.querySelector("style[data-knowledge-base]")?.remove();
     frame.document.head.appendChild(style);
+    if (!readOnly)
+      removeMarkdownMenu = attachMarkdownMenu(
+        frame,
+        options.markdownLabel,
+        options.onMarkdown,
+      );
     frame.document.addEventListener("input", input, true);
     frame.document.addEventListener("keydown", keydown, true);
     frame.document.addEventListener("keydown", stopEscape);

@@ -49,9 +49,9 @@ declare global {
 }
 
 export interface EditorElements {
-  "knowledge-base-metadata-edit": HTMLButtonElement;
   "knowledge-base-editor-restore": HTMLButtonElement;
-  "knowledge-base-kind": HTMLSelectElement;
+  "knowledge-base-editor-format": HTMLButtonElement;
+  "knowledge-base-note-kind": HTMLSpanElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;
   "knowledge-base-command-menu": HTMLDivElement;
@@ -83,7 +83,6 @@ export interface EditorElements {
   "knowledge-base-url-insert": HTMLElementTagNameMap["button"];
   "knowledge-base-image-insert": HTMLElementTagNameMap["button"];
   "knowledge-base-src-insert": HTMLElementTagNameMap["button"];
-  "knowledge-base-editor-mode": HTMLButtonElement;
   "knowledge-base-link-drop": HTMLElementTagNameMap["div"];
   "knowledge-base-link-search": HTMLElementTagNameMap["input"];
   "knowledge-base-link-status": HTMLElementTagNameMap["div"];
