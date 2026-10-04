@@ -72,7 +72,7 @@ export interface EditorElements {
   "knowledge-base-url-insert": HTMLElementTagNameMap["button"];
   "knowledge-base-image-insert": HTMLElementTagNameMap["button"];
   "knowledge-base-src-insert": HTMLElementTagNameMap["button"];
-  "knowledge-base-editor-mode": XULMenuListElement;
+  "knowledge-base-editor-mode": HTMLButtonElement;
   "knowledge-base-link-drop": HTMLElementTagNameMap["div"];
   "knowledge-base-link-search": HTMLElementTagNameMap["input"];
   "knowledge-base-link-status": HTMLElementTagNameMap["div"];

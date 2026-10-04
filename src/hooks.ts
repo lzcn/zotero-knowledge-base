@@ -8,7 +8,6 @@ import {
 } from "./modules/native-notes";
 import { rebuildCounts } from "./modules/zettel";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
-import { registerReaderUI, unregisterReaderUI } from "./modules/reader";
 import {
   initAssets,
   closeAssets,
@@ -73,7 +72,6 @@ async function start(token: number): Promise<void> {
       ["cleanupUnusedImages", cleanupImagesAfterChange],
       ["registerPreferences", registerPreferences],
       ["registerItemPaneUI", registerItemPaneUI],
-      ["registerReaderUI", registerReaderUI],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -190,7 +188,6 @@ async function releaseResources(): Promise<void> {
     },
     unregisterPreferences,
     unregisterItemPaneUI,
-    unregisterReaderUI,
     closeNativeNotes,
     closeAssets,
     () => ztoolkit.unregisterAll(),

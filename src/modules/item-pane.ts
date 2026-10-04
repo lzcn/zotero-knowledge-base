@@ -99,13 +99,7 @@ function renderSection(body: HTMLElement, item?: Zotero.Item): void {
 }
 
 async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
-  const [zettels, highlights] = await Promise.all([
-    listByItem(item.key),
-    addon.api.getHighlights(item.key, item.libraryID).catch((error: Error) => {
-      Zotero.logError(error);
-      return [];
-    }),
-  ]);
+  const zettels = await listByItem(item.key);
   if (
     !container.isConnected ||
     container.parentElement?.dataset.itemKey !== item.key
@@ -154,26 +148,6 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   );
   footer.appendChild(newBtn);
 
-  // Batch import only makes sense when the item actually has highlights.
-  const pending = highlights.filter((h) => !h.cards).length;
-  if (highlights.length) {
-    const importBtn = el(footer, "button");
-    importBtn.className = "knowledge-base-mini-btn";
-    importBtn.textContent = pending
-      ? getString("section-import-highlights", { args: { count: pending } })
-      : getString("section-import-highlights-all-done");
-    importBtn.title = getString("section-import-highlights-tip", {
-      args: { total: highlights.length },
-    });
-    importBtn.addEventListener("click", () =>
-      addon.api.openAnnotationPicker({
-        itemKey: item.key,
-        libraryID: item.libraryID,
-        itemTitle: item.getField("title", false, true) || item.key,
-      }),
-    );
-    footer.appendChild(importBtn);
-  }
   container.appendChild(footer);
 }
 

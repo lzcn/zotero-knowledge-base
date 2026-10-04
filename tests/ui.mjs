@@ -582,10 +582,14 @@ async function editor(args = {}, overrides = {}) {
     editorScript + "\nwindow.__editorEval = (expression) => eval(expression);",
   );
   await dom.window.__editorEval("load()");
-  const initialMode = dom.window.document.getElementById(
-    "knowledge-base-editor-mode",
-  ).value;
-  await dom.window.__editorEval('setEditorMode("source", false)');
+  const initialMode =
+    dom.window.document
+      .getElementById("knowledge-base-editor-mode")
+      .getAttribute("label") === "editor-browse"
+      ? "visual"
+      : "reading";
+  if (!args.draftId)
+    await dom.window.__editorEval('setEditorMode("source", false)');
   return {
     initialMode,
     win: dom.window,
@@ -823,13 +827,16 @@ check(
 const nativeClick = (element, win) =>
   element.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
 async function chooseMode(fixture, mode) {
-  fixture.$("knowledge-base-editor-mode").value = mode;
-  fixture
-    .$("knowledge-base-editor-mode")
-    .dispatchEvent(new fixture.win.Event("command", { bubbles: true }));
-  await wait();
+  await fixture.win.__editorEval(`setEditorMode("${mode}", false)`);
   await wait();
 }
+check("The UI exposes only one native browse/edit toggle", () => {
+  assert.equal(ed.$("knowledge-base-editor-mode").localName, "button");
+  assert.equal(
+    ed.$("knowledge-base-editor-mode").querySelectorAll("menuitem").length,
+    0,
+  );
+});
 ed.$("knowledge-base-editor-body").value = sample;
 ed.$("knowledge-base-editor-body").dispatchEvent(
   new ed.win.Event("input", { bubbles: true }),
@@ -848,6 +855,59 @@ check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
   assert.equal(ed.$("knowledge-base-editor-title").hidden, true);
   assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+});
+check(
+  "Native insertion uses host formatting instead of offering Markdown commands",
+  () => {
+    ed.$("knowledge-base-command-open").dispatchEvent(
+      new ed.win.Event("command", { bubbles: true }),
+    );
+    const labels = [
+      ...ed.$("knowledge-base-command-list").querySelectorAll("button"),
+    ].map((button) => button.textContent);
+    assert.ok(
+      labels.some((label) => label.includes("editor-reference-insert")),
+    );
+    assert.ok(!labels.some((label) => label.includes("command-heading")));
+  },
+);
+const recovery = await editor(
+  { draftId: "old-draft" },
+  {
+    getEditorDraft: async () => ({
+      draftId: "old-draft",
+      draftRevision: 1,
+      title: "Recovered title",
+      body: "Recovered **body**",
+      sourceMode: true,
+    }),
+  },
+);
+check(
+  "A retained Markdown draft opens in a read-only recovery preview without a format selector",
+  () => {
+    assert.equal(recovery.initialMode, "visual");
+    assert.equal(recovery.$("knowledge-base-editor-body").hidden, true);
+    assert.equal(recovery.$("knowledge-base-editor-preview").hidden, false);
+    assert.equal(
+      recovery.$("knowledge-base-editor-preview").querySelector("strong")
+        .textContent,
+      "body",
+    );
+    assert.equal(recovery.$("knowledge-base-rich-frame").mode, "view");
+    assert.equal(recovery.saved(), undefined);
+  },
+);
+recovery
+  .$("knowledge-base-editor-save")
+  .dispatchEvent(new recovery.win.Event("command", { bubbles: true }));
+await wait();
+await wait();
+check("Explicitly saving a recovery draft returns to native editing", () => {
+  assert.equal(recovery.saved().sourceMode, true);
+  assert.equal(recovery.$("knowledge-base-editor-preview").hidden, true);
+  assert.equal(recovery.$("knowledge-base-rich-frame").hidden, false);
+  assert.equal(recovery.$("knowledge-base-rich-frame").mode, "edit");
 });
 check("Native math projects to Markdown without losing LaTeX", () => {
   assert.equal(

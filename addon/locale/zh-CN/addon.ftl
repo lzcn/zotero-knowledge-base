@@ -197,7 +197,7 @@ editor-close-cancel = 取消
 editor-save-close = 保存并关闭
 editor-draft-close = 保留草稿并关闭
 citation-unresolved = 引用键 { $key } 未对应唯一条目。请检查引用键，或使用条目直链。
-editor-draft-restored = 已恢复草稿，请检查后保存。
+editor-draft-restored = 已恢复草稿。点击保存，将其应用到笔记。
 editor-draft-missing = 此草稿已保存或不可用。
 manager-back = 后退
 manager-forward = 前进
@@ -207,3 +207,6 @@ editor-save-copy = 另存为新卡片
 editor-remove-source = 移除来源
 
 editor-note-missing = 关联的 Zotero 笔记不存在或已移入回收站。请先在 Zotero 中恢复笔记。
+
+editor-browse = 浏览
+editor-edit = 编辑

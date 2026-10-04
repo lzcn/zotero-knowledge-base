@@ -125,6 +125,7 @@ test("two windows retain independent resources; duplicate registration and shutd
   try {
     await Promise.all([h.hooks.onStartup(), h.hooks.onStartup()]);
     assert.equal(h.state.calls.filter((name) => name === "initDB").length, 1);
+    assert.ok(!h.state.calls.includes("registerReader"));
     for (const dom of h.doms)
       assert.equal(dom.window.document.querySelectorAll("menuitem").length, 2);
     await h.hooks.onMainWindowLoad(h.doms[1].window);

@@ -82,10 +82,15 @@ function check(label, fn) {
 state.cards = [{ id: "card-a", title: "A linked idea" }];
 state.section.onRender({ body, item: item("A") });
 await settle();
-check("Linked cards still render when annotation retrieval fails", () => {
-  assert.equal(body.querySelector("li").textContent, "A linked idea");
-  assert.equal(body.querySelector("button").textContent, "section-new");
-});
+check(
+  "The source pane shows cards without requesting or importing highlights",
+  () => {
+    assert.equal(body.querySelector("li").textContent, "A linked idea");
+    assert.equal(body.querySelector("button").textContent, "section-new");
+    assert.equal(body.querySelectorAll("button").length, 1);
+    assert.equal(state.errors.length, 0);
+  },
+);
 body.querySelector("li").click();
 check("A source card opens its actual editor", () =>
   assert.deepEqual(state.opens[0], { zettelId: "card-a" }),

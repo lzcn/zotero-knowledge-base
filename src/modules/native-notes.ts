@@ -18,6 +18,7 @@ export interface NativeCardInput extends SaveCardInput {
   nativeHTML?: string;
   expectedNoteHTML?: string;
   sourceMode?: boolean;
+  restoreDraft?: boolean;
 }
 
 const activeNotes = new Set<number>();
@@ -208,24 +209,97 @@ async function mappedNote(id: string): Promise<Zotero.Item | null> {
   return note;
 }
 
+/** Keep note identity and library stable when its primary source changes. */
+async function organizeNativeNote(
+  note: Zotero.Item,
+  input: SaveCardInput,
+): Promise<void> {
+  const library = Zotero.Libraries.get(note.libraryID);
+  if (!library || !library.editable) return;
+  await Zotero.Items.loadDataTypes([note], ["collections"]);
+  let source = input.itemKey
+    ? await Zotero.Items.getByLibraryAndKeyAsync(
+        input.libraryID ?? note.libraryID,
+        input.itemKey,
+      )
+    : null;
+  if (source && source.deleted) source = null;
+  if (source && !source.isRegularItem() && source.parentItemID)
+    source = await Zotero.Items.getAsync(source.parentItemID);
+  const parent =
+    source &&
+    source.isRegularItem() &&
+    !source.deleted &&
+    source.libraryID === note.libraryID
+      ? source.id
+      : false;
+  await Zotero.DB.executeTransaction(async () => {
+    if (parent) {
+      if (note.parentItemID === parent) return;
+      // Zotero otherwise moves a standalone note's collections onto its parent.
+      if (note.getCollections().length) {
+        note.setCollections([]);
+        await note.save();
+      }
+      note.parentItemID = parent;
+      await note.save();
+      return;
+    }
+    const pref = `extensions.zotero.knowledge-base.notes.collection.${note.libraryID}`;
+    const key = Zotero.Prefs.get(pref, true);
+    let collection =
+      typeof key === "string"
+        ? await Zotero.Collections.getByLibraryAndKeyAsync(note.libraryID, key)
+        : null;
+    if (!collection || collection.deleted) {
+      collection =
+        Zotero.Collections.getByLibrary(note.libraryID).find(
+          (entry) => entry.name === "Knowledge Base" && !entry.deleted,
+        ) || null;
+      if (!collection) {
+        collection = new Zotero.Collection({
+          libraryID: note.libraryID,
+          name: "Knowledge Base",
+        });
+        await collection.save();
+      }
+      Zotero.Prefs.set(pref, collection.key, true);
+    }
+    const changed = !!note.parentItemID || !note.inCollection(collection.id);
+    if (!changed) return;
+    note.parentItemID = false;
+    note.addToCollection(collection.id);
+    await note.save();
+  });
+}
+
 /** Migration is lazy; the original Markdown is never replaced in the backup. */
 export async function acquireNativeNote(
-  input: SaveCardInput,
+  input: NativeCardInput,
 ): Promise<{ noteID: number; html: string }> {
   if (input.id && !(await getZettel(input.id)))
     throw new Error("CARD_CONFLICT");
   let note = input.id ? await mappedNote(input.id) : null;
+  if (input.noteID) {
+    if (note && note.id !== input.noteID)
+      throw new Error("CARD_CONFLICT: note mapping changed");
+    note = note || (await Zotero.Items.getAsync(input.noteID)) || null;
+    if (!note || !note.isNote() || note.deleted)
+      throw new Error(getString("editor-note-missing"));
+    await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
+  }
+  const original = input.id ? await getZettel(input.id) : null;
   if (!note) {
     note = new Zotero.Item("note");
     note.libraryID = Zotero.Libraries.userLibraryID;
-    const original = input.id ? await getZettel(input.id) : null;
     note.setNote(
       await nativeNoteHTML(
         original?.title ?? input.title,
         original?.body ?? input.body,
       ),
     );
-    await note.saveTx();
+    // Avoid opening a second native editor while legacy images are imported.
+    await note.saveTx({ skipSelect: true });
     if (input.id)
       await exec(
         "INSERT INTO card_notes (card_id, note_key, library_id, original_body) VALUES (?, ?, ?, ?)",
@@ -233,6 +307,21 @@ export async function acquireNativeNote(
       );
   }
   activeNotes.add(note.id);
+  try {
+    await organizeNativeNote(
+      note,
+      original
+        ? {
+            ...input,
+            itemKey: original.item_key,
+            libraryID: original.library_id,
+          }
+        : input,
+    );
+  } catch (error) {
+    activeNotes.delete(note.id);
+    throw error;
+  }
   return { noteID: note.id, html: note.getNote() };
 }
 
@@ -251,6 +340,17 @@ export async function saveNativeCard(
   const note = await Zotero.Items.getAsync(input.noteID!);
   if (!note || !note.isNote() || note.deleted)
     throw new Error(getString("editor-note-missing"));
+  const mapping = await getOne<NoteMapping>(
+    "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
+    [note.key, note.libraryID],
+  );
+  if (mapping && mapping.card_id !== input.id)
+    throw new Error("CARD_CONFLICT: note already belongs to another card");
+  if (input.id) {
+    const mapped = await mappedNote(input.id);
+    if (mapped && mapped.id !== note.id)
+      throw new Error("CARD_CONFLICT: note mapping changed");
+  }
   const previous = input.id ? await getZettel(input.id) : null;
   if (
     input.expectedUpdatedAt !== undefined &&
@@ -258,23 +358,28 @@ export async function saveNativeCard(
   )
     throw new Error("CARD_CONFLICT: card changed");
   const preparedHTML = input.sourceMode
-    ? await nativeNoteHTML(input.title, input.body)
+    ? input.restoreDraft && input.nativeHTML
+      ? input.nativeHTML
+      : await nativeNoteHTML(input.title, input.body)
     : null;
   const projection = projectNativeNote(preparedHTML ?? note.getNote());
   const result = await saveEditorCard(
     { ...input, ...projection, draftRevision: undefined },
     async () => {
-      if (preparedHTML === null) return;
       await Zotero.DB.executeTransaction(async () => {
         if (
+          preparedHTML !== null &&
           input.expectedNoteHTML !== note.getNote() &&
           JSON.stringify(projectNativeNote(input.expectedNoteHTML || "")) !==
             JSON.stringify(projectNativeNote(note.getNote()))
         )
           throw new Error("CARD_CONFLICT: note changed");
-        note.setNote(preparedHTML);
-        await note.save();
+        if (preparedHTML !== null) {
+          note.setNote(preparedHTML);
+          await note.save();
+        }
       });
+      await organizeNativeNote(note, input);
     },
   );
   const html = note.getNote();
@@ -345,9 +450,11 @@ export async function initNativeNotes(): Promise<void> {
     {
       notify(event: string, _type: string, ids: number[] | string[]) {
         if (stopping || !["modify", "add"].includes(event)) return;
+        const eligibleIDs = ids.filter((id) => !activeNotes.has(Number(id)));
+        if (!eligibleIDs.length) return;
         pending = pending
           .then(async () => {
-            for (const rawID of ids) {
+            for (const rawID of eligibleIDs) {
               const id = Number(rawID);
               if (activeNotes.has(id)) continue;
               const note = await Zotero.Items.getAsync(id);
@@ -366,7 +473,22 @@ export async function initNativeNotes(): Promise<void> {
       row.library_id,
       row.note_key,
     );
-    if (note) await refreshNote(note);
+    if (note && !note.deleted) {
+      activeNotes.add(note.id);
+      try {
+        const card = await getZettel(row.card_id);
+        if (card)
+          await organizeNativeNote(note, {
+            title: card.title,
+            body: card.body,
+            itemKey: card.item_key,
+            libraryID: card.library_id,
+          });
+        await refreshNote(note);
+      } finally {
+        activeNotes.delete(note.id);
+      }
+    }
   }
 }
 
@@ -439,15 +561,16 @@ export async function duplicateNativeNote(
   noteID: number,
   title: string,
   body: string,
+  html?: string,
 ): Promise<{ noteID: number; html: string }> {
   const previous = await Zotero.Items.getAsync(noteID);
   if (!previous?.isNote() || previous.deleted)
     throw new Error(getString("editor-note-missing"));
   const note = new Zotero.Item("note");
   note.libraryID = previous.libraryID;
-  note.setNote(await nativeNoteHTML(title, body));
+  note.setNote(html ?? (await nativeNoteHTML(title, body)));
   await Zotero.DB.executeTransaction(async () => {
-    await note.save();
+    await note.save({ skipSelect: true });
     await Zotero.Notes.copyEmbeddedImages(previous, note);
   });
   activeNotes.add(note.id);

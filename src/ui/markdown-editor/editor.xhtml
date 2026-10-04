@@ -1,7 +1,6 @@
 <?xml version="1.0"?>
 <?xml-stylesheet href="chrome://global/skin/" type="text/css"?> <?xml-stylesheet
 href="chrome://zotero-platform/content/zotero.css" type="text/css"?>
-<?xml-stylesheet href="chrome://zotero/skin/zotero.css" type="text/css"?>
 <?xml-stylesheet
 href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
 type="text/css"?>
@@ -17,10 +16,6 @@ type="text/css"?>
   <script src="chrome://zotero/content/include.js" />
   <script src="chrome://knowledge-base/content/markdown.js" />
   <script src="chrome://knowledge-base/content/editor-formatting.js" />
-  <script src="chrome://global/content/globalOverlay.js" />
-  <script src="chrome://zotero/content/editMenuOverlay.js" />
-  <script src="chrome://zotero/content/customElements.js" />
-  <script src="chrome://knowledge-base/content/native-editor.js?v=__styleVersion__" />
   <script src="chrome://knowledge-base/content/editor.js" />
   <html:div id="knowledge-base-editor-root">
     <html:div id="knowledge-base-editor-toolbar">
@@ -29,11 +24,11 @@ type="text/css"?>
       <button id="knowledge-base-src-pick"></button>
       <button id="knowledge-base-src-jump" hidden="hidden"></button>
       <button id="knowledge-base-src-anno" hidden="hidden"></button>
-      <toolbarbutton
+      <button
         id="knowledge-base-src-clear"
-        class="kb-native-tool"
+        class="icon"
         hidden="hidden"
-      />
+      ></button>
     </html:div>
     <html:div id="knowledge-base-src-drop" hidden="hidden">
       <html:input id="knowledge-base-src-search" type="search" />
@@ -71,7 +66,13 @@ type="text/css"?>
       <button id="knowledge-base-image-insert" />
       <button id="knowledge-base-src-insert" disabled="disabled"></button>
       <html:div class="spacer" />
-      <button id="knowledge-base-editor-mode" />
+      <menulist id="knowledge-base-editor-mode" native="true" value="visual">
+        <menupopup>
+          <menuitem id="knowledge-base-mode-reading" value="reading" />
+          <menuitem id="knowledge-base-mode-visual" value="visual" />
+          <menuitem id="knowledge-base-mode-source" value="source" />
+        </menupopup>
+      </menulist>
     </html:div>
     <html:div
       id="knowledge-base-command-menu"
@@ -100,7 +101,11 @@ type="text/css"?>
           tabindex="0"
           hidden="hidden"
         />
-        <note-editor id="knowledge-base-rich-frame" flex="1" hidden="hidden" />
+        <html:iframe
+          id="knowledge-base-rich-frame"
+          src="chrome://knowledge-base/content/rich-editor.html"
+          hidden="hidden"
+        />
       </html:div>
       <html:details id="knowledge-base-editor-relations">
         <html:summary id="knowledge-base-editor-relations-summary" />

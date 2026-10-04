@@ -223,7 +223,7 @@ editor-close-cancel = Cancel
 editor-save-close = Save and close
 editor-draft-close = Keep draft and close
 citation-unresolved = No unique item matches citation key { $key }. Check the key or use a direct item link.
-editor-draft-restored = Draft restored. Review it, then save.
+editor-draft-restored = Recovered draft. Save to apply it to the note.
 editor-draft-missing = This draft has already been saved or is unavailable.
 manager-back = Back
 manager-forward = Forward
@@ -233,3 +233,6 @@ editor-save-copy = Save as new card
 editor-remove-source = Remove source
 
 editor-note-missing = The linked Zotero note is missing or in the trash. Restore it in Zotero before editing this card.
+
+editor-browse = Browse
+editor-edit = Edit

@@ -12,5 +12,5 @@
     "skipLibCheck": true
   },
   "include": ["src", "typings"],
-  "exclude": ["build", "addon"]
+  "exclude": ["build", "addon", "src/ui/markdown-editor"]
 }

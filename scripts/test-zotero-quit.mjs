@@ -74,9 +74,14 @@ function runQuitTest() {
         const cards = await kb.api.listZettels();
         const card = cards.find(row => row.id === first.cardID);
         if (cards.length !== 2 || card?.body !== "Recovered draft body" || (await kb.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
+        const organizedNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.noteKey);
+        const organizedLoose = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.looseNoteKey);
+        const organizedCollection = await Zotero.Collections.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.collectionKey);
+        await Zotero.Items.loadDataTypes([organizedLoose], ["collections"]);
+        if (!organizedNote.parentItemID || organizedLoose.parentItemID || !organizedLoose.inCollection(organizedCollection.id)) throw new Error("Startup did not organize existing linked notes");
         const linked = await kb.api.acquireNativeNote({ id: card.id, title: card.title, body: card.body });
         const restoredNote = await Zotero.Items.getAsync(linked.noteID);
-        if (restoredNote.key !== first.noteKey || !restoredNote.getNote().includes("Recovered draft body")) throw new Error("Restart duplicated or lost the linked note");
+        if (!restoredNote.parentItemID || restoredNote.key !== first.noteKey || !restoredNote.getNote().includes("Recovered draft body")) throw new Error("Restart duplicated or lost the linked note");
         await kb.api.releaseNativeNote(linked.noteID);
         if (!(await kb.api.listEditorDrafts()).some(draft => draft.body === "Last keystroke before quitting")) throw new Error("Restart lost the recovery draft");
         if (!(await IOUtils.exists(PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base", "assets", first.legacyImage)))) throw new Error("Migration cleanup removed the original backup image");
@@ -153,18 +158,72 @@ function runQuitTest() {
         const rootElement = editor.document.getElementById("knowledge-base-editor-root");
         for (let n = 0; n < 80 && rootElement.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if (rootElement.dataset.mode !== "visual") throw new Error("The editor did not start in visual mode");
-        if (modeMenu.querySelectorAll("menuitem").length !== 3 || !modeMenu.getAttribute("aria-label")) throw new Error("Native three-mode control is missing");
+        if (modeMenu.localName !== "button" || modeMenu.querySelectorAll("menuitem").length || !modeMenu.label) throw new Error("Native browse/edit toggle is missing");
         async function switchMode(mode) {
-          modeMenu.value = mode;
-          modeMenu.dispatchEvent(new editor.Event("command", { bubbles: true }));
+          if (mode === "source" || rootElement.dataset.mode === "source") await editor.setEditorMode(mode);
+          else if (rootElement.dataset.mode !== mode) modeMenu.dispatchEvent(new editor.Event("command", { bubbles: true }));
           for (let n = 0; n < 80 && rootElement.dataset.mode !== mode; n++) await new Promise(resolve => setTimeout(resolve, 100));
           const surfaces = [body, editor.document.getElementById("knowledge-base-editor-preview"), editor.document.getElementById("knowledge-base-rich-frame")];
           if (rootElement.dataset.mode !== mode || surfaces.filter(surface => !surface.hidden).length !== 1) throw new Error("Editor mode is not a single surface: " + mode);
         }
         const migratedNote = editor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item;
+        if (migratedNote.parentItemID !== item.id) throw new Error("Sourced note was not filed under its source");
+        if (Zotero.getActiveZoteroPane().getSelectedItems().some(selected => selected.id === migratedNote.id)) throw new Error("Native note creation changed the library selection");
+        editor.document.getElementById("knowledge-base-src-clear").dispatchEvent(new editor.Event("command", { bubbles: true }));
+        let defaultCollection;
+        for (let n = 0; n < 160; n++) {
+          defaultCollection = Zotero.Collections.getByLibrary(item.libraryID).find(entry => entry.name === "Knowledge Base");
+          if (!(await kb.api.getZettel(rows[0].id)).item_key && !migratedNote.parentItemID && defaultCollection && migratedNote.inCollection(defaultCollection.id) && editor.document.getElementById("knowledge-base-editor-status").textContent === kb.api.loc("editor-saved")) break;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        if (migratedNote.parentItemID || !defaultCollection || !migratedNote.inCollection(defaultCollection.id)) throw new Error("The clear-source control did not organize the note");
+        editor.document.getElementById("knowledge-base-src-pick").dispatchEvent(new editor.Event("command", { bubbles: true }));
+        const sourceSearch = editor.document.getElementById("knowledge-base-src-search");
+        sourceSearch.value = "Isolated test source";
+        sourceSearch.dispatchEvent(new editor.Event("input", { bubbles: true }));
+        let sourceRow;
+        for (let n = 0; n < 100; n++) {
+          sourceRow = [...editor.document.querySelectorAll("#knowledge-base-src-results li")].find(row => row.querySelector(".sr-title")?.textContent === "Isolated test source");
+          if (sourceRow) break;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        if (!sourceRow) throw new Error("The native source picker did not find the source");
+        sourceRow.click();
+        for (let n = 0; n < 160 && ((await kb.api.getZettel(rows[0].id)).item_key !== item.key || migratedNote.parentItemID !== item.id || editor.document.getElementById("knowledge-base-editor-status").textContent !== kb.api.loc("editor-saved")); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (migratedNote.parentItemID !== item.id || item.inCollection(defaultCollection.id)) throw new Error("The source picker did not reparent the existing note cleanly");
+
+        const unsourced = (await kb.api.listZettels()).find(card => card.id !== rows[0].id);
+        const loose = await kb.api.acquireNativeNote({ id: unsourced.id, title: unsourced.title, body: unsourced.body });
+        const looseNote = await Zotero.Items.getAsync(loose.noteID);
+        const collection = Zotero.Collections.getByLibrary(item.libraryID).find(entry => entry.name === "Knowledge Base");
+        if (!collection || looseNote.parentItemID || !looseNote.inCollection(collection.id)) throw new Error("Unsourced note was not filed into Knowledge Base");
+        const updatePlacement = async (source) => {
+          const current = await kb.api.getZettel(unsourced.id);
+          await kb.api.saveEditorCard({ id: current.id, noteID: looseNote.id, title: current.title, body: current.body, sourceMode: false, expectedUpdatedAt: current.updated_at, parentId: rows[0].id, itemKey: source?.key || null, libraryID: source?.libraryID || null });
+        };
+        await updatePlacement(item);
+        if (looseNote.parentItemID !== item.id || item.inCollection(collection.id)) throw new Error("Changing source moved the source item into the note collection");
+        await updatePlacement(null);
+        if (looseNote.parentItemID || !looseNote.inCollection(collection.id)) throw new Error("Clearing source did not return the same note to its collection");
+        await updatePlacement(note);
+        if (looseNote.parentItemID || !looseNote.inCollection(collection.id)) throw new Error("Standalone note source was used as an invalid parent");
+        note.parentItemID = item.id; await note.saveTx();
+        await updatePlacement(note);
+        if (looseNote.parentItemID !== item.id) throw new Error("An attached source note did not use its regular parent");
+        await updatePlacement(null);
+        note.parentItemID = false; await note.saveTx();
+        collection.name = "Renamed idea notes"; await collection.saveTx();
+        await kb.api.releaseNativeNote(looseNote.id);
+        const again = await kb.api.acquireNativeNote({ id: unsourced.id, title: unsourced.title, body: unsourced.body });
+        if (again.noteID !== looseNote.id || !looseNote.inCollection(collection.id) || Zotero.Collections.getByLibrary(item.libraryID).some(entry => entry.name === "Knowledge Base")) throw new Error("Reopening duplicated the note or renamed collection");
+        await kb.api.releaseNativeNote(looseNote.id);
+
         for (let n = 0; n < 100 && !migratedNote.getAttachments().length; n++) await new Promise(resolve => setTimeout(resolve, 100));
         const migratedImage = Zotero.Items.get(migratedNote.getAttachments()[0]);
         if (!migratedImage || !(await migratedImage.fileExists())) throw new Error("Legacy image was not imported into Zotero note attachments");
+        if (migratedNote.getAttachments().length !== 1) throw new Error("Two native editors imported duplicate migration images");
+        const clearIcon = editor.document.querySelector("#knowledge-base-src-clear .toolbarbutton-icon");
+        if (clearIcon?.getBoundingClientRect().width !== 16 || clearIcon.getBoundingClientRect().height !== 16) throw new Error("Native remove-source icon is missing");
         await switchMode("source");
         body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$. [@Host2026] [My note](zotero://select/library/items/" + note.key + ").\\n\\n$$\\nx^2+y^2\\n$$\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
         const complexCitation = { citationItems: [{ uris: [Zotero.URI.getItemURI(item)], itemData: Zotero.Utilities.Item.itemToCSLJSON(item), locator: "23", label: "page" }], properties: {} };
@@ -261,7 +320,7 @@ function runQuitTest() {
           await IOUtils.makeDirectory(screenshotDirectory, { ignoreExisting: true });
           await snapshot("native-editor", editor);
           await switchMode("reading"); await snapshot("reading", editor);
-          await switchMode("source"); await snapshot("markdown", editor);
+
         }
         await switchMode("source");
         const nativeDialogs = [];
@@ -340,9 +399,7 @@ function runQuitTest() {
             await new Promise(resolve => setTimeout(resolve, 50));
           }
           const draftBody = draftEditor.document.getElementById("knowledge-base-editor-body");
-          const draftMode = draftEditor.document.getElementById("knowledge-base-editor-mode");
-          draftMode.value = "source";
-          draftMode.dispatchEvent(new draftEditor.Event("command", { bubbles: true }));
+          await draftEditor.setEditorMode("source");
           for (let n = 0; n < 80 && draftEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "source"; n++) await new Promise(resolve => setTimeout(resolve, 50));
           draftBody.value = "Keep this close draft";
           draftBody.dispatchEvent(new draftEditor.Event("input", { bubbles: true }));
@@ -354,7 +411,7 @@ function runQuitTest() {
         } finally { Services.ww.unregisterNotification(observer); }
         if (choices.length) throw new Error("Native close choices were not all tested");
         const saved = await kb.api.getZettel(rows[0].id);
-        await kb.api.saveEditorDraft({ id: saved.id, title: saved.title, body: "Recovered draft body", expectedUpdatedAt: saved.updated_at, draftId: "host-recovery", draftRevision: 1 });
+        await kb.api.saveEditorDraft({ id: saved.id, title: saved.title, body: "Recovered draft body", itemKey: saved.item_key, libraryID: saved.library_id, expectedUpdatedAt: saved.updated_at, draftId: "host-recovery", draftRevision: 1 });
         kb.api.openEditor({ draftId: "host-recovery" });
         let recovered;
         for (let n = 0; n < 80; n++) {
@@ -366,14 +423,15 @@ function runQuitTest() {
         recovered.document.getElementById("knowledge-base-editor-save").dispatchEvent(new recovered.Event("command", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(saved.id)).body !== "Recovered draft body"; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if ((await kb.api.getZettel(saved.id)).body !== "Recovered draft body") throw new Error("Recovered draft did not save");
-        const recoveredMenu = recovered.document.getElementById("knowledge-base-editor-mode");
-        recoveredMenu.value = "source";
-        recoveredMenu.dispatchEvent(new recovered.Event("command", { bubbles: true }));
+        await recovered.setEditorMode("source");
         for (let n = 0; n < 80 && recovered.document.getElementById("knowledge-base-editor-body").hidden; n++) await new Promise(resolve => setTimeout(resolve, 100));
         const pendingBody = recovered.document.getElementById("knowledge-base-editor-body");
+        // Simulate previously unfiled linked notes so startup must organize them.
+        nativeNote.parentItemID = false; await nativeNote.saveTx();
+        looseNote.removeFromCollection(collection.id); await looseNote.saveTx();
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, cardID: rows[0].id, noteKey: nativeNote.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, collectionKey: collection.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -491,7 +549,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; three single-pane modes, compact expanded connections, toolbar icons and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; one browse/edit toggle, automatic source/collection placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

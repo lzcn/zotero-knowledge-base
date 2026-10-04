@@ -1733,7 +1733,7 @@ summary {
   flex-wrap: wrap;
 }
 #knowledge-base-editor-mode {
-  min-width: 128px;
+  min-width: 72px;
   color: var(--fg);
 }
 
@@ -1863,4 +1863,8 @@ summary {
 /* Keep note metadata in Zotero; this window already has card connections. */
 #knowledge-base-rich-frame #links-container {
   display: none;
+}
+
+#knowledge-base-src-clear {
+  list-style-image: url("chrome://zotero/skin/16/universal/cross.svg");
 }
