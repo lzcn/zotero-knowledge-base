@@ -24,7 +24,6 @@ d3-color: ISC
 d3-dispatch: ISC
 d3-drag: ISC
 d3-ease: BSD-3-Clause
-d3-hierarchy: ISC
 d3-interpolate: ISC
 d3-selection: ISC
 d3-timer: ISC

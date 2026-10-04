@@ -33,7 +33,7 @@
     "build:force": "node scripts/build.mjs --force"
   },
   "dependencies": {
-    "d3-hierarchy": "3.1.2",
+    "d3-force": "3.0.0",
     "d3-selection": "3.0.0",
     "d3-zoom": "3.0.0",
     "dompurify": "3.4.16",
@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
-    "@types/d3-hierarchy": "3.1.7",
+    "@types/d3-force": "3.0.10",
     "@types/d3-selection": "3.0.12",
     "@types/d3-zoom": "3.0.9",
     "@types/katex": "0.16.8",

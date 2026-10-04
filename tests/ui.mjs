@@ -26,6 +26,7 @@ await writeFile(
         `export * as ${name.replace(/-/g, "_")} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
     )
     .join("\n") +
+    `\nexport * as graph_layout from ${JSON.stringify(path.join(ROOT, "src/ui/graph-layout.ts"))};` +
     `\nexport * as native_markdown_menu from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-menu.ts"))};`,
 );
 const bundle = path.join(workspace, "bundle.mjs");
@@ -51,6 +52,7 @@ const {
   native_notes,
   native_markdown_menu,
   preferences,
+  graph_layout,
 } = await import(pathToFileURL(bundle).href);
 let checks = 0;
 function check(label, fn) {
@@ -1601,38 +1603,69 @@ check(
 );
 
 check(
-  "Tree layout separates broad branches, centers parents and remains deterministic",
+  "Force layout groups connected notes, sizes hubs and never mutates stored graph data",
   () => {
-    const nodes = [
-      { id: "r", title: "Root", kind: "card" },
-      ...Array.from({ length: 20 }, (_, i) => ({
-        id: String(i),
-        title: "A deliberately long title for this child",
-        kind: "card",
-        parentId: "r",
-      })),
-    ];
-    const positions = graphModule.layoutHierarchy(nodes);
-    const children = nodes.slice(1).map((node) => positions.get(node.id));
-    for (let i = 1; i < children.length; i++)
-      assert.ok(children[i].x - children[i - 1].x >= 200);
-    assert.equal(positions.get("r").x, (children[0].x + children.at(-1).x) / 2);
-    assert.deepEqual([...positions], [...graphModule.layoutHierarchy(nodes)]);
+    const nodes = Array.from({ length: 30 }, (_, i) => ({
+      id: String(i),
+      title: "Note " + i,
+      kind: "card",
+      snippet: "",
+    }));
+    const edges = Array.from({ length: 9 }, (_, i) => ({
+      source: "0",
+      target: String(i + 1),
+      kind: "link",
+      ref: "",
+      context: "",
+    }));
+    const data = { nodes, edges };
+    const original = globalThis.structuredClone(data);
+    const layout = graph_layout.createGraphLayout(data);
+    const positions = layout.nodes();
+    assert.deepEqual(data, original);
+    assert.ok(positions[0].radius > positions[20].radius);
+    const distance = (node) =>
+      Math.hypot(node.x - positions[0].x, node.y - positions[0].y);
+    const linkedDistance =
+      positions.slice(1, 10).reduce((sum, node) => sum + distance(node), 0) / 9;
+    const unlinkedDistance =
+      positions.slice(10).reduce((sum, node) => sum + distance(node), 0) / 20;
+    assert.ok(linkedDistance < unlinkedDistance);
+    assert.ok(
+      positions.every(
+        (node) => Number.isFinite(node.x) && Number.isFinite(node.y),
+      ),
+    );
+    assert.equal(layout.alphaTarget(), 0);
+    const saved = new Map(
+      positions.map((node) => [node.id, { x: node.x, y: node.y }]),
+    );
+    const retained = graph_layout.createGraphLayout(data, saved, false);
+    assert.deepEqual(
+      retained.nodes().map((node) => [node.x, node.y]),
+      positions.map((node) => [node.x, node.y]),
+    );
+    layout.stop();
+    retained.stop();
   },
 );
 check(
-  "A deep knowledge outline lays out without recursion or non-finite coordinates",
+  "A thousand-node network includes isolated notes and produces finite positions",
   () => {
-    const nodes = Array.from({ length: 10000 }, (_, i) => ({
+    const nodes = Array.from({ length: 1000 }, (_, i) => ({
       id: String(i),
-      title: "Card",
+      title: "Note",
       kind: "card",
-      parentId: i ? String(i - 1) : null,
+      snippet: "",
     }));
-    const positions = graphModule.layoutHierarchy(nodes);
-    assert.equal(positions.size, 10000);
-    assert.ok(Number.isFinite(positions.get("9999").y));
-    assert.ok(positions.get("9999").y > positions.get("9998").y);
+    const layout = graph_layout.createGraphLayout({ nodes, edges: [] });
+    assert.equal(layout.nodes().length, 1000);
+    assert.ok(
+      layout
+        .nodes()
+        .every((node) => Number.isFinite(node.x) && Number.isFinite(node.y)),
+    );
+    layout.stop();
   },
 );
 const graphData = {
@@ -1799,10 +1832,15 @@ check("Selecting a node shows connected nodes in the graph inspector", () =>
     2,
   ),
 );
-const originalPositions = Array.from(
-  graphDom.window.document.querySelectorAll(".graph-node"),
-  (node) => node.getAttribute("transform"),
-);
+const graphPositions = () =>
+  Array.from(
+    graphDom.window.document.querySelectorAll(".graph-node"),
+    (node) => [
+      node.getAttribute("data-node-id"),
+      node.getAttribute("transform"),
+    ],
+  ).sort(([a], [b]) => a.localeCompare(b));
+const originalPositions = graphPositions();
 const originalViewport = graphDom.window.document
   .querySelector("#graph-svg > g")
   .getAttribute("transform");
@@ -1849,13 +1887,7 @@ check("Hiding references leaves every card visible", () => {
 check(
   "Relationship toggles retain every node position and the current viewport",
   () => {
-    assert.deepEqual(
-      Array.from(
-        graphDom.window.document.querySelectorAll(".graph-node"),
-        (node) => node.getAttribute("transform"),
-      ),
-      originalPositions,
-    );
+    assert.deepEqual(graphPositions(), originalPositions);
     assert.equal(
       graphDom.window.document
         .querySelector("#graph-svg > g")
@@ -1915,7 +1947,57 @@ check("Graph search keeps the entire graph visible", () =>
     4,
   ),
 );
-searchGraph.value = "";
+check(
+  "Search highlights all matches and clearing restores the whole network",
+  () => {
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".graph-node.highlighted")
+        .length,
+      1,
+    );
+    searchGraph.value = "";
+    searchGraph.dispatchEvent(new graphDom.window.Event("input"));
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".graph-node.dimmed").length,
+      0,
+    );
+  },
+);
+const hoverNode = graphDom.window.document.querySelector(".graph-node");
+hoverNode.dispatchEvent(new graphDom.window.Event("pointerenter"));
+check(
+  "Hover reveals the title and its neighbors without selecting a note",
+  () => {
+    assert.ok(hoverNode.classList.contains("hovered"));
+    assert.ok(
+      graphDom.window.document.querySelectorAll(".graph-edge.highlighted")
+        .length > 0,
+    );
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".graph-node.selected").length,
+      0,
+    );
+  },
+);
+hoverNode.dispatchEvent(new graphDom.window.Event("pointerleave"));
+hoverNode.dispatchEvent(
+  new graphDom.window.MouseEvent("click", { bubbles: true }),
+);
+graphDom.window.document
+  .getElementById("graph-svg")
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
+check("Clicking the graph background clears selection and dimming", () => {
+  assert.equal(
+    graphDom.window.document.querySelectorAll(
+      ".graph-node.selected,.graph-node.dimmed",
+    ).length,
+    0,
+  );
+  assert.equal(
+    graphDom.window.document.getElementById("graph-selection").hidden,
+    true,
+  );
+});
 // Replace the entire API object as a plugin reload does, rather than mutating
 // one method on the old object. Open windows must call the new instance.
 let latestApiCalled = false;

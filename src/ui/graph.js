@@ -1,6 +1,7 @@
 import { select as d3Select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
-import { edgePath, filterGraph, layoutHierarchy } from "../modules/graph";
+import { edgePath, filterGraph } from "../modules/graph";
+import { createGraphLayout } from "./graph-layout";
 
 const api = /** @type {import("../modules/api").KnowledgeBaseAPI} */ (
   new Proxy({}, { get: (_, key) => window.Zotero.ZoteroKnowledgeBase.api[key] })
@@ -28,10 +29,14 @@ let nodeElements = new Map();
 let renderedEdges = [];
 let zoomBehavior;
 let drag = null;
+let dragMoved = false;
 let refreshTimer;
 let unsubscribe;
 let unsubscribeOptions;
 let layoutKey = "";
+let simulation;
+let hoveredId;
+const savedPositions = new Map();
 
 function svgElement(tag, attrs = {}) {
   const element = document.createElementNS(svgNS, tag);
@@ -84,29 +89,40 @@ function applyTransform() {
     `translate(${transform.x},${transform.y}) scale(${transform.k})`,
   );
 }
-// Cull intersecting labels in screen coordinates; hover/focus still reveals a title.
+// Labels keep their reading size while zooming; reveal the active title in full.
 function updateLabels() {
   const occupied = [];
+  const circles = layoutNodes.map((node) => ({
+    id: node.id,
+    x: node.x * transform.k + transform.x,
+    y: node.y * transform.k + transform.y,
+    radius: node.radius * transform.k + 3,
+  }));
   const nodes = [...layoutNodes].sort(
-    (a, b) => Number(b.id === selectedId) - Number(a.id === selectedId),
+    (a, b) =>
+      Number(b.id === hoveredId) - Number(a.id === hoveredId) ||
+      Number(b.id === selectedId) - Number(a.id === selectedId) ||
+      b.radius - a.radius,
   );
   for (const node of nodes) {
     const group = nodeElements.get(node.id);
     if (!group) continue;
-    const text = group.querySelector("text").textContent;
-    const width =
-      Array.from(text).reduce(
-        (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
-        0,
-      ) * transform.k;
+    const focused = node.id === selectedId || node.id === hoveredId;
+    const label = group.querySelector("text");
+    const chars = Array.from(node.title);
+    label.textContent = focused
+      ? node.title
+      : chars.slice(0, 16).join("") + (chars.length > 16 ? "…" : "");
+    label.style.fontSize = `${12 / transform.k}px`;
+    label.style.strokeWidth = `${4 / transform.k}px`;
+    label.setAttribute("y", String(node.radius + 16 / transform.k));
+    const width = Array.from(label.textContent).reduce(
+      (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
+      0,
+    );
     const x = node.x * transform.k + transform.x - width / 2;
-    const y = (node.y + 18) * transform.k + transform.y;
-    const rect = {
-      x,
-      y,
-      right: x + width + 8,
-      bottom: y + 18 * transform.k + 6,
-    };
+    const y = (node.y + node.radius) * transform.k + transform.y + 4;
+    const rect = { x, y, right: x + width + 8, bottom: y + 22 };
     const overlaps = occupied.some(
       (other) =>
         rect.x < other.right &&
@@ -114,9 +130,21 @@ function updateLabels() {
         rect.y < other.bottom &&
         rect.bottom > other.y,
     );
+    const coversNode = circles.some(
+      (circle) =>
+        circle.id !== node.id &&
+        rect.x < circle.x + circle.radius &&
+        rect.right > circle.x - circle.radius &&
+        rect.y < circle.y + circle.radius &&
+        rect.bottom > circle.y - circle.radius,
+    );
     const visible =
-      node.id === selectedId ||
-      (transform.k >= 0.55 && occupied.length < 80 && !overlaps);
+      focused ||
+      ((transform.k >= 0.4 || group.classList.contains("highlighted")) &&
+        occupied.length < 80 &&
+        !overlaps &&
+        !coversNode &&
+        !group.classList.contains("dimmed"));
     group.classList.toggle("label-hidden", !visible);
     if (visible) occupied.push(rect);
   }
@@ -159,18 +187,22 @@ function fit() {
 function render() {
   $("graph-legend-sources").hidden = !api.getGraphOptions().sources;
   const data = visibleGraph();
-  const nextKey = JSON.stringify(
-    data.nodes.map((node) => [node.id, node.parentId, node.title]),
-  );
+  const nextKey = JSON.stringify([
+    graph.nodes.map((node) => node.id),
+    graph.edges,
+  ]);
   const retainLayout = nextKey === layoutKey;
-  const previousPositions = new Map(
-    layoutNodes.map((node) => [node.id, { x: node.x, y: node.y }]),
-  );
+  simulation?.stop();
+  drag = null;
+  hoveredId = undefined;
+  for (const node of layoutNodes)
+    savedPositions.set(node.id, { x: node.x, y: node.y });
+  for (const id of savedPositions.keys())
+    if (!graphNodes.has(id)) savedPositions.delete(id);
+  const firstLayout = !layoutKey || !layoutNodes.length;
   layoutKey = nextKey;
-  /** @typedef {import("../modules/graph").GraphNode & { x?: number, y?: number, fx?: number | null, fy?: number | null }} LayoutNode */
-  const nodes = data.nodes.map(
-    (node) => /** @type {LayoutNode} */ ({ ...node }),
-  );
+  simulation = createGraphLayout(data, savedPositions, !retainLayout);
+  const nodes = simulation.nodes();
   const edges = data.edges.map((edge) => ({ ...edge }));
   const svg = $("graph-svg");
   const { width, height } = size();
@@ -187,7 +219,7 @@ function render() {
     orient: "auto",
   });
   marker.appendChild(
-    svgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "var(--accent)" }),
+    svgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "var(--muted)" }),
   );
   defs.appendChild(marker);
   svg.appendChild(defs);
@@ -217,11 +249,14 @@ function render() {
       tabindex: 0,
       role: "button",
       "aria-label": node.title,
+      "data-node-id": node.id,
     });
-    group.appendChild(
-      svgElement("circle", { r: node.kind === "card" ? 12 : 9 }),
-    );
-    const label = svgElement("text", { x: 0, y: 32, "text-anchor": "middle" });
+    group.appendChild(svgElement("circle", { r: node.radius }));
+    const label = svgElement("text", {
+      x: 0,
+      y: node.radius + 18,
+      "text-anchor": "middle",
+    });
     const titleChars = Array.from(node.title);
     label.textContent =
       titleChars.slice(0, 24).join("") + (titleChars.length > 24 ? "…" : "");
@@ -229,6 +264,22 @@ function render() {
     const title = svgElement("title");
     title.textContent = `${node.title}\n${node.snippet}`;
     group.appendChild(title);
+    group.addEventListener("pointerenter", () => {
+      hoveredId = node.id;
+      highlight();
+    });
+    group.addEventListener("pointerleave", () => {
+      hoveredId = undefined;
+      highlight();
+    });
+    group.addEventListener("focus", () => {
+      hoveredId = node.id;
+      highlight();
+    });
+    group.addEventListener("blur", () => {
+      hoveredId = undefined;
+      highlight();
+    });
     group.addEventListener("click", (ev) => {
       ev.stopPropagation();
       select(node.id);
@@ -241,6 +292,7 @@ function render() {
       if (ev.button !== 0) return;
       ev.stopPropagation();
       drag = node;
+      dragMoved = false;
       node.fx = node.x;
       node.fy = node.y;
       group.setPointerCapture?.(ev.pointerId);
@@ -250,14 +302,6 @@ function render() {
     scene.appendChild(group);
   }
   layoutNodes = nodes;
-  const positions = retainLayout ? previousPositions : layoutHierarchy(nodes);
-  for (const node of nodes) {
-    const position = positions.get(node.id);
-    node.x = position.x;
-    node.y = position.y;
-    node.fx = node.x;
-    node.fy = node.y;
-  }
   const tick = () => {
     for (const { edge, line } of renderedEdges) {
       line.setAttribute("d", edgePath(edge.source, edge.target, edge.kind));
@@ -270,41 +314,69 @@ function render() {
   };
   tick();
   updatePositions = tick;
-  if (!retainLayout) fit();
+  simulation.on("tick", tick);
+  if (firstLayout) fit();
   else applyTransform();
   $("graph-empty").hidden = nodes.length > 0;
   $("graph-stats").textContent = api.loc("graph-stats", {
     cards: nodes.filter((node) => node.kind === "card").length,
     links: edges.length,
   });
-  if (selectedId) select(selectedId);
+  select(selectedId);
+}
+function highlight() {
+  const focusId = hoveredId || selectedId;
+  const query = $("graph-search").value.trim().toLowerCase();
+  const neighbors = new Set(focusId ? [focusId] : []);
+  if (focusId)
+    for (const edge of visibleGraph().edges) {
+      if (edge.source === focusId) neighbors.add(edge.target);
+      if (edge.target === focusId) neighbors.add(edge.source);
+    }
+  const matched = new Set();
+  for (const node of layoutNodes) {
+    if (
+      focusId
+        ? neighbors.has(node.id)
+        : query &&
+          `${node.title} ${node.id} ${node.snippet}`
+            .toLowerCase()
+            .includes(query)
+    )
+      matched.add(node.id);
+  }
+  const active = !!focusId || !!query;
+  for (const [id, element] of nodeElements) {
+    element.classList.toggle("selected", id === selectedId);
+    element.classList.toggle("highlighted", matched.has(id));
+    element.classList.toggle("dimmed", active && !matched.has(id));
+    element.classList.toggle("hovered", id === hoveredId);
+  }
+  for (const { edge, line } of renderedEdges) {
+    const connected = focusId
+      ? edge.source.id === focusId || edge.target.id === focusId
+      : matched.has(edge.source.id) || matched.has(edge.target.id);
+    line.classList.toggle("highlighted", active && connected);
+    line.classList.toggle("dimmed", active && !connected);
+  }
+  const activeNode = nodeElements.get(focusId);
+  if (activeNode && scene.lastElementChild !== activeNode)
+    scene.appendChild(activeNode);
+  updateLabels();
 }
 function select(id) {
   selectedId = id;
   const node = graphNodes.get(id);
   if (!node || !nodeElements.has(id)) {
+    selectedId = undefined;
     $("graph-selection").hidden = true;
+    highlight();
     return;
   }
   const connections = visibleGraph().edges.filter(
     (edge) => edge.source === id || edge.target === id,
   );
-  const neighbors = new Set([
-    id,
-    ...connections.flatMap((edge) => [edge.source, edge.target]),
-  ]);
-  for (const [nodeId, element] of nodeElements) {
-    element.classList.toggle("selected", nodeId === id);
-    element.classList.toggle("dimmed", !neighbors.has(nodeId));
-  }
-  for (const { edge, line } of renderedEdges) {
-    const source =
-      typeof edge.source === "string" ? edge.source : edge.source.id;
-    const target =
-      typeof edge.target === "string" ? edge.target : edge.target.id;
-    line.classList.toggle("dimmed", source !== id && target !== id);
-  }
-  updateLabels();
+  highlight();
   $("graph-selection").hidden = false;
   $("graph-node-title").textContent = node.title;
   $("graph-node-kind").textContent =
@@ -486,13 +558,10 @@ async function load() {
   $("graph-node-open").addEventListener("click", () =>
     run(() => openNode(graphNodes.get(selectedId))),
   );
-  $("graph-search").addEventListener("input", () => {
-    const query = $("graph-search").value.trim().toLowerCase();
-    if (!query) return;
-    const match = visibleGraph().nodes.find((node) =>
-      `${node.id} ${node.title} ${node.snippet}`.toLowerCase().includes(query),
-    );
-    if (match) select(match.id);
+  $("graph-search").addEventListener("input", () => select(undefined));
+  $("graph-svg").addEventListener("click", (event) => {
+    if (!(/** @type {Element} */ (event.target).closest(".graph-node")))
+      select(undefined);
   });
   $("graph-node-snippet").addEventListener("click", (event) => {
     const anchor = /** @type {Element} */ (event.target).closest("a");
@@ -534,8 +603,15 @@ async function load() {
   $("graph-svg").addEventListener("pointermove", (ev) => {
     if (drag) {
       const rect = $("graph-svg").getBoundingClientRect();
-      drag.fx = (ev.clientX - rect.left - transform.x) / transform.k;
-      drag.fy = (ev.clientY - rect.top - transform.y) / transform.k;
+      const x = (ev.clientX - rect.left - transform.x) / transform.k;
+      const y = (ev.clientY - rect.top - transform.y) / transform.k;
+      if (!dragMoved) {
+        if (Math.hypot(x - drag.x, y - drag.y) * transform.k < 3) return;
+        dragMoved = true;
+        simulation.alphaTarget(0.12).alpha(0.25).restart();
+      }
+      drag.fx = x;
+      drag.fy = y;
       drag.x = drag.fx;
       drag.y = drag.fy;
       updatePositions();
@@ -543,13 +619,21 @@ async function load() {
   });
   const release = () => {
     if (drag) {
+      drag.fx = null;
+      drag.fy = null;
+      simulation.alphaTarget(0);
       updatePositions();
     }
     drag = null;
   };
   $("graph-svg").addEventListener("pointerup", release);
   $("graph-svg").addEventListener("pointercancel", release);
+  window.addEventListener("blur", release);
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      hoveredId = undefined;
+      select(undefined);
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
       event.preventDefault();
       window.close();
@@ -571,6 +655,8 @@ async function load() {
 }
 window.addEventListener("load", () => run(load));
 window.addEventListener("unload", () => {
+  simulation?.stop();
+  drag = null;
   d3Select($("graph-svg")).on(".zoom", null);
   refreshVersion++;
   unsubscribe?.();

@@ -699,12 +699,6 @@ if (currentSchema) {
     tree.edges.length === 2 &&
       tree.edges.every((edge) => edge.kind === "parent"),
   );
-  const position = graph.layoutHierarchy(tree.nodes);
-  check(
-    "Hierarchy layout places parent above child",
-    position.get(rootId).y < position.get(branchId).y &&
-      position.get(branchId).y < position.get(leafId).y,
-  );
   await zettel.deleteZettel(branchId);
   check(
     "Deleting a parent moves its children one level up",

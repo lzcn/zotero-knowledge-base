@@ -1,4 +1,3 @@
-import { hierarchy, tree } from "d3-hierarchy";
 import { getAll, type ZettelRow, type LinkRow, type NoteKind } from "./db";
 import { getItemSummary } from "./zotero";
 
@@ -211,99 +210,10 @@ export function filterGraph(
   return { nodes, edges };
 }
 
-/** Two iterative passes reserve label/subtree widths, then place centered parents.
- * Independent trees are packed into rows; no iterative force simulation. */
-export function layoutHierarchy(
-  nodes: GraphNode[],
-): Map<string, { x: number; y: number }> {
-  const cards = new Map(
-    nodes.filter((node) => node.kind === "card").map((node) => [node.id, node]),
-  );
-  const children = new Map<string, GraphNode[]>();
-  const roots: GraphNode[] = [];
-  for (const node of cards.values()) {
-    if (node.parentId && cards.has(node.parentId)) {
-      const siblings = children.get(node.parentId) || [];
-      siblings.push(node);
-      children.set(node.parentId, siblings);
-    } else roots.push(node);
-  }
-  const positions = new Map<string, { x: number; y: number }>();
-  const groups: { ids: string[]; width: number; height: number }[] = [];
-  const labelWidth = (node: GraphNode) =>
-    40 +
-    Array.from(node.title)
-      .slice(0, 24)
-      .reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7), 0);
-  const widthByID = new Map(
-    nodes.map((node) => [node.id, Math.max(128, labelWidth(node))]),
-  );
-  const layout = tree<GraphNode>()
-    .nodeSize([1, 108])
-    .separation(
-      (a, b) =>
-        ((widthByID.get(a.data.id) || 128) +
-          (widthByID.get(b.data.id) || 128)) /
-          2 +
-        32,
-    );
-  for (const root of roots) {
-    const result = layout(hierarchy(root, (node) => children.get(node.id)));
-    const descendants = result.descendants();
-    let minX = Infinity,
-      maxX = -Infinity,
-      maxY = 0;
-    for (const point of descendants) {
-      const width = widthByID.get(point.data.id) || 128;
-      minX = Math.min(minX, point.x - width / 2);
-      maxX = Math.max(maxX, point.x + width / 2);
-      maxY = Math.max(maxY, point.y);
-    }
-    for (const point of descendants)
-      positions.set(point.data.id, { x: point.x - minX + 24, y: point.y + 24 });
-    groups.push({
-      ids: descendants.map((point) => point.data.id),
-      width: maxX - minX + 48,
-      height: maxY + 108,
-    });
-  }
-  for (const node of nodes)
-    if (!positions.has(node.id)) {
-      const width = (widthByID.get(node.id) || 128) + 48;
-      positions.set(node.id, { x: width / 2, y: 24 });
-      groups.push({ ids: [node.id], width, height: 108 });
-    }
-  const area = groups.reduce(
-    (sum, group) => sum + group.width * group.height,
-    0,
-  );
-  let widest = 0;
-  for (const group of groups) widest = Math.max(widest, group.width);
-  const rowWidth = Math.max(widest, Math.sqrt(area) * 1.5);
-  let x = 0,
-    y = 0,
-    rowHeight = 0;
-  for (const group of groups) {
-    if (x && x + group.width > rowWidth) {
-      x = 0;
-      y += rowHeight + 32;
-      rowHeight = 0;
-    }
-    for (const id of group.ids) {
-      const point = positions.get(id)!;
-      point.x += x;
-      point.y += y;
-    }
-    x += group.width + 32;
-    rowHeight = Math.max(rowHeight, group.height);
-  }
-  return positions;
-}
-
 /** Clip endpoints to node circles and curve references away from the outline. */
 export function edgePath(
-  source: { x: number; y: number; id: string },
-  target: { x: number; y: number; id: string },
+  source: { x: number; y: number; id: string; radius?: number },
+  target: { x: number; y: number; id: string; radius?: number },
   kind: GraphEdge["kind"],
 ): string {
   const dx = target.x - source.x,
@@ -311,11 +221,12 @@ export function edgePath(
   const length = Math.hypot(dx, dy);
   if (source.id === target.id || length < 1)
     return `M ${source.x + 10} ${source.y - 6} C ${source.x + 54} ${source.y - 60}, ${source.x - 54} ${source.y - 60}, ${source.x - 10} ${source.y - 6}`;
-  const offset = Math.min(14, length / 3);
-  const sx = source.x + (dx / length) * offset,
-    sy = source.y + (dy / length) * offset;
-  const tx = target.x - (dx / length) * offset,
-    ty = target.y - (dy / length) * offset;
+  const sourceOffset = Math.min((source.radius ?? 12) + 2, length / 3);
+  const targetOffset = Math.min((target.radius ?? 12) + 2, length / 3);
+  const sx = source.x + (dx / length) * sourceOffset,
+    sy = source.y + (dy / length) * sourceOffset;
+  const tx = target.x - (dx / length) * targetOffset,
+    ty = target.y - (dy / length) * targetOffset;
   if (kind === "parent") {
     const mid = (sy + ty) / 2;
     return `M ${sx} ${sy} C ${sx} ${mid}, ${tx} ${mid}, ${tx} ${ty}`;

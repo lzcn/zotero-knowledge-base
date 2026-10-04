@@ -632,6 +632,65 @@ function runQuitTest() {
           await snapshot("native-editor", editor);
 
         }
+        const priorSources = kb.api.getGraphOptions().sources;
+        kb.api.setGraphOption("sources", true);
+        const realGetGraph = kb.api.getGraph;
+        const originalGraphData = await realGetGraph();
+        const topics = ["视觉语言模型", "图像分割", "表示学习", "多模态检索", "生成模型", "研究方法"];
+        const network = {nodes:[], edges:[]};
+        for (let topic = 0; topic < topics.length; topic++) {
+          const sourceID = "network-source-" + topic;
+          network.nodes.push({id:sourceID, title:"Source · " + topics[topic], kind:"source", snippet:"Researcher 2026", citation:"Researcher 2026"});
+          for (let i = 0; i < 10; i++) {
+            const id = "network-" + topic + "-" + i;
+            network.nodes.push({id, title:(i === 0 ? "Survey · " : "") + topics[topic] + "：研究问题、证据与思考 " + i, kind:"card", noteKind:i === 0 ? "thinking" : i === 1 ? "literature" : "zettel", snippet:"# " + topics[topic] + "\\n\\nA connected research note."});
+            network.edges.push({source:id, target:sourceID, kind:"source", ref:sourceID, context:""});
+            if (i) network.edges.push({source:"network-" + topic + "-0", target:id, kind:i < 3 ? "parent" : "link", ref:id, context:""});
+          }
+          if (topic) network.edges.push({source:"network-0-0", target:"network-" + topic + "-0", kind:"link", ref:"", context:""});
+        }
+        async function redrawGraph(data) {
+          kb.api.getGraph = async () => data;
+          graph.document.getElementById("graph-refresh").click();
+          for (let n = 0; n < 100 && graph.document.querySelectorAll(".graph-node").length !== data.nodes.length; n++) await new Promise(resolve => setTimeout(resolve, 25));
+          if (graph.document.querySelectorAll(".graph-node").length !== data.nodes.length || graph.document.getElementById("graph-error").textContent) throw new Error("Host network rendering failed: " + graph.document.querySelectorAll(".graph-node").length + "/" + data.nodes.length + " " + graph.document.getElementById("graph-error").textContent);
+          graph.document.getElementById("graph-fit").click();
+        }
+        try {
+          await redrawGraph(network);
+          if (graph.getComputedStyle(graph.document.getElementById("graph-canvas")).backgroundImage !== "none") throw new Error("Graph still has a distracting background grid");
+          const circles = [...graph.document.querySelectorAll(".graph-node circle")].map(circle => Number(circle.getAttribute("r")));
+          if (!(Math.max(...circles) > Math.min(...circles))) throw new Error("Network hubs do not have larger nodes");
+          if ([...graph.document.querySelectorAll(".graph-node")].some(node => /NaN|Infinity/.test(node.getAttribute("transform")))) throw new Error("Network coordinates are invalid");
+          if (screenshotDirectory) await snapshot("graph-network", graph);
+          const search = graph.document.getElementById("graph-search");
+          search.value = "Survey"; search.dispatchEvent(new graph.Event("input"));
+          if (graph.document.querySelectorAll(".graph-node.highlighted").length !== 6) throw new Error("Graph search does not highlight all matching notes");
+          search.value = ""; search.dispatchEvent(new graph.Event("input"));
+          const node = [...graph.document.querySelectorAll(".graph-node")].find(node => node.getAttribute("aria-label").startsWith("Survey"));
+          node.dispatchEvent(new graph.PointerEvent("pointerenter"));
+          if (node.querySelector("text").textContent !== node.getAttribute("aria-label") || !graph.document.querySelector(".graph-edge.highlighted")) throw new Error("Hover did not reveal the full title and its connections");
+          if (screenshotDirectory) await snapshot("graph-network-hover", graph);
+          node.dispatchEvent(new graph.PointerEvent("pointerleave"));
+          const before = node.getAttribute("transform");
+          const screen = node.getScreenCTM();
+          // Synthetic pointers are not active native pointers, so capture is a stub for this gesture.
+          const capture = node.setPointerCapture;
+          node.setPointerCapture = () => {};
+          node.dispatchEvent(new graph.PointerEvent("pointerdown", {button:0, bubbles:true}));
+          graph.document.getElementById("graph-svg").dispatchEvent(new graph.PointerEvent("pointermove", {clientX:screen.e + 60, clientY:screen.f + 40, bubbles:true}));
+          graph.document.getElementById("graph-svg").dispatchEvent(new graph.PointerEvent("pointerup", {bubbles:true}));
+          node.setPointerCapture = capture;
+          if (node.getAttribute("transform") === before) throw new Error("Node drag did not update its position");
+          graph.dispatchEvent(new graph.KeyboardEvent("keydown", {key:"Escape", bubbles:true}));
+          if (graph.document.querySelector(".graph-node.selected,.graph-node.dimmed")) throw new Error("Escape did not clear graph selection");
+        } finally {
+          await redrawGraph(originalGraphData);
+          kb.api.getGraph = realGetGraph;
+          kb.api.setGraphOption("sources", priorSources);
+          graph.ZoteroKnowledgeBase_showGraph(rows[0].id);
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
         await switchMode("source");
         const nativeDialogs = [];
         const choices = ["cancel", "accept", "extra1"];
@@ -915,7 +974,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown menus, fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown menus, force graph with connection-sized hubs, hover neighborhoods, full-title labels, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {
