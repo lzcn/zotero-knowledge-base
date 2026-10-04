@@ -1,7 +1,7 @@
 import { exec, getAll, getOne, transaction } from "./db";
-import type { SaveCardInput } from "./zettel";
+import type { NativeCardInput } from "./native-notes";
 
-export interface EditorDraft extends SaveCardInput {
+export interface EditorDraft extends NativeCardInput {
   draftId: string;
   draftRevision: number;
 }

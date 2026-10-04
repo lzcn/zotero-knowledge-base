@@ -20,29 +20,6 @@ https://github.com/lzcn/zotero-knowledge-base
 Turndown and turndown-plugin-gfm: MIT. See their included license texts.
 
 Editor and graph libraries (bundled locally; full licenses included):
-@tiptap/core: MIT
-@tiptap/extension-blockquote: MIT
-@tiptap/extension-bold: MIT
-@tiptap/extension-code: MIT
-@tiptap/extension-code-block: MIT
-@tiptap/extension-document: MIT
-@tiptap/extension-hard-break: MIT
-@tiptap/extension-heading: MIT
-@tiptap/extension-horizontal-rule: MIT
-@tiptap/extension-image: MIT
-@tiptap/extension-italic: MIT
-@tiptap/extension-link: MIT
-@tiptap/extension-list: MIT
-@tiptap/extension-paragraph: MIT
-@tiptap/extension-strike: MIT
-@tiptap/extension-table: MIT
-@tiptap/extension-task-item: MIT
-@tiptap/extension-task-list: MIT
-@tiptap/extension-text: MIT
-@tiptap/extension-underline: MIT
-@tiptap/extensions: MIT
-@tiptap/pm: MIT
-@tiptap/starter-kit: MIT
 d3-color: ISC
 d3-dispatch: ISC
 d3-drag: ISC
@@ -53,19 +30,4 @@ d3-selection: ISC
 d3-timer: ISC
 d3-transition: ISC
 d3-zoom: ISC
-linkifyjs: MIT
-orderedmap: MIT
-prosemirror-commands: MIT
-prosemirror-dropcursor: MIT
-prosemirror-gapcursor: MIT
-prosemirror-history: MIT
-prosemirror-keymap: MIT
-prosemirror-model: MIT
-prosemirror-schema-list: MIT
-prosemirror-state: MIT
-prosemirror-tables: MIT
-prosemirror-transform: MIT
-prosemirror-view: MIT
-rope-sequence: MIT
-w3c-keyname: MIT
 KaTeX: MIT

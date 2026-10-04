@@ -231,3 +231,5 @@ manager-drafts = Recovery drafts
 manager-restore-draft = Open draft
 editor-save-copy = Save as new card
 editor-remove-source = Remove source
+
+editor-note-missing = The linked Zotero note is missing or in the trash. Restore it in Zotero before editing this card.

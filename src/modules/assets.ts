@@ -45,7 +45,7 @@ export function cleanupUnusedImages(): Promise<number> {
     if (!(await IOUtils.exists(assetDirectory()))) return 0;
     if (stopping) return 0;
     const rows = await getAll<{ body: string }>(
-      "SELECT body FROM zettels UNION ALL SELECT body FROM editor_drafts",
+      "SELECT body FROM zettels UNION ALL SELECT body FROM editor_drafts UNION ALL SELECT original_body AS body FROM card_notes",
     );
     const referenced = new Set<string>();
     for (let i = 0; i < rows.length; i++) {

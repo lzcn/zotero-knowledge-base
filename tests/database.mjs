@@ -287,7 +287,7 @@ async function initialize(label, dataDir, prepare) {
   }
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
-  check("schemaVersion is 5", schema.version === "5", `got ${schema.version}`);
+  check("schemaVersion is 6", schema.version === "6", `got ${schema.version}`);
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
     "all required columns present",

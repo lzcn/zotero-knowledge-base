@@ -9,6 +9,17 @@ import {
   saveEditorDraft,
   discardEditorDraft,
 } from "./editor-drafts";
+import {
+  acquireNativeNote,
+  projectNativeNote,
+  nativeNoteHTML,
+  saveNativeCard,
+  releaseNativeNote,
+  trashNativeNote,
+  duplicateNativeNote,
+  prepareNativePreview,
+  nativePreviewHTML,
+} from "./native-notes";
 import { richTextToMarkdown } from "./rich-text";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
@@ -42,7 +53,6 @@ import {
   resolveRefs,
   parseLinks,
   saveZettel,
-  saveEditorCard,
   type Backlink,
   type ResolvedLink,
   type Zettel,
@@ -103,21 +113,30 @@ export const api = {
   },
 
   renderMarkdown(body: string): string {
-    return renderMarkdown(
-      body,
-      mainWindow() as unknown as Parameters<typeof renderMarkdown>[1],
-      resolveAssetURL,
-      getCitation,
+    return nativePreviewHTML(
+      renderMarkdown(
+        body,
+        mainWindow() as unknown as Parameters<typeof renderMarkdown>[1],
+        resolveAssetURL,
+        getCitation,
+      ),
     );
   },
 
-  prepareMarkdown: prepareCitations,
+  async prepareMarkdown(body: string): Promise<void> {
+    await Promise.all([prepareCitations(body), prepareNativePreview(body)]);
+  },
 
   saveEditorDraft,
   discardEditorDraft,
   getEditorDraft,
   listEditorDrafts,
-  saveEditorCard,
+  saveEditorCard: saveNativeCard,
+  acquireNativeNote,
+  duplicateNativeNote,
+  projectNativeNote,
+  nativeNoteHTML,
+  releaseNativeNote,
   importImage,
   pickImage,
   updateImageDraft,
@@ -238,8 +257,9 @@ export const api = {
     return saveZettel(input);
   },
 
-  deleteZettel(id: string): Promise<void> {
-    return deleteZettel(id);
+  async deleteZettel(id: string): Promise<void> {
+    await trashNativeNote(id);
+    await deleteZettel(id);
   },
 
   /* ---------------- zotero integration ---------------- */

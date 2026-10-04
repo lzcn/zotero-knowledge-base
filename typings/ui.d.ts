@@ -13,10 +13,11 @@ declare global {
     knowledgeBaseDraftId?: string;
     knowledgeBaseStopping?: boolean;
     knowledgeBaseFlushDraft?: () => Promise<void>;
-    KnowledgeBaseRichEditor: {
+    knowledgeBaseStopEditor?: () => void;
+    KnowledgeBaseNativeEditor: {
       create(
-        options: import("../src/ui/rich-editor").RichEditorOptions,
-      ): import("../src/ui/rich-editor").RichEditorController;
+        options: import("../src/ui/native-editor").NativeEditorOptions,
+      ): Promise<import("../src/ui/native-editor").NativeEditorController>;
     };
     KnowledgeBaseEditing: {
       formatEdit: typeof import("../src/ui/editor-formatting").formatEdit;
@@ -40,7 +41,7 @@ declare global {
 }
 
 export interface EditorElements {
-  "knowledge-base-rich-frame": HTMLIFrameElement;
+  "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;
   "knowledge-base-command-menu": HTMLDivElement;
   "knowledge-base-command-search": HTMLInputElement;

@@ -7,9 +7,7 @@ import { readFileSync } from "node:fs";
 // Gecko caches chrome stylesheets across hot updates. Change their URL when CSS changes.
 const styleVersion = `${pkg.version}-${createHash("sha256")
   .update(readFileSync(new URL("./addon/content/manager.css", import.meta.url)))
-  .update(
-    readFileSync(new URL("./addon/content/rich-editor.css", import.meta.url)),
-  )
+  .update(readFileSync(new URL("./src/ui/native-editor.ts", import.meta.url)))
   .digest("hex")
   .slice(0, 12)}`;
 

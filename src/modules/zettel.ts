@@ -322,6 +322,7 @@ export async function saveZettel(input: SaveCardInput): Promise<string> {
 
 export async function saveEditorCard(
   input: SaveCardInput,
+  beforeCommit?: () => Promise<void>,
 ): Promise<{ id: string; updatedAt: number }> {
   let now = Date.now();
   const title = input.title.trim();
@@ -389,6 +390,7 @@ export async function saveEditorCard(
     await saveParent(id, input.parentId);
     await reindexLinks(id, body);
     await resolveUnresolvedLinks();
+    await beforeCommit?.();
     if (input.draftId && input.draftRevision !== undefined)
       await exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
         input.draftId,

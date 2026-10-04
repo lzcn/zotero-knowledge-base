@@ -11,7 +11,15 @@ const workspace = await mkdtemp(path.join(tmpdir(), "knowledge-base-ui-"));
 const entry = path.join(workspace, "entry.ts");
 await writeFile(
   entry,
-  ["markdown", "zotero", "graph", "assets", "rich-text", "references"]
+  [
+    "markdown",
+    "zotero",
+    "graph",
+    "assets",
+    "rich-text",
+    "references",
+    "native-notes",
+  ]
     .map(
       (name) =>
         `export * as ${name.replace(/-/g, "_")} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
@@ -38,6 +46,7 @@ const {
   graph: graphModule,
   assets,
   references,
+  native_notes,
 } = await import(pathToFileURL(bundle).href);
 let checks = 0;
 function check(label, fn) {
@@ -468,15 +477,6 @@ const editorXML = await readFile(
   path.join(ROOT, "addon/content/editor.xhtml"),
   "utf8",
 );
-const richBundle = path.join(workspace, "rich-editor.js");
-await build({
-  entryPoints: [path.join(ROOT, "src/ui/rich-editor.ts")],
-  bundle: true,
-  format: "iife",
-  platform: "browser",
-  outfile: richBundle,
-});
-const richScript = await readFile(richBundle, "utf8");
 const windows = [];
 async function editor(args = {}, overrides = {}) {
   const dom = new JSDOM(editorXML, {
@@ -488,9 +488,25 @@ async function editor(args = {}, overrides = {}) {
     dom.window.addEventListener("load", resolve, { once: true }),
   );
   let saved;
+  let nativeHTML = "";
   const calls = { open: [], images: [], graphs: [] };
   const api = {
     prepareMarkdown: async () => {},
+    nativeNoteHTML: async (title, body) =>
+      `<div data-schema-version="9"><h1>${title}</h1>${markdown.renderMarkdown(body, htmlWindow)}</div>`,
+    projectNativeNote: (html) => {
+      const doc = new JSDOM(html).window.document;
+      const root = doc.querySelector("div[data-schema-version]") || doc.body;
+      const heading = root.querySelector("h1");
+      const title = heading?.textContent || "";
+      heading?.remove();
+      return { title, body: rich_text.richTextToMarkdown(root) };
+    },
+    acquireNativeNote: async (input) => {
+      nativeHTML = await api.nativeNoteHTML(input.title, input.body);
+      return { noteID: 1, html: nativeHTML };
+    },
+    releaseNativeNote: async () => {},
     loc: (key) => key,
     renderMarkdown: (body) =>
       markdown.renderMarkdown(body, htmlWindow, assets.resolveAssetURL),
@@ -513,7 +529,8 @@ async function editor(args = {}, overrides = {}) {
     getEditorDraft: async () => null,
     saveEditorCard: async (input) => {
       saved = input;
-      return { id: "20261001000001", updatedAt: 1 };
+      nativeHTML = await api.nativeNoteHTML(input.title, input.body);
+      return { id: "20261001000001", updatedAt: 1, html: nativeHTML };
     },
     openLink: async (href) => calls.open.push(href),
     openImage: (url) => calls.images.push(url),
@@ -531,6 +548,7 @@ async function editor(args = {}, overrides = {}) {
   };
   dom.window.Zotero = {
     ZoteroKnowledgeBase: { api },
+    Items: { getAsync: async () => ({ getNote: () => nativeHTML }) },
     logError: (error) => {
       throw error;
     },
@@ -538,27 +556,28 @@ async function editor(args = {}, overrides = {}) {
   dom.window.arguments = [args];
   dom.window.eval(previewScript);
   dom.window.eval(formattingScript);
-  const richFrame = dom.window.document.getElementById(
-    "knowledge-base-rich-frame",
-  );
-  const richWindow = richFrame.contentWindow;
-  richWindow.document.open();
-  richWindow.document.write(
-    '<!doctype html><html><body><div id="editor"></div></body></html>',
-  );
-  richWindow.document.close();
-  richWindow.requestAnimationFrame = (fn) => richWindow.setTimeout(fn, 0);
-  richWindow.cancelAnimationFrame = (id) => richWindow.clearTimeout(id);
-  richWindow.Range.prototype.getClientRects = () => [];
-  richWindow.Range.prototype.getBoundingClientRect = () => ({
-    top: 0,
-    left: 0,
-    bottom: 0,
-    right: 0,
-    width: 0,
-    height: 0,
-  });
-  richWindow.eval(richScript);
+  dom.window.KnowledgeBaseNativeEditor = {
+    create: async (options) => {
+      let html = nativeHTML;
+      return {
+        getHTML: () => html,
+        getSavedHTML: () => html,
+        flush: async () => {},
+        reload: async () => {
+          html = nativeHTML;
+        },
+        setReadOnly: async (value) => {
+          options.element.mode = value ? "view" : "edit";
+        },
+        insertHTML: (content) => {
+          html = content;
+          options.onChange(content);
+        },
+        focus: () => {},
+        destroy: () => {},
+      };
+    },
+  };
   dom.window.eval(
     editorScript + "\nwindow.__editorEval = (expression) => eval(expression);",
   );
@@ -801,25 +820,6 @@ check(
   "The insertion menu applies a chosen command to the saved selection",
   () => assert.equal(commandBody.value, "## Selected title"),
 );
-ed.$("knowledge-base-editor-body").value = sample;
-await ed.win.__editorEval('setEditorMode("reading", false)');
-check(
-  "HTML Markdown including task checkbox renders in a Zotero XML window",
-  () => {
-    assert.ok(
-      ed
-        .$("knowledge-base-editor-preview")
-        .querySelector("input[type=checkbox]"),
-    );
-    assert.ok(ed.$("knowledge-base-editor-preview").querySelector("table"));
-    assert.equal(
-      ed.$("knowledge-base-editor-preview").querySelector("input").namespaceURI,
-      "http://www.w3.org/1999/xhtml",
-    );
-  },
-);
-const richFrame = ed.$("knowledge-base-rich-frame");
-const richWindow = richFrame.contentWindow;
 const nativeClick = (element, win) =>
   element.dispatchEvent(new win.MouseEvent("click", { bubbles: true }));
 async function chooseMode(fixture, mode) {
@@ -830,322 +830,111 @@ async function chooseMode(fixture, mode) {
   await wait();
   await wait();
 }
-await chooseMode(ed, "visual");
-const richSurface = richWindow.document.querySelector(".tiptap");
-assert.ok(richSurface);
-check(
-  "New cards start in visual mode and the three modes show one body surface",
-  () => {
-    assert.equal(ed.initialMode, "visual");
-    assert.equal(
-      ed.$("knowledge-base-editor-mode").querySelectorAll("menuitem").length,
-      3,
-    );
-    assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
-    assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
-    assert.equal(richFrame.hidden, false);
-  },
+ed.$("knowledge-base-editor-body").value = sample;
+ed.$("knowledge-base-editor-body").dispatchEvent(
+  new ed.win.Event("input", { bubbles: true }),
 );
-const beforeModeSwitch = ed.$("knowledge-base-editor-body").value;
-const beforeModeRevision = ed.win.__editorEval("revision");
 await chooseMode(ed, "reading");
-check(
-  "Reading mode is read-only and keeps editing actions out of the way",
-  () => {
-    assert.equal(ed.$("knowledge-base-editor-title").readOnly, true);
-    assert.equal(ed.$("knowledge-base-command-open").hidden, true);
-    assert.equal(ed.$("knowledge-base-src-pick").disabled, true);
-    assert.equal(ed.$("knowledge-base-editor-preview").hidden, false);
-    assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
-    assert.equal(richFrame.hidden, true);
-    ed.win.__editorEval('insertText("Should not be inserted")');
-    assert.equal(ed.$("knowledge-base-editor-body").value, beforeModeSwitch);
-  },
-);
-await chooseMode(ed, "source");
-check(
-  "Source mode exposes only the original Markdown without rewriting it",
-  () => {
-    assert.equal(ed.$("knowledge-base-editor-title").readOnly, false);
-    assert.equal(ed.$("knowledge-base-editor-body").hidden, false);
-    assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
-    assert.equal(richFrame.hidden, true);
-    assert.equal(ed.$("knowledge-base-editor-body").value, beforeModeSwitch);
-    assert.equal(ed.win.__editorEval("revision"), beforeModeRevision);
-  },
-);
-ed.$("knowledge-base-editor-body").setSelectionRange(2, 5);
-ed.win.dispatchEvent(
-  new ed.win.KeyboardEvent("keydown", {
-    key: "e",
-    ctrlKey: true,
-    bubbles: true,
-  }),
-);
-await wait();
-await wait();
-assert.equal(ed.$("knowledge-base-editor-mode").value, "reading");
-ed.win.dispatchEvent(
-  new ed.win.KeyboardEvent("keydown", {
-    key: "e",
-    ctrlKey: true,
-    bubbles: true,
-  }),
-);
-await wait();
-await wait();
-check(
-  "Reading shortcut returns to the last editing mode and source selection",
-  () => {
-    assert.equal(ed.$("knowledge-base-editor-mode").value, "source");
-    assert.equal(ed.$("knowledge-base-editor-body").selectionStart, 2);
-    assert.equal(ed.$("knowledge-base-editor-body").selectionEnd, 5);
-  },
-);
+check("Reading uses the host note component in view mode", () => {
+  assert.equal(ed.$("knowledge-base-rich-frame").localName, "note-editor");
+  assert.equal(ed.$("knowledge-base-rich-frame").mode, "view");
+  assert.equal(ed.$("knowledge-base-rich-frame").hidden, false);
+  assert.equal(ed.$("knowledge-base-editor-body").hidden, true);
+  assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+});
 await chooseMode(ed, "visual");
-assert.equal(richWindow.document.querySelector(".tiptap"), richSurface);
-
-// Use the engine's document transaction; no direct DOM rewrites or fake input event.
-const controller = ed.win.__editorEval("richEditor");
-controller.setHTML(
-  markdown.renderMarkdown("[[stable-id|My label]]", htmlWindow),
-);
-controller.insertHTML("<p>More text</p>");
-check("Visual edits preserve explicit card-link aliases", () => {
-  assert.ok(
-    ed.$("knowledge-base-editor-body").value.includes("[[stable-id|My label]]"),
+check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
+  assert.equal(ed.initialMode, "visual");
+  assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
+  assert.equal(ed.$("knowledge-base-editor-title").hidden, true);
+  assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+});
+check("Native math projects to Markdown without losing LaTeX", () => {
+  assert.equal(
+    rich_text.richTextToMarkdown(
+      '<p>A <span class="math">$x^2$</span>.</p><pre class="math">$$y^2$$</pre>',
+    ),
+    "A $x^2$.\n\n$$y^2$$",
   );
 });
-controller.setHTML(
-  '<p><a href="knowledge-base://card/stable-id">Old name</a></p><p><img src="resource://knowledge-base-assets/image-test.png" alt="Figure"></p>',
-);
-controller.insertHTML("<p>Changed directly in visual editor</p>");
-await wait();
 check(
-  "Tiptap edits persist without replacing the editing DOM or losing card and image identities",
+  "Native structured citations, annotations and image keys stay intact in source",
   () => {
-    assert.ok(
-      ed
-        .$("knowledge-base-editor-body")
-        .value.includes("Changed directly in visual editor"),
-    );
-    assert.ok(
-      ed
-        .$("knowledge-base-editor-body")
-        .value.includes("[Old name](knowledge-base://card/stable-id)"),
-    );
-    assert.ok(
-      ed
-        .$("knowledge-base-editor-body")
-        .value.includes("knowledge-base-asset:image-test.png"),
-    );
-    assert.equal(richWindow.document.querySelector(".tiptap"), richSurface);
+    for (const html of [
+      '<span class="citation" data-citation="%7B%7D">Author 2026</span>',
+      '<span data-annotation="%7B%7D">Highlight</span>',
+      '<img data-attachment-key="IMG12345">',
+    ]) {
+      assert.ok(rich_text.richTextToMarkdown(html).includes(html));
+    }
   },
 );
-controller.format("bold");
-controller.insertHTML("<p><strong>Bold insertion</strong></p>");
-assert.ok(controller.getHTML().includes("<strong>"));
-richSurface.dispatchEvent(
-  new richWindow.KeyboardEvent("keydown", {
-    key: "z",
-    ctrlKey: true,
-    bubbles: true,
-  }),
-);
+globalThis.Zotero.getMainWindow = () => htmlWindow;
+const nativeMath = await native_notes.nativeNoteHTML("Native title", equations);
 check(
-  "Mature editor handles formatting and undo with its document history",
-  () => assert.ok(!controller.getHTML().includes("Bold insertion")),
-);
-controller.setHTML(
-  '<ul><li><input type="checkbox" checked="checked">A task</li></ul><table><thead><tr><th>A</th></tr></thead><tbody><tr><td>B</td></tr></tbody></table>',
-);
-controller.insertHTML("<p>Tail</p>");
-check("Tiptap tables and tasks round-trip to Markdown", () => {
-  assert.match(ed.$("knowledge-base-editor-body").value, /\| A \|/);
-  assert.match(ed.$("knowledge-base-editor-body").value, /\[x\]/);
-});
-controller.setHTML(markdown.renderMarkdown(equations, htmlWindow));
-controller.insertHTML("<p>After equations</p>");
-check(
-  "Tiptap keeps math nodes and LaTeX when editing surrounding prose",
+  "Native note creation uses host-compatible math and a real title heading",
   () => {
-    const value = ed.$("knowledge-base-editor-body").value;
-    assert.match(value, /\$E = mc\^2\$/);
     assert.ok(
-      value.includes(String.raw`\int_0^1 x^2\,dx = \frac{1}{3}`),
-      value + "\n" + controller.getHTML(),
+      nativeMath.startsWith(
+        '<div data-schema-version="2"><h1>Native title</h1>',
+      ),
     );
-    assert.ok(value.includes("After equations"));
-    assert.ok(richSurface.querySelector(".katex"));
+    assert.ok(nativeMath.includes('<span class="math">$E = mc^2$</span>'));
+    assert.ok(nativeMath.includes('<pre class="math">'));
+    const projected = native_notes.projectNativeNote(nativeMath);
+    assert.equal(projected.title, "Native title");
+    assert.ok(projected.body.includes(String.raw`\int_0^1 x^2\,dx`));
   },
 );
-const mathEngine = richSurface.editor;
-const findMath = (name) => {
-  let result;
-  mathEngine.state.doc.descendants((node, pos) => {
-    if (!result && node.type.name === name) result = { node, pos };
-  });
-  return result;
+check(
+  "Native tables with paragraph-wrapped cells project to valid Markdown",
+  () => {
+    const projected = native_notes.projectNativeNote(
+      '<div data-schema-version="9"><h1>Table</h1><table>\n<tbody>\n<tr>\n<th><p>Connection</p></th>\n<th><p>Purpose</p></th>\n</tr>\n<tr>\n<td><p>Parent</p></td>\n<td><p>Outline</p></td>\n</tr>\n</tbody>\n</table></div>',
+    );
+    assert.equal(
+      projected.body,
+      "| Connection | Purpose |\n| --- | --- |\n| Parent | Outline |",
+    );
+  },
+);
+const citationURI = "http://zotero.org/users/local/test/items/ABCD1234";
+const metadata = [
+  {
+    uris: [citationURI],
+    itemData: { title: "Structured citation", type: "book" },
+  },
+];
+const locatedCitation = {
+  citationItems: [{ uris: [citationURI], locator: "23", label: "page" }],
+  properties: {},
 };
-richWindow.prompt = () => {
-  throw new Error("Math editing must never open a JavaScript prompt");
-};
-let inlineMath = findMath("inlineMath");
-mathEngine.commands.setTextSelection(inlineMath.pos);
-richSurface.dispatchEvent(
-  new richWindow.KeyboardEvent("keydown", {
-    key: "ArrowRight",
-    bubbles: true,
-  }),
+const structuredHTML = `<div data-schema-version="9" data-citation-items="${encodeURIComponent(JSON.stringify(metadata))}"><h1>Metadata</h1><p><span class="citation" data-citation="${encodeURIComponent(JSON.stringify(locatedCitation))}">Author 2026, p. 23</span></p><p><img data-attachment-key="IMAG1234"></p></div>`;
+const structuredProjection = native_notes.projectNativeNote(structuredHTML);
+const structuredRoundTrip = await native_notes.nativeNoteHTML(
+  structuredProjection.title,
+  structuredProjection.body,
 );
 check(
-  "Arrow navigation expands inline math as editable Markdown document text",
+  "Source edits preserve citation item data, locators and native image identity",
   () => {
+    const doc = new JSDOM(structuredRoundTrip).window.document;
+    const citation = JSON.parse(
+      decodeURIComponent(
+        doc.querySelector("[data-citation]").getAttribute("data-citation"),
+      ),
+    );
+    assert.equal(citation.citationItems[0].locator, "23");
     assert.equal(
-      mathEngine.state.selection.$from.parent.type.name,
-      "inlineMath",
+      citation.citationItems[0].itemData.title,
+      "Structured citation",
     );
     assert.equal(
-      richSurface.querySelector(".inline-math .math-source").textContent,
-      "$E = mc^2$",
-    );
-    assert.ok(richSurface.querySelector(".inline-math.math-editing"));
-  },
-);
-mathEngine.commands.setTextSelection({
-  from: inlineMath.pos + 2,
-  to: inlineMath.pos + inlineMath.node.nodeSize - 2,
-});
-mathEngine.view.dispatch(mathEngine.state.tr.insertText("E = mc^3"));
-check(
-  "Editing formula text saves its Markdown delimiters without a dialog",
-  () => {
-    assert.ok(ed.$("knowledge-base-editor-body").value.includes("$E = mc^3$"));
-    assert.ok(controller.getHTML().includes('data-math-source="$E = mc^3$"'));
-  },
-);
-richSurface.dispatchEvent(
-  new richWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
-);
-check("Leaving formula text restores its rendered preview", () => {
-  assert.equal(richSurface.querySelector(".inline-math.math-editing"), null);
-  assert.ok(richSurface.querySelector(".inline-math .katex"));
-});
-mathEngine.commands.undo();
-check("In-place formula edits participate in the editor's undo history", () => {
-  assert.ok(ed.$("knowledge-base-editor-body").value.includes("$E = mc^2$"));
-});
-let blockMath = findMath("blockMath");
-mathEngine.commands.setTextSelection(blockMath.pos + 4);
-mathEngine.view.dispatch(mathEngine.state.tr.insertText("a+b"));
-check("Display math keeps editable dollar markers and multiline source", () => {
-  assert.ok(
-    richSurface
-      .querySelector(".block-math.math-editing .math-source")
-      .textContent.startsWith("$$\na+b"),
-  );
-  assert.ok(ed.$("knowledge-base-editor-body").value.includes("$$\na+b"));
-});
-richSurface.dispatchEvent(
-  new richWindow.KeyboardEvent("keydown", {
-    key: "Enter",
-    bubbles: true,
-    cancelable: true,
-  }),
-);
-check("Enter inserts an actual newline inside Markdown display math", () => {
-  assert.ok(findMath("blockMath").node.textContent.startsWith("$$\na+b\n"));
-});
-inlineMath = findMath("inlineMath");
-mathEngine.commands.setTextSelection({
-  from: inlineMath.pos + 1,
-  to: inlineMath.pos + 2,
-});
-mathEngine.commands.deleteSelection();
-check("An unfinished formula preserves exactly what was typed", () => {
-  const html = new JSDOM(controller.getHTML()).window.document;
-  assert.equal(
-    html
-      .querySelector('[data-type="inline-math"]')
-      .getAttribute("data-math-source"),
-    "E = mc^2$",
-  );
-  assert.ok(
-    ed.$("knowledge-base-editor-body").value.includes("Inline E = mc^2$."),
-  );
-});
-controller.setHTML("<p></p>");
-function typeMath(text) {
-  for (const char of text) {
-    const { from, to } = mathEngine.state.selection;
-    const handled = mathEngine.view.someProp("handleTextInput", (handler) =>
-      handler(mathEngine.view, from, to, char),
-    );
-    if (!handled)
-      mathEngine.view.dispatch(mathEngine.state.tr.insertText(char));
-  }
-}
-typeMath("$x^2$");
-check("Typing Markdown math creates a source-editable formula", () => {
-  assert.equal(findMath("inlineMath").node.textContent, "$x^2$");
-  assert.equal(ed.$("knowledge-base-editor-body").value, "$x^2$");
-});
-controller.setHTML("<p></p>");
-typeMath("$$");
-richSurface.dispatchEvent(
-  new richWindow.KeyboardEvent("keydown", {
-    key: "Enter",
-    bubbles: true,
-    cancelable: true,
-  }),
-);
-check("Typing a display-math opener creates a multiline Markdown block", () => {
-  assert.equal(findMath("blockMath").node.textContent, "$$\n\n$$");
-  assert.equal(mathEngine.state.selection.$from.parent.type.name, "blockMath");
-});
-controller.setHTML("<p></p>");
-typeMath("[@Author2026]");
-check("Typing a citation in visual mode retains its Markdown key", () => {
-  assert.equal(ed.$("knowledge-base-editor-body").value, "[@Author2026]");
-  assert.equal(
-    richSurface.querySelector("a").getAttribute("data-citation-key"),
-    "Author2026",
-  );
-});
-typeMath(" follows");
-check(
-  "Text typed after a citation is preserved outside the citation key",
-  () => {
-    assert.equal(
-      ed.$("knowledge-base-editor-body").value,
-      "[@Author2026] follows",
+      doc.querySelector("img").getAttribute("data-attachment-key"),
+      "IMAG1234",
     );
   },
 );
-controller.setHTML(
-  markdown.renderMarkdown("[@Author2026] [@Author2026]", htmlWindow),
-);
-mathEngine.commands.setTextSelection(mathEngine.state.doc.content.size - 1);
-typeMath(" tail");
-check("Repeated citations stay separate and retain trailing text", () => {
-  assert.equal(
-    ed.$("knowledge-base-editor-body").value,
-    "[@Author2026] [@Author2026] tail",
-  );
-});
-controller.setHTML(citationHTML);
-controller.insertHTML("<p>More notes</p>");
-check(
-  "Editing rendered citations never replaces citation keys with author-year text",
-  () => {
-    assert.ok(
-      ed
-        .$("knowledge-base-editor-body")
-        .value.startsWith("[@Author2026] [@Missing]"),
-    );
-  },
-);
-controller.setHTML(markdown.renderMarkdown(equations, htmlWindow));
 await chooseMode(ed, "source");
 ed.win.__editorEval("toggleSourceDrop()");
 await ed.win.__editorEval("searchSources()");
@@ -1336,13 +1125,6 @@ check("Image file picker inserts a persistent Markdown image", () =>
   ),
 );
 await chooseMode(ed, "reading");
-ed.$("knowledge-base-editor-preview").querySelector("img").click();
-check("Image preview opens the full image viewer", () =>
-  assert.equal(
-    ed.calls.images[0],
-    "resource://knowledge-base-assets/image-test.png",
-  ),
-);
 await chooseMode(ed, "source");
 const paste = new ed.win.Event("paste", { bubbles: true, cancelable: true });
 Object.defineProperty(paste, "clipboardData", {

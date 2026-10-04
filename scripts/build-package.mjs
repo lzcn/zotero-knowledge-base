@@ -21,8 +21,8 @@ const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const outputRoot = join(root, "dist");
 const addonDirectory = join(root, "build", "addon");
 const sourceCSS = await readFile(join(root, "addon/content/manager.css"));
-const richCSS = await readFile(join(root, "addon/content/rich-editor.css"));
-const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).update(richCSS).digest("hex").slice(0, 12)}`;
+const nativeEditor = await readFile(join(root, "src/ui/native-editor.ts"));
+const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).update(nativeEditor).digest("hex").slice(0, 12)}`;
 const replacements = {
   ...pkg.config,
   buildVersion: pkg.version,

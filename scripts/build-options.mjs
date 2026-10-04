@@ -2,10 +2,10 @@
 export function buildOptions(pkg, environment, outputDirectory = "dist/addon") {
   return [
     {
-      entryPoints: ["src/ui/rich-editor.ts"],
+      entryPoints: ["src/ui/native-editor.ts"],
       bundle: true,
       target: "firefox115",
-      outfile: `${outputDirectory}/content/rich-editor.js`,
+      outfile: `${outputDirectory}/content/native-editor.js`,
     },
     {
       entryPoints: ["src/ui/editor-formatting.ts"],

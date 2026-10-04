@@ -1859,3 +1859,8 @@ summary {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Keep note metadata in Zotero; this window already has card connections. */
+#knowledge-base-rich-frame #links-container {
+  display: none;
+}

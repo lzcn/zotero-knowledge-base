@@ -21,6 +21,25 @@ export function richTextToMarkdown(html: string | HTMLElement): string {
       ((node as HTMLElement & { isBlock: boolean }).isBlock ? "\n\n" : ""),
   });
   converter.use(gfm);
+  converter.addRule("nativeMath", {
+    filter: (node) =>
+      ["SPAN", "PRE"].includes(node.nodeName) &&
+      node.classList.contains("math"),
+    replacement: (_content, node) =>
+      node.nodeName === "PRE"
+        ? `\n\n${node.textContent}\n\n`
+        : node.textContent || "",
+  });
+  // Preserve the host's structured data rather than flattening citations or images.
+  converter.addRule("nativeData", {
+    filter: (node) =>
+      !!(
+        node.getAttribute("data-citation") ||
+        node.getAttribute("data-annotation") ||
+        node.getAttribute("data-attachment-key")
+      ),
+    replacement: (_content, node) => (node as HTMLElement).outerHTML,
+  });
   converter.addRule("citation", {
     filter: (node) =>
       node.nodeName === "A" && !!node.getAttribute("data-citation-key"),

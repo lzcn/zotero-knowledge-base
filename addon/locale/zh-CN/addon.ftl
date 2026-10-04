@@ -205,3 +205,5 @@ manager-drafts = 可恢复草稿
 manager-restore-draft = 打开草稿
 editor-save-copy = 另存为新卡片
 editor-remove-source = 移除来源
+
+editor-note-missing = 关联的 Zotero 笔记不存在或已移入回收站。请先在 Zotero 中恢复笔记。

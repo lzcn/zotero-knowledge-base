@@ -1,6 +1,11 @@
 import { config, version } from "../package.json";
 import { getString, initLocale } from "./utils/locale";
 import { closeDB, initDB } from "./modules/db";
+import {
+  initNativeNotes,
+  closeNativeNotes,
+  stopNativeNotes,
+} from "./modules/native-notes";
 import { rebuildCounts } from "./modules/zettel";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import { registerReaderUI, unregisterReaderUI } from "./modules/reader";
@@ -63,6 +68,7 @@ async function start(token: number): Promise<void> {
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
       ["initAssets", initAssets],
+      ["nativeNotes", initNativeNotes],
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
       ["registerPreferences", registerPreferences],
@@ -185,6 +191,7 @@ async function releaseResources(): Promise<void> {
     unregisterPreferences,
     unregisterItemPaneUI,
     unregisterReaderUI,
+    closeNativeNotes,
     closeAssets,
     () => ztoolkit.unregisterAll(),
     closeDB,
@@ -206,11 +213,13 @@ function onAppShutdown(): void {
     const editor = win as unknown as Window & {
       knowledgeBaseFlushDraft?: () => Promise<void>;
       knowledgeBaseStopping?: boolean;
+      knowledgeBaseStopEditor?: () => void;
     };
     try {
       editor
         .knowledgeBaseFlushDraft?.()
         .catch((error) => Zotero.logError(error));
+      editor.knowledgeBaseStopEditor?.();
     } catch (error) {
       Zotero.logError(
         error instanceof Error ? error : new Error(String(error)),
@@ -218,6 +227,7 @@ function onAppShutdown(): void {
     }
     editor.knowledgeBaseStopping = true;
   }
+  stopNativeNotes();
   ++generation;
   ready = false;
   addon.data.alive = false;
