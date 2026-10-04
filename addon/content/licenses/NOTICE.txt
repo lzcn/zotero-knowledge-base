@@ -69,4 +69,3 @@ prosemirror-view: MIT
 rope-sequence: MIT
 w3c-keyname: MIT
 KaTeX: MIT
-@tiptap/extension-mathematics: MIT

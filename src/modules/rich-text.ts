@@ -5,6 +5,9 @@ import { cardRefFromURL } from "./markdown";
 function mathMarkdown(element: HTMLElement): string | undefined {
   const kind = element.getAttribute("data-type");
   if (kind !== "inline-math" && kind !== "block-math") return;
+  const source = element.getAttribute("data-math-source");
+  if (source !== null)
+    return kind === "block-math" ? `\n\n${source}\n\n` : source;
   const latex = element.getAttribute("data-latex") || "";
   return kind === "block-math" ? `\n\n$$\n${latex}\n$$\n\n` : `$${latex}$`;
 }

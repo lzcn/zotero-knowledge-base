@@ -777,6 +777,131 @@ check(
     assert.ok(richSurface.querySelector(".katex"));
   },
 );
+const mathEngine = richSurface.editor;
+const findMath = (name) => {
+  let result;
+  mathEngine.state.doc.descendants((node, pos) => {
+    if (!result && node.type.name === name) result = { node, pos };
+  });
+  return result;
+};
+richWindow.prompt = () => {
+  throw new Error("Math editing must never open a JavaScript prompt");
+};
+let inlineMath = findMath("inlineMath");
+mathEngine.commands.setTextSelection(inlineMath.pos);
+richSurface.dispatchEvent(
+  new richWindow.KeyboardEvent("keydown", {
+    key: "ArrowRight",
+    bubbles: true,
+  }),
+);
+check(
+  "Arrow navigation expands inline math as editable Markdown document text",
+  () => {
+    assert.equal(
+      mathEngine.state.selection.$from.parent.type.name,
+      "inlineMath",
+    );
+    assert.equal(
+      richSurface.querySelector(".inline-math .math-source").textContent,
+      "$E = mc^2$",
+    );
+    assert.ok(richSurface.querySelector(".inline-math.math-editing"));
+  },
+);
+mathEngine.commands.setTextSelection({
+  from: inlineMath.pos + 2,
+  to: inlineMath.pos + inlineMath.node.nodeSize - 2,
+});
+mathEngine.view.dispatch(mathEngine.state.tr.insertText("E = mc^3"));
+check(
+  "Editing formula text saves its Markdown delimiters without a dialog",
+  () => {
+    assert.ok(ed.$("knowledge-base-editor-body").value.includes("$E = mc^3$"));
+    assert.ok(controller.getHTML().includes('data-math-source="$E = mc^3$"'));
+  },
+);
+richSurface.dispatchEvent(
+  new richWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+);
+check("Leaving formula text restores its rendered preview", () => {
+  assert.equal(richSurface.querySelector(".inline-math.math-editing"), null);
+  assert.ok(richSurface.querySelector(".inline-math .katex"));
+});
+mathEngine.commands.undo();
+check("In-place formula edits participate in the editor's undo history", () => {
+  assert.ok(ed.$("knowledge-base-editor-body").value.includes("$E = mc^2$"));
+});
+let blockMath = findMath("blockMath");
+mathEngine.commands.setTextSelection(blockMath.pos + 4);
+mathEngine.view.dispatch(mathEngine.state.tr.insertText("a+b"));
+check("Display math keeps editable dollar markers and multiline source", () => {
+  assert.ok(
+    richSurface
+      .querySelector(".block-math.math-editing .math-source")
+      .textContent.startsWith("$$\na+b"),
+  );
+  assert.ok(ed.$("knowledge-base-editor-body").value.includes("$$\na+b"));
+});
+richSurface.dispatchEvent(
+  new richWindow.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check("Enter inserts an actual newline inside Markdown display math", () => {
+  assert.ok(findMath("blockMath").node.textContent.startsWith("$$\na+b\n"));
+});
+inlineMath = findMath("inlineMath");
+mathEngine.commands.setTextSelection({
+  from: inlineMath.pos + 1,
+  to: inlineMath.pos + 2,
+});
+mathEngine.commands.deleteSelection();
+check("An unfinished formula preserves exactly what was typed", () => {
+  const html = new JSDOM(controller.getHTML()).window.document;
+  assert.equal(
+    html
+      .querySelector('[data-type="inline-math"]')
+      .getAttribute("data-math-source"),
+    "E = mc^2$",
+  );
+  assert.ok(
+    ed.$("knowledge-base-editor-body").value.includes("Inline E = mc^2$."),
+  );
+});
+controller.setHTML("<p></p>");
+function typeMath(text) {
+  for (const char of text) {
+    const { from, to } = mathEngine.state.selection;
+    const handled = mathEngine.view.someProp("handleTextInput", (handler) =>
+      handler(mathEngine.view, from, to, char),
+    );
+    if (!handled)
+      mathEngine.view.dispatch(mathEngine.state.tr.insertText(char));
+  }
+}
+typeMath("$x^2$");
+check("Typing Markdown math creates a source-editable formula", () => {
+  assert.equal(findMath("inlineMath").node.textContent, "$x^2$");
+  assert.equal(ed.$("knowledge-base-editor-body").value, "$x^2$");
+});
+controller.setHTML("<p></p>");
+typeMath("$$");
+richSurface.dispatchEvent(
+  new richWindow.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check("Typing a display-math opener creates a multiline Markdown block", () => {
+  assert.equal(findMath("blockMath").node.textContent, "$$\n\n$$");
+  assert.equal(mathEngine.state.selection.$from.parent.type.name, "blockMath");
+});
+controller.setHTML(markdown.renderMarkdown(equations, htmlWindow));
 await chooseMode(ed, "source");
 ed.win.__editorEval("toggleSourceDrop()");
 await ed.win.__editorEval("searchSources()");

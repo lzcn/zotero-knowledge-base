@@ -4,7 +4,7 @@ import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
-import Mathematics from "@tiptap/extension-mathematics";
+import { InlineMath, BlockMath } from "./live-math";
 
 export interface RichEditorOptions {
   html: string;
@@ -108,22 +108,8 @@ export function createRichEditor(
       TableKit.configure({ table: { resizable: false } }),
       TaskList,
       TaskItem.configure({ nested: true }),
-      Mathematics.configure({
-        inlineOptions: {
-          onClick: (node, pos) => {
-            const latex = window.prompt("LaTeX", node.attrs.latex);
-            if (latex !== null)
-              editor.commands.updateInlineMath({ latex, pos });
-          },
-        },
-        blockOptions: {
-          onClick: (node, pos) => {
-            const latex = window.prompt("LaTeX", node.attrs.latex);
-            if (latex !== null) editor.commands.updateBlockMath({ latex, pos });
-          },
-        },
-        katexOptions: { throwOnError: false, trust: false, maxExpand: 1000 },
-      }),
+      InlineMath,
+      BlockMath,
     ],
     content: prepareHTML(options.html),
     onUpdate: ({ editor }) => options.onChange(markdownHTML(editor.getHTML())),

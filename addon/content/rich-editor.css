@@ -57,6 +57,40 @@ body {
 .tiptap code {
   font-family: ui-monospace, monospace;
 }
+.live-math .math-source {
+  display: none;
+  font:
+    0.94em/1.7 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+  color: var(--fg);
+}
+.live-math.math-editing .math-source,
+.live-math:hover .math-source {
+  display: inline;
+}
+.live-math.math-editing .math-render,
+.live-math:hover .math-render {
+  display: none;
+}
+.live-math.block-math {
+  margin: 1em 0;
+  min-height: 1.7em;
+}
+.live-math.block-math .math-source {
+  display: none;
+  padding: 8px 12px;
+  background: var(--surface-subtle);
+  border-radius: 4px;
+}
+.live-math.block-math.math-editing .math-source,
+.live-math.block-math:hover .math-source {
+  display: block;
+}
+.live-math.inline-math.math-editing .math-source {
+  background: var(--surface-subtle);
+  border-radius: 3px;
+}
 .tiptap table {
   border-collapse: collapse;
   table-layout: fixed;

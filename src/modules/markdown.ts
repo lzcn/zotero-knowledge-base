@@ -35,7 +35,7 @@ const markdown = new Marked({
         if (match) return { type: "blockMath", raw: match[0], latex: match[1] };
       },
       renderer: (token) =>
-        `<div data-type="block-math" data-latex="${escapeHTML(token.latex)}"></div>`,
+        `<div data-type="block-math" data-math-source="${escapeHTML(token.raw.trimEnd())}" data-latex="${escapeHTML(token.latex)}"></div>`,
     },
     {
       name: "inlineMath",
@@ -47,7 +47,7 @@ const markdown = new Marked({
         return { type: "inlineMath", raw: match[0], latex: match[1] };
       },
       renderer: (token) =>
-        `<span data-type="inline-math" data-latex="${escapeHTML(token.latex)}"></span>`,
+        `<span data-type="inline-math" data-math-source="${escapeHTML(token.raw)}" data-latex="${escapeHTML(token.latex)}"></span>`,
     },
     {
       name: "wikilink",

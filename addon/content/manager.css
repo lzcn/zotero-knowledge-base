@@ -1080,7 +1080,7 @@ html|button[disabled] {
 }
 
 #graph-node-open[data-kind="card"] {
-  list-style-image: url("chrome://zotero/skin/16/universal/edit.svg");
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/edit.svg");
 }
 #graph-node-open[data-kind="unresolved"] {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/plus.svg");
@@ -1499,7 +1499,7 @@ summary {
   }
 }
 
-/* Native edit/trash icons and matching, pixel-aligned navigation icons. */
+/* Consistent line icons retain native toolbar focus and hover behavior. */
 .kb-native-tool {
   min-width: 28px;
   width: 28px;
@@ -1532,10 +1532,10 @@ summary {
   opacity: 0.4;
 }
 #knowledge-base-btn-edit {
-  list-style-image: url("chrome://zotero/skin/16/universal/edit.svg");
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/edit.svg");
 }
 #knowledge-base-btn-delete {
-  list-style-image: url("chrome://zotero/skin/16/universal/trash.svg");
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/trash.svg");
 }
 #knowledge-base-btn-graph,
 #knowledge-base-btn-local-graph,
@@ -1621,7 +1621,7 @@ summary {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/open.svg");
 }
 #graph-node-open[data-kind="card"] {
-  list-style-image: url("chrome://zotero/skin/16/universal/edit.svg");
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/edit.svg");
 }
 #graph-node-open[data-kind="unresolved"] {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/plus.svg");
@@ -1803,4 +1803,25 @@ summary {
 }
 #knowledge-base-btn-delete:hover {
   color: var(--danger);
+}
+
+/* The primary card actions use a larger, matching 20 px icon set. */
+#knowledge-base-btn-edit,
+#knowledge-base-btn-delete,
+#knowledge-base-btn-local-graph,
+#knowledge-base-btn-graph,
+#knowledge-base-editor-graph {
+  width: 32px;
+  min-width: 32px;
+  flex-basis: 32px;
+  height: 32px;
+  padding: 6px;
+}
+#knowledge-base-btn-edit .toolbarbutton-icon,
+#knowledge-base-btn-delete .toolbarbutton-icon,
+#knowledge-base-btn-local-graph .toolbarbutton-icon,
+#knowledge-base-btn-graph .toolbarbutton-icon,
+#knowledge-base-editor-graph .toolbarbutton-icon {
+  width: 20px;
+  height: 20px;
 }

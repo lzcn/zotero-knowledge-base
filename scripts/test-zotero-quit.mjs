@@ -85,9 +85,11 @@ function runQuitTest() {
         const iconsVisible = buttons.every(button => {
           const icon = button.querySelector(".toolbarbutton-icon");
           const text = button.querySelector(".toolbarbutton-text");
-          return icon?.getBoundingClientRect().width === 16 && icon.getBoundingClientRect().height === 16
+          const largeIcon = ["knowledge-base-btn-edit", "knowledge-base-btn-delete", "knowledge-base-btn-local-graph", "knowledge-base-btn-graph"].includes(button.id);
+          const size = largeIcon ? 20 : 16;
+          return icon?.getBoundingClientRect().width === size && icon.getBoundingClientRect().height === size
             && text && button.ownerGlobal.getComputedStyle(text).display === "none"
-            && button.getBoundingClientRect().width === 28;
+            && button.getBoundingClientRect().width === (largeIcon ? 32 : 28);
         });
         const relations = [...manager.document.querySelectorAll(".relation-link")];
         const identitiesVisible = relations.length >= 2 && relations.every(button => {
@@ -121,7 +123,7 @@ function runQuitTest() {
           if (rootElement.dataset.mode !== mode || surfaces.filter(surface => !surface.hidden).length !== 1) throw new Error("Editor mode is not a single surface: " + mode);
         }
         await switchMode("source");
-        body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$.\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
+        body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$.\\n\\n$$\\nx^2+y^2\\n$$\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
         body.dispatchEvent(new editor.Event("input", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(rows[0].id)).body !== body.value; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if ((await kb.api.getZettel(rows[0].id)).body !== body.value) throw new Error("Editor autosave did not persist");
@@ -136,6 +138,46 @@ function runQuitTest() {
         for (let n = 0; n < 80 && (frame.hidden || !frame.contentDocument.querySelector(".tiptap")); n++) await new Promise(resolve => setTimeout(resolve, 100));
         const richSurface = frame.contentDocument.querySelector(".tiptap");
         if (frame.hidden || !richSurface?.querySelector("a[href^='knowledge-base:']")) throw new Error("Visual editing failed to render the linked card");
+        frame.contentWindow.prompt = () => { throw new Error("Formula editing opened a JavaScript prompt"); };
+        const mathEngine = richSurface.editor;
+        let formula;
+        mathEngine.state.doc.descendants((node, pos) => {
+          if (!formula && node.type.name === "inlineMath") formula = { node, pos };
+        });
+        if (!formula) throw new Error("Markdown formula is missing");
+        mathEngine.commands.setTextSelection(formula.pos);
+        richSurface.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+        const mathSource = richSurface.querySelector(".inline-math.math-editing .math-source");
+        if (mathSource?.textContent !== "$E = mc^2$" || frame.contentWindow.getComputedStyle(mathSource).display === "none") throw new Error("Caret did not reveal editable Markdown math");
+        const exponent = formula.pos + 1 + formula.node.textContent.indexOf("2");
+        mathEngine.commands.setTextSelection({ from: exponent, to: exponent + 1 });
+        mathEngine.view.focus();
+        if (!frame.contentDocument.execCommand("insertText", false, "3")) throw new Error("Native contenteditable math input failed");
+        for (let n = 0; n < 80 && !body.value.includes("$E = mc^3$"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (!body.value.includes("$E = mc^3$")) throw new Error("In-place math input did not preserve Markdown markers");
+        richSurface.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        if (richSurface.querySelector(".inline-math.math-editing")) throw new Error("Math source did not collapse after caret exit");
+        mathEngine.commands.undo();
+        if (!body.value.includes("$E = mc^2$")) throw new Error("Markdown math undo failed");
+        mathEngine.commands.redo();
+        for (let n = 0; n < 80 && !(await kb.api.getZettel(rows[0].id)).body.includes("$E = mc^3$"); n++) await new Promise(resolve => setTimeout(resolve, 100));
+        if (!(await kb.api.getZettel(rows[0].id)).body.includes("$E = mc^3$")) throw new Error("Edited Markdown formula was not saved");
+        if (richSurface.querySelector(".inline-math.math-editing")) richSurface.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        let displayFormula;
+        mathEngine.state.doc.descendants((node, pos) => {
+          if (!displayFormula && node.type.name === "blockMath") displayFormula = { node, pos };
+        });
+        if (!displayFormula) throw new Error("Display math is missing");
+        const displayExponent = displayFormula.pos + 1 + displayFormula.node.textContent.indexOf("2");
+        mathEngine.commands.setTextSelection({ from: displayExponent, to: displayExponent + 1 });
+        mathEngine.view.focus();
+        if (!frame.contentDocument.execCommand("insertText", false, "3")) throw new Error("Native display math input failed");
+        for (let n = 0; n < 80 && !body.value.includes("x^3+y^2"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        const displaySource = richSurface.querySelector(".block-math.math-editing .math-source");
+        if (!body.value.includes("x^3+y^2") || !displaySource?.textContent.startsWith("$$") || !displaySource.textContent.endsWith("$$")) throw new Error("Display formula input lost its Markdown markers");
+        richSurface.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        for (let n = 0; n < 80 && (await kb.api.getZettel(rows[0].id)).body !== body.value; n++) await new Promise(resolve => setTimeout(resolve, 100));
+        if ((await kb.api.getZettel(rows[0].id)).body !== body.value) throw new Error("Display formula edit was not saved");
         const whiteSurfaces = [
           manager.document.getElementById("knowledge-base-detail-pane"),
           body,
@@ -182,6 +224,12 @@ function runQuitTest() {
             await IOUtils.write(PathUtils.join(screenshotDirectory, name + ".png"), new Uint8Array(await blob.arrayBuffer()));
           }
           for (const [name, win] of [["manager", manager], ["editor", editor], ["graph", graph]]) await snapshot(name, win);
+          mathEngine.commands.setTextSelection(formula.pos + 2);
+          await snapshot("math-editing", editor);
+          richSurface.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+          mathEngine.commands.setTextSelection(displayFormula.pos + 4);
+          await snapshot("display-math-editing", editor);
+          richSurface.dispatchEvent(new frame.contentWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
           await switchMode("reading");
           await snapshot("reading", editor);
           await switchMode("source");
@@ -285,7 +333,7 @@ try {
     db.close();
   }
   console.log(
-    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); three single-pane modes, compact expanded connections, native icons, autosave and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
+    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); in-place Markdown math input, undo and autosave; three single-pane modes, compact expanded connections, toolbar icons and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
   );
   passed = true;
 } finally {

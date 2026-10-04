@@ -521,6 +521,7 @@ function bindEvents() {
     run(() => api.openLink(link.getAttribute("href")));
   });
   window.addEventListener("keydown", (ev) => {
+    if (ev.defaultPrevented) return;
     if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
       ev.preventDefault();
       save(false);
