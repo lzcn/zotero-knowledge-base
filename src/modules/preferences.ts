@@ -23,7 +23,7 @@ export function setPanelWidth(name: "manager" | "graph", value: number): void {
   if (!["manager", "graph"].includes(name) || !Number.isFinite(value)) return;
   Zotero.Prefs.set(
     `${config.prefsPrefix}.panels.${name}`,
-    Math.max(18, Math.min(55, value)),
+    Math.round(Math.max(18, Math.min(55, value))),
     true,
   );
 }

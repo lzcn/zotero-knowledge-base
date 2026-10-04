@@ -19,6 +19,7 @@ await writeFile(
     "rich-text",
     "references",
     "native-notes",
+    "preferences",
   ]
     .map(
       (name) =>
@@ -49,6 +50,7 @@ const {
   references,
   native_notes,
   native_markdown_menu,
+  preferences,
 } = await import(pathToFileURL(bundle).href);
 let checks = 0;
 function check(label, fn) {
@@ -522,6 +524,95 @@ const previewScript = await readFile(
   path.join(ROOT, "addon/content/markdown.js"),
   "utf8",
 );
+const panelDOM = new JSDOM("<main><aside></aside><div></div></main>", {
+  runScripts: "outside-only",
+});
+const panelWin = panelDOM.window;
+panelWin.eval(previewScript);
+const panelHandle = panelWin.document.querySelector("main > div");
+const panelPane = panelWin.document.querySelector("aside");
+const panelValues = new Map();
+const panelErrors = [];
+panelWin.addEventListener("error", (event) => {
+  panelErrors.push(event.error);
+  event.preventDefault();
+});
+const originalPrefs = globalThis.Zotero.Prefs;
+globalThis.Zotero.Prefs = {
+  get: (key) => panelValues.get(key),
+  set: (key, value) => {
+    if (!Number.isInteger(value)) throw new Error("Invalid integer preference");
+    panelValues.set(key, value);
+  },
+};
+const panelAPI = { ...preferences, loc: (key) => key };
+panelHandle.parentElement.getBoundingClientRect = () => ({
+  left: 100,
+  right: 1100,
+  width: 1000,
+});
+const dragPanel = (x, end = "pointerup") => {
+  panelHandle.dispatchEvent(
+    new panelWin.MouseEvent("pointerdown", { button: 0 }),
+  );
+  panelWin.dispatchEvent(
+    new panelWin.MouseEvent("pointermove", { clientX: x }),
+  );
+  panelWin.dispatchEvent(new panelWin.Event(end));
+};
+check(
+  "First panel drag saves a fractional width as an integer preference",
+  () => {
+    panelWin.KnowledgeBasePanels.attach(
+      panelHandle,
+      panelPane,
+      "manager",
+      panelAPI,
+    );
+    dragPanel(414.159);
+    assert.deepEqual(panelErrors, []);
+    assert.equal(preferences.getPanelWidth("manager"), 31);
+    assert.equal(panelPane.style.flexBasis, "31%");
+    assert.equal(
+      panelWin.document.documentElement.classList.contains("resizing-panels"),
+      false,
+    );
+  },
+);
+check("Panel drag clamps its size and window blur ends dragging", () => {
+  dragPanel(0);
+  assert.equal(preferences.getPanelWidth("manager"), 18);
+  dragPanel(2000, "blur");
+  assert.equal(preferences.getPanelWidth("manager"), 55);
+  assert.equal(panelPane.style.flexBasis, "55%");
+  panelWin.dispatchEvent(
+    new panelWin.MouseEvent("pointermove", { clientX: 400 }),
+  );
+  assert.equal(panelPane.style.flexBasis, "55%");
+  assert.equal(
+    panelWin.document.documentElement.classList.contains("resizing-panels"),
+    false,
+  );
+});
+check("A failed width save still clears the panel dragging state", () => {
+  panelAPI.setPanelWidth = () => {
+    throw new Error("Preference save failed");
+  };
+  dragPanel(421.456, "pointercancel");
+  assert.equal(panelErrors.length, 1);
+  assert.match(panelErrors[0].message, /Preference save failed/);
+  assert.equal(
+    panelWin.document.documentElement.classList.contains("resizing-panels"),
+    false,
+  );
+  panelWin.dispatchEvent(
+    new panelWin.MouseEvent("pointermove", { clientX: 800 }),
+  );
+  assert.equal(panelPane.style.flexBasis, "32%");
+});
+panelWin.close();
+if (originalPrefs === undefined) delete globalThis.Zotero.Prefs;
+else globalThis.Zotero.Prefs = originalPrefs;
 const editorXML = await readFile(
   path.join(ROOT, "addon/content/editor.xhtml"),
   "utf8",

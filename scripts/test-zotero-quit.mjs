@@ -115,6 +115,17 @@ function runQuitTest() {
         const resumedSource = resumedWin.document.querySelector('.knowledge-base-native-source');
         for (let n = 0; n < 100 && resumedSource.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
         if (!resumedSource.value.includes('Conflicting native draft')) throw new Error("Restart lost native Markdown recovery draft");
+        kb.api.openManager({ selectId: card.id });
+        kb.api.openGraph({ centerId: card.id });
+        for (const [name, paneID] of [["manager", "knowledge-base-list-pane"], ["graph", "graph-inspector"]]) {
+          let pane;
+          for (let n = 0; n < 100 && !pane?.style.flexBasis; n++) {
+            const win = [...Services.wm.getEnumerator("knowledge-base:" + name)][0];
+            pane = win?.document.getElementById(paneID);
+            if (!pane?.style.flexBasis) await new Promise(resolve => setTimeout(resolve, 25));
+          }
+          if (kb.api.getPanelWidth(name) !== first.panelWidths[name] || pane?.style.flexBasis !== first.panelWidths[name] + "%") throw new Error("Restart did not restore the " + name + " panel width");
+        }
         await IOUtils.writeUTF8(${JSON.stringify(restartMarker)}, JSON.stringify({ cards: cards.length, noteKey: restoredNote.key }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         return;
@@ -563,13 +574,37 @@ function runQuitTest() {
         body.value = sourceBeforeConflict;
         if (!(await editor.save(false))) throw new Error("Conflict did not resolve after restoring the original baseline");
         await switchMode("visual");
+        function dragPanel(win, splitterID, name, percent, end = "pointerup") {
+          const handle = win.document.getElementById(splitterID);
+          const rect = handle.parentElement.getBoundingClientRect();
+          const x = name === "graph" ? rect.right - rect.width * percent / 100 : rect.left + rect.width * percent / 100;
+          let error;
+          const onError = event => { error = event.error || event.message; };
+          win.addEventListener("error", onError);
+          try {
+            handle.dispatchEvent(new win.PointerEvent("pointerdown", {button:0, bubbles:true}));
+            win.dispatchEvent(new win.PointerEvent("pointermove", {clientX:x}));
+            win.dispatchEvent(new win.Event(end));
+          } finally { win.removeEventListener("error", onError); }
+          if (error) throw new Error("Panel drag raised a host error: " + error);
+          if (win.document.documentElement.classList.contains("resizing-panels")) throw new Error("Panel resizing state was not cleared");
+          const expected = Math.round(Math.max(18, Math.min(55, percent)));
+          const persisted = Zotero.Prefs.get("extensions.zotero.knowledge-base.panels." + name, true);
+          if (!Number.isInteger(persisted) || persisted !== expected) throw new Error("Panel drag did not save an integer width: " + persisted);
+        }
+        if (Zotero.Prefs.get("extensions.zotero.knowledge-base.panels.manager", true) !== undefined || Zotero.Prefs.get("extensions.zotero.knowledge-base.panels.graph", true) !== undefined) throw new Error("Panel regression must start without saved widths");
+        dragPanel(manager, "knowledge-base-splitter", "manager", 31.4159);
+        dragPanel(graph, "graph-splitter", "graph", 27.1828, "pointercancel");
+        dragPanel(manager, "knowledge-base-splitter", "manager", 100);
+        dragPanel(manager, "knowledge-base-splitter", "manager", 0);
+        dragPanel(manager, "knowledge-base-splitter", "manager", 31.4159, "blur");
         const listHandle = manager.document.getElementById("knowledge-base-splitter");
         const originalWidth = manager.document.getElementById("knowledge-base-list-pane").getBoundingClientRect().width;
         listHandle.dispatchEvent(new manager.KeyboardEvent("keydown", {key: "ArrowRight", bubbles: true}));
-        if (!(manager.document.getElementById("knowledge-base-list-pane").getBoundingClientRect().width > originalWidth) || kb.api.getPanelWidth("manager") !== 30) throw new Error("List panel did not resize and persist");
+        if (!(manager.document.getElementById("knowledge-base-list-pane").getBoundingClientRect().width > originalWidth) || kb.api.getPanelWidth("manager") !== 33) throw new Error("List panel did not resize and persist");
         const transformBeforeResize = graph.document.querySelector("#graph-svg > g")?.getAttribute("transform");
         graph.document.getElementById("graph-splitter").dispatchEvent(new graph.KeyboardEvent("keydown", {key: "ArrowLeft", bubbles: true}));
-        if (kb.api.getPanelWidth("graph") !== 28 || transformBeforeResize !== graph.document.querySelector("#graph-svg > g")?.getAttribute("transform")) throw new Error("Graph resizing changed its viewport or failed to persist");
+        if (kb.api.getPanelWidth("graph") !== 29 || transformBeforeResize !== graph.document.querySelector("#graph-svg > g")?.getAttribute("transform")) throw new Error("Graph resizing changed its viewport or failed to persist");
         const editorRelations = editor.document.getElementById("knowledge-base-editor-relations");
         editorRelations.open = true;
         const compactConnections = editorRelations.getBoundingClientRect().height <= 141;
@@ -760,7 +795,7 @@ function runQuitTest() {
         if (thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id) throw new Error("Opening changed the original project before restart");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, panelWidths: { manager: kb.api.getPanelWidth("manager"), graph: kb.api.getPanelWidth("graph") }, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -880,7 +915,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown menus, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown menus, fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

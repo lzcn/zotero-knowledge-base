@@ -149,8 +149,9 @@ window.KnowledgeBasePanels = {
     const stop = () => {
       if (!dragging) return;
       dragging = false;
-      api.setPanelWidth(name, value);
       document.documentElement.classList.remove("resizing-panels");
+      apply(Math.round(value));
+      api.setPanelWidth(name, value);
     };
     handle.addEventListener("pointerdown", (event) => {
       if (event.button) return;
@@ -175,12 +176,14 @@ window.KnowledgeBasePanels = {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
+    window.addEventListener("blur", stop);
     window.addEventListener(
       "unload",
       () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", stop);
         window.removeEventListener("pointercancel", stop);
+        window.removeEventListener("blur", stop);
       },
       { once: true },
     );
