@@ -3,6 +3,7 @@ import { exec, getAll, getOne } from "./db";
 export interface CardIdentity {
   id: string;
   title: string;
+  reference?: string;
 }
 export interface CardFamily {
   parent: CardIdentity | null;

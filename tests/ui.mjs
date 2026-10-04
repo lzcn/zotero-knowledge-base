@@ -662,6 +662,8 @@ async function editor(args = {}, overrides = {}) {
     renderMarkdown: (body) =>
       markdown.renderMarkdown(body, htmlWindow, assets.resolveAssetURL),
     richTextToMarkdown: (html) => rich_text.richTextToMarkdown(html),
+    getZettel: async () => null,
+    copyNoteReference: (reference) => calls.open.push(`[[${reference}]]`),
     getFamily: async () => ({ parent: null, children: [] }),
     getParentCandidates: async () => [],
     getDraftLinks: async (body) =>
@@ -1424,6 +1426,39 @@ check("Zotero note references use ordinary editable Markdown link text", () => {
     "[My note title](zotero://select/library/items/NOTE1234)",
   );
 });
+const literaturePicker = await editor(
+  {},
+  {
+    listZettels: async () => [
+      {
+        id: "note-1-UNIQUE01",
+        reference: "@Author2026",
+        title: "My literature synthesis",
+      },
+    ],
+  },
+);
+await literaturePicker.win.__editorEval('setEditorMode("source", false)');
+literaturePicker.$("knowledge-base-editor-body").value = "";
+literaturePicker.win.__editorEval("openCardPicker()");
+await literaturePicker.win.__editorEval("searchCards()");
+const literaturePickerRow = literaturePicker.$(
+  "knowledge-base-link-results",
+).firstElementChild;
+check(
+  "Literature picker shows and inserts its citation-key note reference",
+  () => {
+    assert.equal(
+      literaturePickerRow.querySelector(".relation-id").textContent,
+      "[[@Author2026]]",
+    );
+    literaturePickerRow.click();
+    assert.equal(
+      literaturePicker.$("knowledge-base-editor-body").value,
+      "[[@Author2026]]",
+    );
+  },
+);
 ed.$("knowledge-base-editor-body").value = "";
 ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
 ed.win.__editorEval("openCardPicker()");
@@ -1470,7 +1505,7 @@ check(
     );
     assert.equal(
       row.querySelector(".relation-id").textContent,
-      "20261001000000",
+      "[[20261001000000]]",
     );
   },
 );
@@ -2154,6 +2189,9 @@ managerWin.Zotero = {
         managerCards.filter(
           (card) => !kind || (card.kind || "zettel") === kind,
         ),
+      copyNoteReference: (reference) => {
+        managerCalls.reference = `[[${reference}]]`;
+      },
       getZettel: async (id) => managerCards.find((card) => card.id === id),
       getFamily: async () => ({
         parent: null,
@@ -2212,7 +2250,10 @@ check(
       [...managerDoc.querySelectorAll(".zettel-row .zid")].map(
         (el) => el.textContent,
       ),
-      managerCards.map((card) => "note-kind-" + (card.kind || "zettel")),
+      managerCards.map(
+        (card) =>
+          `note-kind-${card.kind || "zettel"} · [[${card.reference || card.id}]]`,
+      ),
     );
     const actions = [
       ...managerDoc.querySelectorAll(".card-actions toolbarbutton"),
@@ -2293,6 +2334,16 @@ check("Edit, graph and new-child actions target the selected card", () => {
   assert.equal(managerCalls.graphs[0].centerId, managerCards[0].id);
   assert.equal(managerCalls.edits[1].prefillParentId, managerCards[0].id);
 });
+check(
+  "Note references expose a copyable wiki link without selecting its ID",
+  () => {
+    const button = managerDoc.getElementById("knowledge-base-detail-reference");
+    assert.equal(button.textContent, `[[${managerCards[0].id}]]`);
+    button.click();
+    assert.equal(managerCalls.reference, `[[${managerCards[0].id}]]`);
+    assert.equal(button.title, "note-reference-copy");
+  },
+);
 managerDoc.querySelector("#knowledge-base-family .family-link").click();
 check("Compact child entries still navigate to their card", () =>
   assert.equal(managerCalls.opens[0].selectId, managerCards[1].id),

@@ -4,8 +4,8 @@
 // Chrome windows are XML documents. Markdown emits HTML (including <br>,
 // <input> and <hr>), so inserting it through XML innerHTML would throw.
 window.ZoteroKnowledgeBaseMarkdown = {
-  /** @param {Element} container @param {string} id @param {string} title */
-  identity(container, id, title) {
+  /** @param {Element} container @param {string} id @param {string} title @param {string} [reference] */
+  identity(container, id, title, reference = id) {
     const name = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
       "span",
@@ -17,14 +17,23 @@ window.ZoteroKnowledgeBaseMarkdown = {
       "small",
     );
     index.className = "relation-id";
-    index.textContent = id;
+    index.textContent = `[[${reference}]]`;
     index.hidden = title === id || title === `[[${id}]]`;
     container.append(name, index);
     container.setAttribute(
       "title",
-      title && title !== id ? `${id} · ${title}` : id,
+      title && title !== id
+        ? `[[${reference}]] · ${title}`
+        : `[[${reference}]]`,
     );
     container.setAttribute("aria-label", container.getAttribute("title"));
+  },
+  /** @param {HTMLButtonElement} button @param {string} reference @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
+  reference(button, reference, api) {
+    button.hidden = !reference;
+    button.textContent = reference ? `[[${reference}]]` : "";
+    button.title = api.loc("note-reference-copy");
+    button.onclick = () => api.copyNoteReference(reference);
   },
   /** @param {Element} container @param {import("../../src/modules/hierarchy").CardFamily} family @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
   renderFamily(container, family, api) {
@@ -54,7 +63,12 @@ window.ZoteroKnowledgeBaseMarkdown = {
         "button",
       );
       button.className = "family-link relation-link";
-      this.identity(button, family.parent.id, family.parent.title);
+      this.identity(
+        button,
+        family.parent.id,
+        family.parent.title,
+        family.parent.reference,
+      );
       button.addEventListener("click", () =>
         api.openManager({ selectId: family.parent.id }),
       );
@@ -79,7 +93,7 @@ window.ZoteroKnowledgeBaseMarkdown = {
         "button",
       );
       button.className = "family-link relation-link";
-      this.identity(button, card.id, card.title);
+      this.identity(button, card.id, card.title, card.reference);
       button.addEventListener("click", () =>
         api.openManager({ selectId: card.id }),
       );

@@ -202,7 +202,7 @@ function runQuitTest() {
       await nativeMarkdownNote.saveTx();
       nativeMD.source.value += "\\n\\nConflicting native draft";
       nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.Event('input'));
-      nativeMD.nativeWindow.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'s', metaKey:true, bubbles:true, cancelable:true}));
+      nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'s', metaKey:true, bubbles:true, cancelable:true}));
       const nativeStatus = nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status');
       for (let n = 0; n < 100 && !nativeStatus.textContent.includes(kb.api.loc('native-markdown-conflict')); n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!nativeMarkdownNote.getNote().includes('External edit preserved') || nativeMarkdownNote.getNote().includes('Conflicting native draft') || nativeStatus.textContent !== kb.api.loc('native-markdown-conflict')) throw new Error("Native Markdown overwrote an external change: " + JSON.stringify({html: nativeMarkdownNote.getNote(), status:nativeStatus.outerHTML, alive:nativeMD.source.isConnected, draft:await kb.api.getEditorDraft("native-document:" + nativeMarkdownNote.libraryID + ":" + nativeMarkdownNote.key)}));
@@ -220,9 +220,16 @@ function runQuitTest() {
       }};
       Services.ww.registerNotification(nativeCloseObserver);
       try {
-        nativeMD.nativeWindow.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'w', metaKey:true, bubbles:true, cancelable:true}));
+        await new Promise(resolve => setTimeout(() => {
+          nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'w', metaKey:true, bubbles:true, cancelable:true}));
+          resolve();
+        }, 0));
+        for (let n = 0; n < 100 && nativeCloseAsked < 1 && !nativeMD.nativeWindow.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
         if (nativeMD.nativeWindow.closed || nativeCloseAsked !== 1) throw new Error("Native Markdown Command-W cancellation failed");
-        nativeMD.nativeWindow.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'w', metaKey:true, bubbles:true, cancelable:true}));
+        await new Promise(resolve => setTimeout(() => {
+          nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'w', metaKey:true, bubbles:true, cancelable:true}));
+          resolve();
+        }, 0));
         for (let n = 0; n < 100 && !nativeMD.nativeWindow.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
         if (!nativeMD.nativeWindow.closed) throw new Error("Native Markdown keep-draft close failed");
       } finally { Services.ww.unregisterNotification(nativeCloseObserver); }
@@ -259,6 +266,16 @@ function runQuitTest() {
       const literatureEditor = literatureEditors[0];
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (literatureEditor.document.getElementById("knowledge-base-note-kind").textContent !== kb.api.loc("note-kind-literature") || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
+      const literatureReference = literatureEditor.document.getElementById("knowledge-base-editor-reference");
+      if (literatureReference.textContent !== "[[@Host2026]]" || (await kb.api.getZettel(literatureID)).reference !== "@Host2026") throw new Error("Literature Note reference is missing");
+      literatureReference.click();
+      if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[@Host2026]]") throw new Error("Reference copy did not write a usable wiki link: " + JSON.stringify({plain: Zotero.Utilities.Internal.getClipboard("text/plain"), unicode: Zotero.Utilities.Internal.getClipboard("text/unicode")}));
+      if ((await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Literature citation-key navigation failed");
+      const noteLink = "[[@Host2026]]";
+      const noteLinkHTML = await kb.api.nativeNoteHTML("", noteLink);
+      if (!kb.api.getMarkdownSource(noteLinkHTML).body.includes(noteLink) || (await kb.api.getDraftLinks(noteLink + " [@Host2026]")).length !== 1) throw new Error("Native Markdown roundtrip confused note links with item citations");
+      await kb.api.saveZettel({id: thinkingID, kind: "thinking", title: "Existing project", body: noteLink});
+      if ((await kb.api.getOutgoing(thinkingID))[0]?.targetId !== literatureID || !(await kb.api.getBacklinks(literatureID)).some(link => link.sourceId === thinkingID)) throw new Error("Literature reference was not indexed into backlinks");
       await openMarkdownMenu(literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "source"; n++) await new Promise(resolve => setTimeout(resolve, 50));
       const literatureBody = literatureEditor.document.getElementById("knowledge-base-editor-body");
@@ -289,6 +306,14 @@ function runQuitTest() {
       if (!(await literatureEditor.save(false)) || note.parentItemID !== item.id || note.id !== beforeSourceReselect.id || note.key !== beforeSourceReselect.key || note.getNote() !== beforeSourceReselect.html) throw new Error("Reselecting the same source did not move the existing note intact");
       if (literatureEditor.document.getElementById("knowledge-base-metadata") || literatureEditor.document.getElementById("knowledge-base-kind") || literatureEditor.document.getElementById("knowledge-base-editor-mode")) throw new Error("Editor still exposes metadata, a type selector or Browse mode");
       if (literatureEditor.document.getElementById("knowledge-base-editor-status").textContent.includes(literatureID)) throw new Error("Editor exposes its internal note ID");
+      item.setField("extra", "Citation Key: HostRenamed2026");
+      if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "HostRenamed2026");
+      await item.saveTx();
+      for (let n = 0; n < 100 && literatureReference.textContent !== "[[@HostRenamed2026]]"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (literatureReference.textContent !== "[[@HostRenamed2026]]" || (await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Citation-key change lost the stable note reference or left its display stale");
+      item.setField("extra", "Citation Key: Host2026");
+      if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "Host2026");
+      await item.saveTx();
       const originalLiteratureHTML = note.getNote();
       item.setField("title", "Updated parent item title");
       item.setField("publisher", "Live metadata publisher");

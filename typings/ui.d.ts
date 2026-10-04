@@ -36,7 +36,17 @@ declare global {
     };
     ZoteroKnowledgeBaseMarkdown: {
       render(container: Element, body: string): void;
-      identity(container: Element, id: string, title: string): void;
+      identity(
+        container: Element,
+        id: string,
+        title: string,
+        reference?: string,
+      ): void;
+      reference(
+        button: HTMLButtonElement,
+        reference: string,
+        api: KnowledgeBaseAPI,
+      ): void;
       renderFamily(
         container: Element,
         family: import("../src/modules/hierarchy").CardFamily,
@@ -51,6 +61,7 @@ declare global {
 export interface EditorElements {
   "knowledge-base-editor-restore": HTMLButtonElement;
   "knowledge-base-editor-format": HTMLButtonElement;
+  "knowledge-base-editor-reference": HTMLButtonElement;
   "knowledge-base-note-kind": HTMLSpanElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;
@@ -131,6 +142,7 @@ export interface ManagerElements {
   "knowledge-base-detail-empty": HTMLElementTagNameMap["div"];
   "knowledge-base-detail": HTMLElementTagNameMap["div"];
   "knowledge-base-detail-title": HTMLElementTagNameMap["html"];
+  "knowledge-base-detail-reference": HTMLButtonElement;
   "knowledge-base-detail-id": HTMLDivElement;
   "knowledge-base-btn-child": HTMLButtonElement;
   "knowledge-base-detail-meta": HTMLElementTagNameMap["div"];
@@ -182,6 +194,7 @@ export interface GraphElements {
   "graph-inspector": HTMLElementTagNameMap["aside"];
   "graph-selection": HTMLElementTagNameMap["div"];
   "graph-node-title": HTMLElementTagNameMap["html"];
+  "graph-node-reference": HTMLButtonElement;
   "graph-node-kind": HTMLElementTagNameMap["div"];
   "graph-node-snippet": HTMLElementTagNameMap["div"];
   "graph-node-open": HTMLElementTagNameMap["button"];

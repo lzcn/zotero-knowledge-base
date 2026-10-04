@@ -316,6 +316,8 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       closing = true;
       clearTimer();
       try {
+        await persist();
+        if (closed || stopped) return;
         const flags =
           Services.prompt.BUTTON_POS_0 * Services.prompt.BUTTON_TITLE_SAVE +
           Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_CANCEL +

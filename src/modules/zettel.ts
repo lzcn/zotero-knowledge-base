@@ -14,8 +14,10 @@ import { saveParent, removeParent } from "./hierarchy";
 import { parseCardLinks } from "./markdown";
 import { notifyDataChange } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
+import { getNoteReferences } from "./note-references";
 
 export interface Zettel extends ZettelRow {
+  reference?: string;
   outgoing: number;
   incoming: number;
 }
@@ -30,6 +32,7 @@ export interface ParsedLink {
 export interface ResolvedLink extends ParsedLink {
   /** target zettel id when resolvable, null for unresolved refs */
   targetId: string | null;
+  reference?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -105,13 +108,31 @@ export async function resolveRefs(
   );
   if (shouldStop()) return map;
   for (const r of byId) map.set(r.id, r.id);
+  if (refs.some((ref) => ref.startsWith("@"))) {
+    const { byAlias } = await getNoteReferences();
+    if (shouldStop()) return map;
+    for (const ref of refs) {
+      const id = byAlias.get(ref);
+      if (id && !map.has(ref)) map.set(ref, id);
+      // An indexed link retains its target when its source's citation key changes.
+      if (!map.has(ref) && !byAlias.has(ref) && ref.startsWith("@")) {
+        const previous = await getAll<{ id: string }>(
+          "SELECT DISTINCT z.id FROM links l JOIN zettels z ON z.id = l.target_id WHERE l.ref = ? AND z.kind = 'literature'",
+          [ref],
+        );
+        if (shouldStop()) return map;
+        if (previous.length === 1) map.set(ref, previous[0].id);
+      }
+    }
+  }
   // by exact title
   const byTitle = await getAll<{ id: string; title: string }>(
     `SELECT id, title FROM zettels WHERE title IN (${placeholders})`,
     refs,
   );
   if (shouldStop()) return map;
-  for (const r of byTitle) if (!map.has(r.title)) map.set(r.title, r.id);
+  for (const r of byTitle)
+    if (!r.title.startsWith("@") && !map.has(r.title)) map.set(r.title, r.id);
   // by title, case-insensitive fallback
   const lower = new Map<string, string>();
   const all = await getAll<{ id: string; title: string }>(
@@ -120,7 +141,7 @@ export async function resolveRefs(
   if (shouldStop()) return map;
   for (const r of all) if (r.title) lower.set(r.title.toLowerCase(), r.id);
   for (const ref of refs) {
-    if (!map.has(ref)) {
+    if (!ref.startsWith("@") && !map.has(ref)) {
       const hit = lower.get(ref.toLowerCase());
       if (hit) map.set(ref, hit);
     }
@@ -554,6 +575,7 @@ export async function getOutgoing(id: string): Promise<ResolvedLink[]> {
 
 export interface Backlink {
   sourceId: string;
+  reference?: string;
   sourceTitle: string;
   ref: string;
 }

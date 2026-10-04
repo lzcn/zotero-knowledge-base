@@ -267,3 +267,5 @@ native-markdown-close = Save changes before closing?
 editor-outline-parent = Parent note
 
 manager-source-item = Source · Zotero
+
+note-reference-copy = Copy note reference

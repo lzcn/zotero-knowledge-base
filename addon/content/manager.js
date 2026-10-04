@@ -349,7 +349,7 @@ const refresh = wrap(async function () {
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
     id.className = "zid muted";
-    id.textContent = api.loc("note-kind-" + (z.kind || "zettel"));
+    id.textContent = `${api.loc("note-kind-" + (z.kind || "zettel"))} · [[${z.reference || z.id}]]`;
     id.title = z.id;
     li.appendChild(id);
 
@@ -470,6 +470,11 @@ const renderDetail = wrap(async function (id) {
   $("knowledge-base-detail-id").textContent = api.loc(
     "note-kind-" + (z.kind || "zettel"),
   );
+  window.ZoteroKnowledgeBaseMarkdown.reference(
+    $("knowledge-base-detail-reference"),
+    z.reference || z.id,
+    api,
+  );
   $("knowledge-base-detail-title").title = z.id;
   $("knowledge-base-detail-title").textContent =
     z.title || api.loc("manager-untitled");
@@ -563,6 +568,7 @@ const renderDetail = wrap(async function (id) {
       chip,
       link.targetId || link.ref,
       link.display,
+      link.reference,
     );
     if (!link.targetId) chip.title = api.loc("manager-unresolved-tip");
     chip.addEventListener("click", () => {
@@ -588,6 +594,7 @@ const renderDetail = wrap(async function (id) {
       button,
       b.sourceId,
       b.sourceTitle || "",
+      b.reference,
     );
     button.addEventListener("click", () => select(b.sourceId));
     li.appendChild(button);

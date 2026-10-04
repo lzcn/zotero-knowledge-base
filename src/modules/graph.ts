@@ -4,6 +4,7 @@ import { getItemSummary } from "./zotero";
 export interface GraphNode {
   id: string;
   title: string;
+  reference?: string;
   kind: "card" | "source" | "unresolved";
   snippet: string;
   noteKind?: NoteKind;

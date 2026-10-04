@@ -381,8 +381,13 @@ function select(id) {
   $("graph-node-title").textContent = node.title;
   $("graph-node-kind").textContent =
     node.kind === "card"
-      ? `${api.loc("note-kind-" + (node.noteKind || "zettel"))} · ${node.id}`
+      ? api.loc("note-kind-" + (node.noteKind || "zettel"))
       : api.loc(`graph-kind-${node.kind}`);
+  window.ZoteroKnowledgeBaseMarkdown.reference(
+    $("graph-node-reference"),
+    node.kind === "card" ? node.reference || node.id : "",
+    api,
+  );
   window.ZoteroKnowledgeBaseMarkdown.render(
     $("graph-node-snippet"),
     node.snippet,
@@ -457,7 +462,12 @@ function select(id) {
     const row = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
     row.tabIndex = 0;
     if (peer.kind === "card")
-      window.ZoteroKnowledgeBaseMarkdown.identity(row, peer.id, peer.title);
+      window.ZoteroKnowledgeBaseMarkdown.identity(
+        row,
+        peer.id,
+        peer.title,
+        peer.reference,
+      );
     else row.textContent = peer.title;
     if (edge.kind === "source" && peer.citation) {
       const context = document.createElementNS(

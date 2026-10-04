@@ -939,13 +939,19 @@ async function insertImages(files, range) {
 
 async function refreshRelations() {
   const version = ++relationsVersion;
-  const [outgoing, backlinks, family, parent] = await Promise.all([
+  const [outgoing, backlinks, family, parent, note] = await Promise.all([
     api.getDraftLinks($("knowledge-base-editor-body").value),
     zettelId ? api.getBacklinks(zettelId) : [],
     zettelId ? api.getFamily(zettelId) : { parent: null, children: [] },
     parentId ? api.getZettel(parentId) : null,
+    zettelId ? api.getZettel(zettelId) : null,
   ]);
   if (version !== relationsVersion) return;
+  window.ZoteroKnowledgeBaseMarkdown.reference(
+    $("knowledge-base-editor-reference"),
+    note ? note.reference || note.id : "",
+    api,
+  );
   $("knowledge-base-parent-root").hidden = !parentId;
   $("knowledge-base-parent-display").title = api.loc("parent-search");
   $("knowledge-base-parent-display").setAttribute(
@@ -984,6 +990,7 @@ async function refreshRelations() {
         button,
         targetId || link.ref,
         inbound ? link.sourceTitle || "" : link.display,
+        link.reference,
       );
       row.appendChild(button);
       row.classList.toggle("unresolved", !targetId);
@@ -1126,10 +1133,11 @@ async function searchCards() {
       li,
       card.id,
       card.title || api.loc("manager-untitled"),
+      card.reference,
     );
     li.tabIndex = 0;
     const insert = () => {
-      insertText(`[[${card.id}]]`, linkRange);
+      insertText(`[[${card.reference || card.id}]]`, linkRange);
       $("knowledge-base-link-drop").hidden = true;
       cardSearchVersion++;
     };
@@ -1674,6 +1682,16 @@ async function refreshParentItem() {
     }
   }
   if (source?.key !== key || source?.libraryID !== library || disposed) return;
+  if (zettelId) {
+    const note = await api.getZettel(zettelId);
+    if (disposed || source?.key !== key || source?.libraryID !== library)
+      return;
+    window.ZoteroKnowledgeBaseMarkdown.reference(
+      $("knowledge-base-editor-reference"),
+      note ? note.reference || note.id : "",
+      api,
+    );
+  }
   if (summary) {
     displayedParentItem = summary;
     $("knowledge-base-src-jump").hidden = false;

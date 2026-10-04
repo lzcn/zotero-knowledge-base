@@ -241,3 +241,5 @@ native-markdown-close = 关闭前保存修改吗？
 editor-outline-parent = 上级笔记
 
 manager-source-item = 来源 · Zotero
+
+note-reference-copy = 复制笔记引用

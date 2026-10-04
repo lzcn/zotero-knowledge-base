@@ -2038,3 +2038,23 @@ summary {
     margin-left: auto;
   }
 }
+
+.note-reference {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  padding: 3px 4px;
+  cursor: pointer;
+}
+.note-reference:hover {
+  color: var(--accent);
+}
+.note-reference:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

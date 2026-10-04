@@ -27,6 +27,7 @@ import {
   markdownNoteHTML,
 } from "./native-notes";
 import { richTextToMarkdown } from "./rich-text";
+import { getNoteReferences, withNoteReferences } from "./note-references";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import {
@@ -170,9 +171,37 @@ export const api = {
   pickImage,
   updateImageDraft,
   releaseImageDraft,
-  getGraph: getGraphData,
-  getFamily,
-  getParentCandidates,
+  async getGraph() {
+    const graph = await getGraphData();
+    const cards = await withNoteReferences(
+      graph.nodes.filter((node) => node.kind === "card"),
+    );
+    const refs = new Map(cards.map((card) => [card.id, card.reference]));
+    graph.nodes.forEach((node) => {
+      node.reference = refs.get(node.id);
+    });
+    return graph;
+  },
+  async getFamily(id: string) {
+    const family = await getFamily(id);
+    const identities = [family.parent, ...family.children]
+      .filter((card): card is NonNullable<typeof card> => !!card)
+      .map((card) => ({ id: card.id, title: card.title }));
+    const cards = new Map(
+      (await withNoteReferences(identities)).map((card) => [card.id, card]),
+    );
+    return {
+      parent: family.parent ? cards.get(family.parent.id)! : null,
+      children: family.children.map((card) => cards.get(card.id)!),
+    };
+  },
+  async getParentCandidates(id: string | null, query = "") {
+    const cards = await getParentCandidates(id, query);
+    return withNoteReferences(cards);
+  },
+  copyNoteReference(reference: string): void {
+    Zotero.Utilities.Internal.copyTextToClipboard(`[[${reference}]]`);
+  },
   onDataChange,
   getGraphOptions,
   setGraphOption,
@@ -198,6 +227,7 @@ export const api = {
   async getDraftLinks(body: string): Promise<ResolvedLink[]> {
     const links = parseLinks(body);
     const resolved = await resolveRefs(links.map((link) => link.ref));
+    const { byID } = await getNoteReferences();
     return links
       .filter(
         (link) => !link.ref.startsWith("zotero://") || resolved.has(link.ref),
@@ -205,6 +235,10 @@ export const api = {
       .map((link) => ({
         ...link,
         targetId: resolved.get(link.ref) ?? null,
+        reference:
+          byID.get(resolved.get(link.ref) || "") ||
+          resolved.get(link.ref) ||
+          link.ref,
       }));
   },
 
@@ -255,32 +289,45 @@ export const api = {
 
   /* ---------------- data ---------------- */
 
-  listZettels(
+  async listZettels(
     query = "",
     entriesOnly = false,
     kind?: import("./db").NoteKind,
   ): Promise<Zettel[]> {
-    return listZettels(query, entriesOnly, kind);
+    return withNoteReferences(await listZettels(query, entriesOnly, kind));
   },
 
-  listByItem(itemKey: string): Promise<Zettel[]> {
-    return listByItem(itemKey);
+  async listByItem(itemKey: string): Promise<Zettel[]> {
+    return withNoteReferences(await listByItem(itemKey));
   },
 
   countByItem(itemKey: string): Promise<number> {
     return countByItem(itemKey);
   },
 
-  getZettel(id: string): Promise<Zettel | null> {
-    return getZettel(id);
+  async getZettel(id: string): Promise<Zettel | null> {
+    const note = await getZettel(id);
+    return note ? (await withNoteReferences([note]))[0] : null;
   },
 
-  getOutgoing(id: string): Promise<ResolvedLink[]> {
-    return getOutgoing(id);
+  async getOutgoing(id: string): Promise<ResolvedLink[]> {
+    const links = await getOutgoing(id);
+    const { byID } = await getNoteReferences();
+    return links.map((link) => ({
+      ...link,
+      reference: link.targetId
+        ? byID.get(link.targetId) || link.targetId
+        : link.ref,
+    }));
   },
 
-  getBacklinks(id: string): Promise<Backlink[]> {
-    return getBacklinks(id);
+  async getBacklinks(id: string): Promise<Backlink[]> {
+    const links = await getBacklinks(id);
+    const { byID } = await getNoteReferences();
+    return links.map((link) => ({
+      ...link,
+      reference: byID.get(link.sourceId) || link.sourceId,
+    }));
   },
 
   getUnresolvedRefs(): Promise<{ ref: string; count: number }[]> {

@@ -219,6 +219,7 @@ await writeFile(
     // Absolute paths so esbuild does not need the entry to sit in the project.
     `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
     `export * as zettel from ${JSON.stringify(path.join(ROOT, "src/modules/zettel.ts"))};\n` +
+    `export * as noteRefs from ${JSON.stringify(path.join(ROOT, "src/modules/note-references.ts"))};\n` +
     `export * as graph from ${JSON.stringify(path.join(ROOT, "src/modules/graph.ts"))};\n` +
     `export * as hierarchy from ${JSON.stringify(path.join(ROOT, "src/modules/hierarchy.ts"))};\n`,
 );
@@ -233,7 +234,7 @@ await build({
 
 // One bundle, one module instance: both modules must share the same
 // connection object for the flow checks to mean anything.
-const { db, zettel, graph, hierarchy, drafts } = await import(
+const { db, zettel, graph, hierarchy, drafts, noteRefs } = await import(
   pathToFileURL(bundle).href
 );
 
@@ -598,6 +599,98 @@ if (currentSchema) {
     "Editing through older callers retains note type",
     (await zettel.getZettel(thought)).kind === "thinking",
   );
+  const priorItems = zoteroStub.Items;
+  const priorFields = zoteroStub.ItemFields;
+  const keys = new Map([
+    [1, "Study2026"],
+    [2, "Group2026"],
+  ]);
+  let sourceDeleted = false;
+  zoteroStub.ItemFields = { getID: () => false };
+  zoteroStub.Items = {
+    getIDFromLibraryAndKey: (lib, key) => (key === "READING1" ? lib : null),
+    getAsync: async (id) => ({
+      id,
+      isInTrash: () => sourceDeleted,
+      isRegularItem: () => true,
+      getField: (field) =>
+        field === "extra" ? `Citation Key: ${keys.get(id) || ""}` : "",
+    }),
+    loadDataTypes: async () => {},
+  };
+  check(
+    "Literature references use source keys while Zettels keep their unique IDs",
+    (
+      await noteRefs.withNoteReferences([
+        { id: literature },
+        { id: firstCard },
+        { id: secondCard },
+      ])
+    )
+      .map((row) => row.reference)
+      .join("|") === `@Study2026|${firstCard}|${secondCard}`,
+  );
+  check(
+    "Citation-key wiki links resolve independently of note titles",
+    (await zettel.resolveRefs(["@Study2026", "@Group2026"])).get(
+      "@Study2026",
+    ) === literature,
+  );
+  await zettel.saveZettel({
+    id: thought,
+    title: "Survey edited",
+    body: "[[@Study2026]] [@Study2026]",
+  });
+  check(
+    "Literature wiki links create one backlink, distinct from item citations",
+    (await zettel.getOutgoing(thought)).length === 1 &&
+      (await zettel.getOutgoing(thought))[0].targetId === literature &&
+      (await zettel.getBacklinks(literature))[0].sourceId === thought,
+  );
+  keys.set(1, "Renamed2026");
+  check(
+    "Changing a citation key preserves the internal ID and indexed links",
+    (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
+      "@Renamed2026" &&
+      (await zettel.resolveRefs(["@Study2026"])).get("@Study2026") ===
+        literature &&
+      (await zettel.getOutgoing(thought))[0].targetId === literature,
+  );
+  keys.set(2, "Renamed2026");
+  await zettel.saveZettel({
+    id: firstCard,
+    title: "@Renamed2026",
+    body: "",
+    itemKey: "READING1",
+    libraryID: 1,
+  });
+  check(
+    "Duplicate keys fall back to unique IDs and cannot resolve through titles",
+    (
+      await noteRefs.withNoteReferences([
+        { id: literature },
+        { id: anotherLibrary },
+      ])
+    ).every((row) => row.reference === row.id) &&
+      !(await zettel.resolveRefs(["@Renamed2026"])).has("@Renamed2026"),
+  );
+  keys.set(2, "Group2026");
+  keys.set(1, "invalid key");
+  check(
+    "Missing and unsafe citation keys keep a usable internal reference",
+    (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
+      literature &&
+      (await zettel.resolveRefs([literature])).get(literature) === literature,
+  );
+  keys.set(1, "Renamed2026");
+  sourceDeleted = true;
+  check(
+    "Trashed sources fall back without changing or deleting managed notes",
+    (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
+      literature && (await zettel.getZettel(literature)).kind === "literature",
+  );
+  zoteroStub.Items = priorItems;
+  zoteroStub.ItemFields = priorFields;
   zoteroStub.Libraries = { userLibraryID: 1, getAll: () => [] };
   await db.exec(
     "INSERT INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, 'NOTE0001', 1, '', 1)",
