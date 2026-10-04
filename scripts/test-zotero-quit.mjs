@@ -241,8 +241,28 @@ function runQuitTest() {
       literatureBody.value += "\\n\\nLiterature synthesis";
       literatureBody.dispatchEvent(new literatureEditor.Event("input", {bubbles: true}));
       if (!(await literatureEditor.save(false)) || (note.getNote().match(/Linked Zotero note/g) || []).length !== 1) throw new Error("Markdown editing duplicated an existing note's title paragraph");
+      if (note.parentItemID !== item.id) throw new Error("Saving an existing note with the same source did not attach it to that source");
       literatureEditor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new literatureEditor.Event("command", {bubbles: true}));
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      const otherParent = new Zotero.Item("book");
+      otherParent.libraryID = item.libraryID;
+      otherParent.setField("title", "Other parent");
+      await otherParent.saveTx({skipSelect:true});
+      note.parentItemID = otherParent.id; await note.saveTx({skipSelect:true});
+      const beforeSourceReselect = {id:note.id, key:note.key, html:note.getNote()};
+      literatureEditor.document.getElementById("knowledge-base-src-pick").dispatchEvent(new literatureEditor.Event("command", {bubbles:true}));
+      const reselectSearch = literatureEditor.document.getElementById("knowledge-base-src-search");
+      reselectSearch.value = "Isolated test source";
+      reselectSearch.dispatchEvent(new literatureEditor.Event("input", {bubbles:true}));
+      let reselectRow;
+      for (let n = 0; n < 100; n++) {
+        reselectRow = [...literatureEditor.document.querySelectorAll("#knowledge-base-src-results li")].find(row => row.querySelector(".sr-title")?.textContent === "Isolated test source");
+        if (reselectRow) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (!reselectRow) throw new Error("Existing-note source picker did not find its source");
+      reselectRow.click();
+      if (!(await literatureEditor.save(false)) || note.parentItemID !== item.id || note.id !== beforeSourceReselect.id || note.key !== beforeSourceReselect.key || note.getNote() !== beforeSourceReselect.html) throw new Error("Reselecting the same source did not move the existing note intact");
       const metadataBox = literatureEditor.document.getElementById("knowledge-base-metadata");
       if (metadataBox.hidden || !metadataBox.textContent.includes("Host2026")) throw new Error("Literature Note metadata is missing");
       item.setField("publisher", "Live metadata publisher");
@@ -260,6 +280,8 @@ function runQuitTest() {
         const blob = await new Promise(resolve => canvas.toBlob(resolve));
         await IOUtils.write(PathUtils.join(metadataShots, "literature-metadata.png"), new Uint8Array(await blob.arrayBuffer()));
       }
+      // Explicitly detach this fixture to cover a surviving note with a trashed source.
+      note.parentItemID = false; await note.saveTx({skipSelect:true});
       item.deleted = true; await item.saveTx();
       const standaloneHealth = await kb.api.getNoteHealth(literatureID);
       if (standaloneHealth.source !== "trashed" || standaloneHealth.note !== "available") throw new Error("A standalone Literature Note was treated as deleted with its source");
@@ -374,13 +396,17 @@ function runQuitTest() {
         if (looseNote.parentItemID !== item.id || item.getCollections().length) throw new Error("Changing source moved the source item into the note collection");
         await updatePlacement(null);
         if (looseNote.parentItemID !== personalParent.id || looseNote.getCollections().length) throw new Error("Clearing source did not return the same note to its personal parent");
-        await updatePlacement(note);
+        const standaloneSource = new Zotero.Item("note");
+        standaloneSource.libraryID = item.libraryID;
+        standaloneSource.setNote("<p>Standalone source note</p>");
+        await standaloneSource.saveTx({skipSelect:true});
+        await updatePlacement(standaloneSource);
         if (looseNote.parentItemID !== personalParent.id || looseNote.getCollections().length) throw new Error("Standalone note source was used as an invalid parent");
-        note.parentItemID = item.id; await note.saveTx();
-        await updatePlacement(note);
+        standaloneSource.parentItemID = item.id; await standaloneSource.saveTx();
+        await updatePlacement(standaloneSource);
         if (looseNote.parentItemID !== item.id) throw new Error("An attached source note did not use its regular parent");
         await updatePlacement(null);
-        note.parentItemID = false; await note.saveTx();
+        standaloneSource.parentItemID = false; await standaloneSource.saveTx();
         personalParent.setField("title", "Renamed personal notes"); await personalParent.saveTx();
         await updatePlacement(item);
         personalParent.deleted = true; await personalParent.saveTx();

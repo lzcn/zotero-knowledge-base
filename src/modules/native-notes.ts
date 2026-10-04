@@ -464,7 +464,6 @@ async function mappedNote(id: string): Promise<Zotero.Item | null> {
   return note;
 }
 
-/** Keep note identity and library stable when its primary source changes. */
 async function markPersonalParent(item: Zotero.Item): Promise<void> {
   if (!item.hasTag("Personal Knowledge")) {
     item.addTag("Personal Knowledge");
@@ -488,7 +487,7 @@ async function organizeNativeNote(
   input: SaveCardInput,
   relocate = false,
 ): Promise<void> {
-  // Existing user notes retain their original parent and collections.
+  // Opening existing user notes preserves placement; saving a source can relocate them.
   const mapping = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
     [note.key, note.libraryID],
@@ -687,9 +686,10 @@ export async function saveNativeCard(
       await organizeNativeNote(
         note,
         input,
-        !!previous &&
-          (previous.item_key !== (input.itemKey ?? null) ||
-            previous.library_id !== (input.libraryID ?? null)),
+        !!input.itemKey ||
+          (!!previous &&
+            (previous.item_key !== (input.itemKey ?? null) ||
+              previous.library_id !== (input.libraryID ?? null))),
       );
     },
   );
