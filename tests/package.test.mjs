@@ -1,6 +1,7 @@
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { zipSync, strToU8 } from "fflate";
+import { zipSync, unzipSync, strToU8, strFromU8 } from "fflate";
 import { validatePackage } from "../scripts/validate-package.mjs";
 const pkg = {
   name: "zotero-test",
@@ -87,5 +88,22 @@ test("rejects untranslated locale identifiers in the shipped archive", () => {
       archive({ "locale/en-US/test-addon.ftl": "test-manager-edit = Edit" }),
       pkg,
     ),
+  );
+});
+
+test("production package excludes personal library maintenance and test fixtures", async () => {
+  const files = unzipSync(
+    await readFile(
+      new URL("../dist/zotero-knowledge-base.xpi", import.meta.url),
+    ),
+  );
+  const main = strFromU8(files["content/scripts/knowledge-base.js"]);
+  assert.doesNotMatch(
+    main,
+    /registerExistingNote|seedMappedNote|kb-adopt-existing|reviewed-plan\.json|\/Users\/zhi\//,
+  );
+  assert.equal(
+    Object.keys(files).some((name) => /^(?:scripts|tests|src)\//.test(name)),
+    false,
   );
 });

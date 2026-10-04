@@ -10,7 +10,6 @@ import { getString } from "../utils/locale";
 import {
   getZettel,
   saveEditorCard,
-  resolveUnresolvedLinks,
   refreshItemCount,
   type SaveCardInput,
 } from "./zettel";
@@ -485,7 +484,7 @@ async function organizeNativeNote(
   });
 }
 
-/** Migration is lazy; the original Markdown is never replaced in the backup. */
+/** Create the native note on first edit and retain its initial body snapshot. */
 export async function acquireNativeNote(
   input: NativeCardInput,
 ): Promise<{ noteID: number; html: string }> {
@@ -843,66 +842,6 @@ export async function duplicateNativeNote(
   });
   activeNotes.add(note.id);
   return { noteID: note.id, html: note.getNote() };
-}
-
-/** Register an existing native note without changing its content or placement.
- * Used for a one-off, reviewed library arrangement; no import UI is exposed.
- */
-export async function registerExistingNote(input: {
-  noteID: number;
-  kind: NoteKind;
-  id?: string;
-  itemKey?: string | null;
-  libraryID?: number;
-}): Promise<string> {
-  const note = await Zotero.Items.getAsync(input.noteID);
-  if (!note || !note.isNote() || note.isInTrash())
-    throw new Error("Native note not found");
-  await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
-  const mapped = await getOne<NoteMapping>(
-    "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
-    [note.key, note.libraryID],
-  );
-  const id =
-    mapped?.card_id ?? input.id ?? `note-${note.libraryID}-${note.key}`;
-  const existing = await getZettel(id);
-  if (existing && !mapped) throw new Error("CARD_CONFLICT: ID already in use");
-  if (input.kind === "literature") {
-    const source = input.itemKey
-      ? await Zotero.Items.getByLibraryAndKeyAsync(
-          input.libraryID ?? note.libraryID,
-          input.itemKey,
-        )
-      : null;
-    if (
-      !source ||
-      !source.isRegularItem() ||
-      source.deleted ||
-      source.libraryID !== note.libraryID
-    )
-      throw new Error("LITERATURE_SOURCE_REQUIRED");
-  }
-  const projection = projectNativeNote(note.getNote());
-  await saveEditorCard(
-    {
-      id,
-      kind: input.kind,
-      ...projection,
-      itemKey: input.itemKey ?? null,
-      libraryID: input.itemKey ? (input.libraryID ?? note.libraryID) : null,
-      parentId: existing ? ((await getFamily(id)).parent?.id ?? null) : null,
-      expectedUpdatedAt: existing?.updated_at ?? null,
-    },
-    async () => {
-      await exec(
-        "INSERT OR IGNORE INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, ?, ?, ?, 1)",
-        [id, note.key, note.libraryID, projection.body],
-      );
-      await exec("UPDATE card_notes SET external = 1 WHERE card_id = ?", [id]);
-      await resolveUnresolvedLinks();
-    },
-  );
-  return id;
 }
 
 export async function isExternalNote(id: string): Promise<boolean> {

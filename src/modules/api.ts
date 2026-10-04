@@ -19,7 +19,6 @@ import {
   duplicateNativeNote,
   prepareNativePreview,
   nativePreviewHTML,
-  registerExistingNote,
   isExternalNote,
   ensureLiteratureNote,
   getNoteHealth,
@@ -129,7 +128,6 @@ export const api = {
   getMarkdownSource,
   markdownNoteHTML,
   getItemMetadata,
-  registerExistingNote,
   isExternalNote,
   async openLiteratureNote(key: string, libraryID: number): Promise<void> {
     const id = await ensureLiteratureNote(key, libraryID);
