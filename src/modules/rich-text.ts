@@ -21,6 +21,12 @@ export function richTextToMarkdown(html: string | HTMLElement): string {
       ((node as HTMLElement & { isBlock: boolean }).isBlock ? "\n\n" : ""),
   });
   converter.use(gfm);
+  converter.addRule("citation", {
+    filter: (node) =>
+      node.nodeName === "A" && !!node.getAttribute("data-citation-key"),
+    replacement: (_content, node) =>
+      `[@${node.getAttribute("data-citation-key")}]`,
+  });
   converter.addRule("math", {
     filter: (node) =>
       ["inline-math", "block-math"].includes(
@@ -38,7 +44,13 @@ export function richTextToMarkdown(html: string | HTMLElement): string {
       const link = node as HTMLElement;
       const id = cardRefFromURL(link.getAttribute("href") || "");
       const alias = link.getAttribute("data-card-alias");
-      return `[[${id}${alias ? "|" + alias.replace(/[[\]\n]/g, " ") : ""}]]`;
+      if (alias) return `[[${id}|${alias.replace(/[[\]\n]/g, " ")}]]`;
+      if (link.textContent === `[[${id}]]`) return `[[${id}]]`;
+      const label = (link.textContent || id || "").replace(
+        /([\\[\]`*_])/g,
+        "\\$1",
+      );
+      return `[${label}](${link.getAttribute("href")})`;
     },
   });
   converter.addRule("managedImage", {

@@ -70,7 +70,20 @@ function runQuitTest() {
       const item = new Zotero.Item("book");
       item.libraryID = Zotero.Libraries.userLibraryID;
       item.setField("title", "Isolated test source");
+      item.setField("date", "2026");
+      item.setCreators([{ firstName: "A", lastName: "Smith", creatorType: "author" }]);
+      item.setField("extra", "Citation Key: Host2026");
+      if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "Host2026");
       await item.saveTx();
+      const note = new Zotero.Item("note");
+      note.libraryID = item.libraryID;
+      note.setNote("<p>Linked Zotero note</p>");
+      await note.saveTx();
+      if (!(await kb.api.searchItems("Linked Zotero note")).some(match => match.key === note.key)) throw new Error("Zotero note search failed");
+      if (!(await kb.api.searchItems("Host2026")).some(match => match.key === item.key)) throw new Error("Citation key search failed");
+      if ((await kb.api.searchItems("NoSuchCitation2026")).length) throw new Error("Source search returned unrelated items");
+      await kb.api.openLink("zotero://select/library/items/" + note.key);
+      if (Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== note.key) throw new Error("Note hyperlink did not select its Zotero note");
       await kb.api.saveZettel({ title: "Shutdown test", body: "Inline $E = mc^2$", itemKey: item.key, libraryID: item.libraryID });
       const rows = await kb.api.listZettels();
       await kb.api.saveZettel({ title: "Child card", body: "[[" + rows[0].id + "]]", parentId: rows[0].id });
@@ -94,8 +107,15 @@ function runQuitTest() {
         const relations = [...manager.document.querySelectorAll(".relation-link")];
         const identitiesVisible = relations.length >= 2 && relations.every(button => {
           const id = button.querySelector(".relation-id");
-          return id && id.getBoundingClientRect().bottom <= button.getBoundingClientRect().bottom;
+          return id && button.getAttribute("title").includes(id.textContent) && button.querySelector(".relation-title").getBoundingClientRect().width > 0;
         });
+        const listId = manager.document.querySelector("#knowledge-base-list .zid");
+        if (!listId || manager.getComputedStyle(listId).userSelect !== "none") throw new Error("Card IDs still select on click");
+        const selectionRange = manager.document.createRange();
+        selectionRange.selectNodeContents(listId);
+        manager.getSelection().addRange(selectionRange);
+        listId.dispatchEvent(new manager.MouseEvent("mousedown", { bubbles: true, detail: 1 }));
+        if (manager.getSelection().toString()) throw new Error("Card ID selection was not cleared");
         const mathVisible = !!manager.document.querySelector("#knowledge-base-preview .katex") && !!graph.document.querySelector("#graph-node-snippet .katex");
         const settings = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
         for (let n = 0; n < 100 && !settings.document.querySelector('[preference="extensions.zotero.knowledge-base.graph.sources"]'); n++) await new Promise(resolve => setTimeout(resolve, 100));
@@ -123,7 +143,7 @@ function runQuitTest() {
           if (rootElement.dataset.mode !== mode || surfaces.filter(surface => !surface.hidden).length !== 1) throw new Error("Editor mode is not a single surface: " + mode);
         }
         await switchMode("source");
-        body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$.\\n\\n$$\\nx^2+y^2\\n$$\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
+        body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$. [@Host2026] [My note](zotero://select/library/items/" + note.key + ").\\n\\n$$\\nx^2+y^2\\n$$\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
         body.dispatchEvent(new editor.Event("input", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(rows[0].id)).body !== body.value; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if ((await kb.api.getZettel(rows[0].id)).body !== body.value) throw new Error("Editor autosave did not persist");
@@ -138,8 +158,30 @@ function runQuitTest() {
         for (let n = 0; n < 80 && (frame.hidden || !frame.contentDocument.querySelector(".tiptap")); n++) await new Promise(resolve => setTimeout(resolve, 100));
         const richSurface = frame.contentDocument.querySelector(".tiptap");
         if (frame.hidden || !richSurface?.querySelector("a[href^='knowledge-base:']")) throw new Error("Visual editing failed to render the linked card");
+        const cardLink = richSurface.querySelector("a[href^='knowledge-base://card/']");
+        if (!cardLink.textContent.startsWith("[[") || !cardLink.textContent.endsWith("]]")) throw new Error("Card reference rendered the target title");
+        const citationLink = richSurface.querySelector("a[data-citation-key='Host2026']");
+        if (citationLink?.textContent !== "Smith 2026" || !citationLink.href.endsWith(item.key)) throw new Error("Citation did not render clickable author-year text");
+        if (richSurface.querySelector("a[href$='" + note.key + "']")?.textContent !== "My note") throw new Error("Note link label was rewritten");
+        await kb.api.openLink("zotero://select/library/items/" + note.key);
+        const citationBounds = citationLink.getBoundingClientRect();
+        for (const type of ["mousedown", "mouseup", "click"]) citationLink.dispatchEvent(new frame.contentWindow.MouseEvent(type, { metaKey: true, clientX: citationBounds.x + 2, clientY: citationBounds.y + 2, bubbles: true, cancelable: true }));
+        for (let n = 0; n < 80 && Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== item.key; n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== item.key) throw new Error("Citation did not select its source item");
         frame.contentWindow.prompt = () => { throw new Error("Formula editing opened a JavaScript prompt"); };
         const mathEngine = richSurface.editor;
+        let citationPosition;
+        mathEngine.state.doc.descendants((node, pos) => {
+          if (node.type.name === "citation") citationPosition = pos;
+        });
+        if (citationPosition === undefined) throw new Error("Citation is not a separate editor unit");
+        mathEngine.commands.setTextSelection(citationPosition + 1);
+        mathEngine.view.focus();
+        if (!frame.contentDocument.execCommand("insertText", false, " after citation")) throw new Error("Native citation-adjacent typing failed");
+        for (let n = 0; n < 80 && !body.value.includes("[@Host2026] after citation"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (!body.value.includes("[@Host2026] after citation")) throw new Error("Typing after a citation lost text or its key");
+        mathEngine.commands.undo();
+        if (!body.value.includes("x^2+y^2") || body.value.includes("after citation")) throw new Error("Undo unexpectedly reverted the editor's mode initialization");
         let formula;
         mathEngine.state.doc.descendants((node, pos) => {
           if (!formula && node.type.name === "inlineMath") formula = { node, pos };
@@ -194,7 +236,7 @@ function runQuitTest() {
         await switchMode("reading");
         if (!editor.document.getElementById("knowledge-base-editor-title").readOnly || !editor.document.getElementById("knowledge-base-command-open").hidden) throw new Error("Reading mode is editable");
         await switchMode("source");
-        if (body.value !== beforeSwitch) throw new Error("Mode changes rewrote the original Markdown");
+        if (body.value !== beforeSwitch || !body.value.includes("[@Host2026]") || !body.value.includes("[My note](zotero://")) throw new Error("Mode changes rewrote Markdown references");
         await switchMode("visual");
         const editorRelations = editor.document.getElementById("knowledge-base-editor-relations");
         editorRelations.open = true;
@@ -211,9 +253,7 @@ function runQuitTest() {
         if (expectedColorScheme && systemDark !== (expectedColorScheme === "dark")) throw new Error("Host color scheme did not match the requested test environment");
         if (!whiteSurfaces || !readableText) throw new Error("White reading surfaces or readable text colors were lost");
         const screenshotDirectory = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
-        if (screenshotDirectory) {
-          await IOUtils.makeDirectory(screenshotDirectory, { ignoreExisting: true });
-          async function snapshot(name, win) {
+        async function snapshot(name, win) {
             const image = await win.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
             const canvas = win.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
             canvas.width = image.width;
@@ -223,6 +263,8 @@ function runQuitTest() {
             const blob = await new Promise(resolve => canvas.toBlob(resolve));
             await IOUtils.write(PathUtils.join(screenshotDirectory, name + ".png"), new Uint8Array(await blob.arrayBuffer()));
           }
+        if (screenshotDirectory) {
+          await IOUtils.makeDirectory(screenshotDirectory, { ignoreExisting: true });
           for (const [name, win] of [["manager", manager], ["editor", editor], ["graph", graph]]) await snapshot(name, win);
           mathEngine.commands.setTextSelection(formula.pos + 2);
           await snapshot("math-editing", editor);
@@ -235,7 +277,67 @@ function runQuitTest() {
           await switchMode("source");
           await snapshot("markdown", editor);
         }
-        editor.close();
+        await switchMode("source");
+        const nativeDialogs = [];
+        const choices = ["cancel", "accept", "extra1"];
+        let dialogFailure;
+        const observer = { observe(win, topic) {
+          if (topic !== "domwindowopened") return;
+          win.addEventListener("load", () => {
+            if (win.document.documentURI !== "chrome://global/content/commonDialog.xhtml") return;
+            setTimeout(async () => {
+              try {
+                const dialog = win.document.getElementById("commonDialog");
+                const choice = choices.shift();
+                if (!choice || !dialog.getButton("accept").label || !dialog.getButton("extra1").label) throw new Error("Native close confirmation is incomplete");
+                if (screenshotDirectory && choice === "cancel") await snapshot("close-confirmation", win);
+                dialog.getButton(choice).click();
+                nativeDialogs.push(choice);
+              } catch (error) { dialogFailure = String(error); win.close(); }
+            }, 150);
+          }, { once: true });
+        } };
+        Services.ww.registerNotification(observer);
+        async function closeShortcut(win) {
+          const previousDialogs = nativeDialogs.length;
+          win.dispatchEvent(new win.KeyboardEvent("keydown", { key: "w", metaKey: true, bubbles: true, cancelable: true }));
+          for (let n = 0; n < 160 && nativeDialogs.length === previousDialogs && !dialogFailure; n++) await new Promise(resolve => setTimeout(resolve, 50));
+          if (dialogFailure) throw new Error(dialogFailure);
+          if (nativeDialogs.length === previousDialogs) throw new Error("Command-W did not show a native close confirmation");
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        try {
+          body.value += "\\n\\nSave on close";
+          body.dispatchEvent(new editor.Event("input", { bubbles: true }));
+          let closeBody = body.value;
+          await closeShortcut(editor);
+          if (editor.closed || body.value !== closeBody || nativeDialogs[0] !== "cancel") throw new Error("Cancel did not keep the unsaved editor open");
+          body.value += " — confirmed save";
+          body.dispatchEvent(new editor.Event("input", { bubbles: true }));
+          closeBody = body.value;
+          await closeShortcut(editor);
+          for (let n = 0; n < 80 && !editor.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
+          if (!editor.closed || (await kb.api.getZettel(rows[0].id)).body !== closeBody || nativeDialogs[1] !== "accept") throw new Error("Command-W did not save and close");
+          kb.api.openEditor({ zettelId: rows[0].id });
+          let draftEditor;
+          for (let n = 0; n < 80; n++) {
+            draftEditor = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => !win.closed);
+            if (draftEditor?.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
+            await new Promise(resolve => setTimeout(resolve, 50));
+          }
+          const draftBody = draftEditor.document.getElementById("knowledge-base-editor-body");
+          const draftMode = draftEditor.document.getElementById("knowledge-base-editor-mode");
+          draftMode.value = "source";
+          draftMode.dispatchEvent(new draftEditor.Event("command", { bubbles: true }));
+          draftBody.value = "Keep this close draft";
+          draftBody.dispatchEvent(new draftEditor.Event("input", { bubbles: true }));
+          await closeShortcut(draftEditor);
+          for (let n = 0; n < 80 && !draftEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
+          const kept = (await kb.api.listEditorDrafts()).find(draft => draft.body === "Keep this close draft");
+          if (!draftEditor.closed || !kept || (await kb.api.getZettel(rows[0].id)).body !== closeBody || nativeDialogs[2] !== "extra1") throw new Error("Command-W did not preserve an uncommitted draft");
+          await kb.api.discardEditorDraft(kept.draftId);
+        } finally { Services.ww.unregisterNotification(observer); }
+        if (choices.length) throw new Error("Native close choices were not all tested");
         const saved = await kb.api.getZettel(rows[0].id);
         await kb.api.saveEditorDraft({ id: saved.id, title: saved.title, body: "Recovered draft body", expectedUpdatedAt: saved.updated_at, draftId: "host-recovery", draftRevision: 1 });
         kb.api.openEditor({ draftId: "host-recovery" });
@@ -256,7 +358,7 @@ function runQuitTest() {
         const pendingBody = recovered.document.getElementById("knowledge-base-editor-body");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -265,6 +367,7 @@ function runQuitTest() {
       }, 1500);
     } catch (error) {
       await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error) }));
+      Services.startup.quit(Components.interfaces.nsIAppStartup.eForceQuit);
     }
   }
   setTimeout(run, 250);
@@ -311,7 +414,8 @@ try {
     !state.preferencesVisible ||
     !state.whiteSurfaces ||
     !state.readableText ||
-    !state.compactConnections
+    !state.compactConnections ||
+    state.nativeDialogs?.join(",") !== "cancel,accept,extra1"
   )
     throw new Error(JSON.stringify({ state, result }));
   const db = new DatabaseSync(join(data, "knowledge-base.sqlite"), {
@@ -333,7 +437,7 @@ try {
     db.close();
   }
   console.log(
-    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); in-place Markdown math input, undo and autosave; three single-pane modes, compact expanded connections, toolbar icons and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
+    `PASS White reading surfaces and readable text (${state.systemDark ? "dark" : "light"} host); in-place Markdown math input, undo and autosave; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; three single-pane modes, compact expanded connections, toolbar icons and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database is intact.`,
   );
   passed = true;
 } finally {

@@ -250,24 +250,8 @@ const itemCounts = new Map<string, number>();
 /** Annotation key -> number of cards created from it. */
 const annotationCounts = new Map<string, number>();
 
-const cardTitles = new Map<string, string>();
-
-export function getCardTitleSync(id: string): string | undefined {
-  return cardTitles.get(id);
-}
-
 export async function rebuildCounts(shouldStop = () => false): Promise<void> {
   if (shouldStop()) return;
-  const cards = await getAll<{ id: string; title: string }>(
-    "SELECT id, title FROM zettels",
-  );
-  if (shouldStop()) return;
-  cardTitles.clear();
-  for (let i = 0; i < cards.length; i++) {
-    if (shouldStop()) return;
-    cardTitles.set(cards[i].id, cards[i].title);
-    if (i % 100 === 99) await Zotero.Promise.delay(0);
-  }
   await resolveUnresolvedLinks(shouldStop);
   if (shouldStop()) return;
   const items = await getAll<{ item_key: string; n: number }>(
@@ -418,7 +402,6 @@ export async function saveEditorCard(
     await refreshItemCount(result.previousItemKey);
   }
   await refreshAnnotationCount(result.effectiveAnnotationKey);
-  cardTitles.set(result.id, title);
   notifyDataChange();
   await cleanupImagesAfterChange();
   return { id: result.id, updatedAt: now };
@@ -437,7 +420,6 @@ export async function deleteZettel(id: string): Promise<void> {
     await exec(`DELETE FROM zettels WHERE id = ?`, [id]);
     await resolveUnresolvedLinks();
   });
-  cardTitles.delete(id);
   await refreshItemCount(row?.item_key ?? null);
   await refreshAnnotationCount(row?.annotation_key ?? null);
   notifyDataChange();

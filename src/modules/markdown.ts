@@ -7,6 +7,11 @@ export interface CardLink {
   display: string;
 }
 
+export interface CitationReference {
+  label: string;
+  selectURL: string;
+}
+
 function escapeHTML(text: string): string {
   return text.replace(
     /[&<>"']/g,
@@ -62,11 +67,24 @@ const markdown = new Marked({
           type: "wikilink",
           raw: match[0],
           ref: ref.trim().replace(/^card:/, ""),
-          display: alias.join("|").trim() || ref.trim(),
+          display:
+            alias.join("|").trim() || `[[${ref.trim().replace(/^card:/, "")}]]`,
         };
       },
       renderer(token) {
         return `<a href="knowledge-base://card/${encodeURIComponent(token.ref)}" class="zettel-link"${token.raw.includes("|") ? ` data-card-alias="${escapeHTML(token.display)}"` : ""}>${escapeHTML(token.display)}</a>`;
+      },
+    },
+    {
+      name: "citation",
+      level: "inline",
+      start: (src) => src.indexOf("[@"),
+      tokenizer(src) {
+        const match = /^\[@([^\s\][;]+)\](?!\()/.exec(src);
+        if (match) return { type: "citation", raw: match[0], key: match[1] };
+      },
+      renderer(token) {
+        return `<a data-citation-key="${escapeHTML(token.key)}" title="@${escapeHTML(token.key)}" href="${escapeHTML(token.href || `knowledge-base://cite/${encodeURIComponent(token.key)}`)}">${escapeHTML(token.label || token.raw)}</a>`;
       },
     },
   ],
@@ -108,6 +126,14 @@ export function parseCardLinks(body: string): CardLink[] {
   return [...links.values()];
 }
 
+export function parseCitationKeys(body: string): string[] {
+  const keys = new Set<string>();
+  markdown.walkTokens(markdown.lexer(body), (token) => {
+    if (token.type === "citation") keys.add(token.key);
+  });
+  return [...keys];
+}
+
 /** Actual image and link references, excluding examples in code blocks. */
 export function parseAssetNames(body: string): Set<string> {
   const names = new Set<string>();
@@ -134,19 +160,18 @@ export function renderMarkdown(
   body: string,
   win: Parameters<typeof createDOMPurify>[0],
   resolveImage: (url: string) => string = (url) => url,
-  resolveTitle: (id: string) => string | undefined = () => undefined,
+  resolveCitation: (key: string) => CitationReference | undefined = () =>
+    undefined,
 ): string {
   const tokens = markdown.lexer(body);
   markdown.walkTokens(tokens, (token) => {
     if (token.type === "image") token.href = resolveImage(token.href);
-    if (token.type === "wikilink" && !token.raw.includes("|"))
-      token.display = resolveTitle(token.ref) || token.ref;
-    if (token.type === "link") {
-      const ref = cardRefFromURL(token.href);
-      if (ref)
-        token.tokens = [
-          { type: "text", raw: ref, text: resolveTitle(ref) || ref },
-        ];
+    if (token.type === "citation") {
+      const citation = resolveCitation(token.key);
+      if (citation) {
+        token.label = citation.label;
+        token.href = citation.selectURL;
+      }
     }
   });
   const html = markdown.parser(tokens);

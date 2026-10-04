@@ -382,7 +382,7 @@ if (currentSchema) {
   await db.initDB();
   const beforeCancellation = executedStatements.length;
   let cancellationChecks = 0;
-  await zettel.rebuildCounts(() => ++cancellationChecks > 1);
+  await zettel.rebuildCounts(() => ++cancellationChecks > 2);
   check(
     "cancelled indexing finishes its current read without scheduling more SQL",
     executedStatements.length === beforeCancellation + 1,

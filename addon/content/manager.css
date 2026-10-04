@@ -1364,7 +1364,6 @@ summary {
   font-family: ui-monospace, "SFMono-Regular", monospace;
   font-size: 10px;
   letter-spacing: 0.01em;
-  user-select: all;
 }
 #knowledge-base-list .badges {
   grid-row: 2;
@@ -1540,7 +1539,7 @@ summary {
 #knowledge-base-btn-graph,
 #knowledge-base-btn-local-graph,
 #knowledge-base-editor-graph {
-  list-style-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
+  list-style-image: url("chrome://zotero/skin/16/universal/related.svg");
 }
 #graph-fit {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/fit.svg");
@@ -1589,7 +1588,7 @@ summary {
 }
 
 .kb-inline-icon[data-kb-icon="related"] {
-  background-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
+  background-image: url("chrome://zotero/skin/16/universal/related.svg");
 }
 
 /* Graph controls and inspector. */
@@ -1782,7 +1781,7 @@ summary {
   max-height: 80px;
   overflow-y: auto;
 }
-.editor-connections h3,
+#knowledge-base-editor-relations h3,
 #knowledge-base-editor-family h3,
 #knowledge-base-editor-family summary {
   margin: 0 0 4px;
@@ -1824,4 +1823,39 @@ summary {
 #knowledge-base-editor-graph .toolbarbutton-icon {
   width: 20px;
   height: 20px;
+}
+
+/* Four concise connection groups share a row; IDs remain in tooltips. */
+.card-connections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  padding-top: 10px;
+}
+.card-family {
+  padding: 0;
+}
+#knowledge-base-detail .reference-columns {
+  padding: 0;
+  gap: 16px;
+}
+.card-connections .relation-id,
+.editor-connections .relation-id {
+  display: none;
+}
+#knowledge-base-family.relation-columns {
+  gap: 16px;
+}
+#knowledge-base-btn-child.family-create {
+  font-size: 11px;
+  margin-top: 2px;
+}
+#knowledge-base-list .zettel-row,
+#knowledge-base-list .zid {
+  user-select: none;
+}
+@media (max-width: 760px) {
+  .card-connections {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

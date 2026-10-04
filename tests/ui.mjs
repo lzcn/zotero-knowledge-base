@@ -11,7 +11,7 @@ const workspace = await mkdtemp(path.join(tmpdir(), "knowledge-base-ui-"));
 const entry = path.join(workspace, "entry.ts");
 await writeFile(
   entry,
-  ["markdown", "zotero", "graph", "assets", "rich-text"]
+  ["markdown", "zotero", "graph", "assets", "rich-text", "references"]
     .map(
       (name) =>
         `export * as ${name.replace(/-/g, "_")} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
@@ -37,6 +37,7 @@ const {
   zotero,
   graph: graphModule,
   assets,
+  references,
 } = await import(pathToFileURL(bundle).href);
 let checks = 0;
 function check(label, fn) {
@@ -105,24 +106,20 @@ check("Managed references render only their stable index", () => {
   const doc = new JSDOM(html).window.document;
   assert.deepEqual(
     [...doc.querySelectorAll("a")].map((a) => a.textContent),
-    ["stable-id", "stable-id"],
+    ["[[stable-id]]", "Old name"],
   );
 });
 
-check(
-  "Card previews resolve current titles while retaining stable URLs",
-  () => {
-    const html = markdown.renderMarkdown(
-      "[[stable-id]]",
-      htmlWindow,
-      (url) => url,
-      (id) => (id === "stable-id" ? "Current title" : undefined),
-    );
-    const link = new JSDOM(html).window.document.querySelector("a");
-    assert.equal(link.textContent, "Current title");
-    assert.equal(link.getAttribute("href"), "knowledge-base://card/stable-id");
-  },
-);
+check("Card links retain their Markdown IDs and manually chosen labels", () => {
+  const html = markdown.renderMarkdown(
+    "[[stable-id]]",
+    htmlWindow,
+    (url) => url,
+  );
+  const link = new JSDOM(html).window.document.querySelector("a");
+  assert.equal(link.textContent, "[[stable-id]]");
+  assert.equal(link.getAttribute("href"), "knowledge-base://card/stable-id");
+});
 check(
   "Markdown headings, emphasis, task lists, quotes, code and tables",
   () => {
@@ -199,7 +196,15 @@ const makeItem = (id, libraryID, key, title) => ({
     );
     if (["title", "date"].includes(field))
       assert.ok(this.loaded, "item data must be loaded");
-    return { title, firstCreator: "Author", date: "2026" }[field] || "";
+    return (
+      {
+        title,
+        firstCreator: "Author",
+        date: "2026",
+        citationKey: this.citationKey,
+        extra: this.extra,
+      }[field] || ""
+    );
   },
   getAttachments: () => [20],
 });
@@ -227,6 +232,7 @@ let selection;
 let focusCount = 0;
 const searches = [];
 globalThis.Zotero = {
+  ItemFields: { getID: (field) => (field === "citationKey" ? 1 : false) },
   Libraries: {
     getAll: () => libraries,
     get: (id) => libraries.find((lib) => lib.libraryID === id),
@@ -255,7 +261,22 @@ globalThis.Zotero = {
     addCondition(...args) {
       this.conditions.push(args);
     }
+    setScope(scope) {
+      this.conditions.push(...scope.conditions);
+    }
     async search() {
+      const key = this.conditions.find(
+        (condition) => condition[0] === "citationKey" && condition[1] === "is",
+      )?.[2];
+      if (key)
+        return [...items.values()]
+          .filter(
+            (item) =>
+              item.libraryID === this.libraryID &&
+              (item.citationKey === key ||
+                item.extra?.includes(`Citation Key: ${key}`)),
+          )
+          .map((item) => item.id);
       return [this.libraryID];
     }
   },
@@ -302,14 +323,84 @@ check("Existing notes are linked by identity without importing content", () => {
   assert.equal(noteSummary.selectURL, "zotero://select/library/items/NOTE1234");
   assert.ok(
     searches.every(
-      (search) =>
-        !search.conditions.some(
-          (c) =>
-            c[0] === "noChildren" || (c[0] === "itemType" && c[2] === "note"),
-        ),
+      (search) => !search.conditions.some((c) => c[0] === "noChildren"),
     ),
   );
 });
+items.set(40, {
+  ...makeItem(40, 1, "CITE0001", "Citation source"),
+  citationKey: "Author2026",
+});
+items.set(41, {
+  ...makeItem(41, 7, "CITE0002", "Group citation"),
+  extra: "Citation Key: Extra2026",
+});
+await references.prepareCitations("[@Author2026] [@Extra2026]");
+check(
+  "Citation keys resolve native and Extra fields across personal and group libraries",
+  () => {
+    assert.equal(references.getCitation("Author2026").label, "Author 2026");
+    assert.equal(
+      references.getCitation("Extra2026").selectURL,
+      "zotero://select/groups/777/items/CITE0002",
+    );
+  },
+);
+const citationHTML = markdown.renderMarkdown(
+  "[@Author2026] [@Missing] `[@Author2026]`",
+  htmlWindow,
+  (url) => url,
+  references.getCitation,
+);
+check(
+  "Citations render author-year links while preserving keys and code examples",
+  () => {
+    const doc = new JSDOM(citationHTML).window.document;
+    assert.equal(doc.querySelector("a").textContent, "Author 2026");
+    assert.equal(doc.querySelectorAll("a")[1].textContent, "[@Missing]");
+    assert.equal(doc.querySelector("code").textContent, "[@Author2026]");
+    assert.ok(
+      rich_text
+        .richTextToMarkdown(citationHTML)
+        .startsWith("[@Author2026] [@Missing]"),
+    );
+  },
+);
+items.set(42, {
+  ...makeItem(42, 7, "CITE0003", "Duplicate citation"),
+  citationKey: "Author2026",
+});
+assert.equal(await references.resolveCitation("Author2026"), null);
+check(
+  "Duplicate citation keys stay unresolved instead of linking the wrong item",
+  () => {
+    assert.equal(references.getCitation("Author2026"), undefined);
+  },
+);
+items.delete(42);
+await references.prepareCitations("[@Author2026]");
+items.set(43, makeItem(43, 7, "CITE0004", "BBT citation"));
+const bbtRecord = { itemID: 43, libraryID: 7, citationKey: "BBT2026" };
+globalThis.Zotero.BetterBibTeX = {
+  KeyManager: {
+    get: (id) => (id === 43 ? bbtRecord : undefined),
+    all: (query) => [bbtRecord].filter(query),
+  },
+};
+assert.equal((await references.resolveCitation("BBT2026")).key, "CITE0004");
+check(
+  "Better BibTeX cached keys resolve without copying or modifying source data",
+  () => {
+    assert.equal(references.getCitation("BBT2026").label, "Author 2026");
+  },
+);
+const bbtSearch = await zotero.searchItems("BBT2026");
+check("The reference picker can search generated Better BibTeX keys", () => {
+  assert.ok(
+    bbtSearch.some((item) => item.key === "CITE0004" && item.libraryID === 7),
+  );
+});
+delete globalThis.Zotero.BetterBibTeX;
 await zotero.selectItem("GROUP123", 7);
 check("Source navigation awaits selection and switches to library root", () => {
   assert.deepEqual(selection, { id: 7, options: { inLibraryRoot: true } });
@@ -399,6 +490,7 @@ async function editor(args = {}, overrides = {}) {
   let saved;
   const calls = { open: [], images: [], graphs: [] };
   const api = {
+    prepareMarkdown: async () => {},
     loc: (key) => key,
     renderMarkdown: (body) =>
       markdown.renderMarkdown(body, htmlWindow, assets.resolveAssetURL),
@@ -468,7 +560,7 @@ async function editor(args = {}, overrides = {}) {
   });
   richWindow.eval(richScript);
   dom.window.eval(
-    editorScript + "\nwindow.__editorEval = (source) => eval(source);",
+    editorScript + "\nwindow.__editorEval = (expression) => eval(expression);",
   );
   await dom.window.__editorEval("load()");
   const initialMode = dom.window.document.getElementById(
@@ -487,6 +579,114 @@ const ed = await editor({ prefillTitle: "New concept" });
 check("Editor prefills concept titles in its real XML document", () =>
   assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
 );
+let closeChoice = 1;
+let promptCalls = 0;
+let closeCalls = 0;
+const closeDrafts = [];
+const closeEditor = await editor(
+  { prefillTitle: "Unsaved idea", prefillBody: "Keep this text" },
+  {
+    saveEditorDraft: async (input) => closeDrafts.push(input),
+  },
+);
+const originalClose = closeEditor.win.close.bind(closeEditor.win);
+closeEditor.win.close = () => closeCalls++;
+closeEditor.win.Services = {
+  prompt: {
+    BUTTON_POS_0: 1,
+    BUTTON_POS_1: 256,
+    BUTTON_POS_2: 65536,
+    BUTTON_TITLE_IS_STRING: 127,
+    BUTTON_TITLE_CANCEL: 2,
+    BUTTON_POS_1_DEFAULT: 256,
+    confirmEx: () => {
+      promptCalls++;
+      return closeChoice;
+    },
+  },
+};
+closeEditor.win.dispatchEvent(
+  new closeEditor.win.KeyboardEvent("keydown", {
+    key: "w",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+await wait();
+check(
+  "Command-W prompts for unsaved work and Cancel keeps the window and text",
+  () => {
+    assert.equal(promptCalls, 1);
+    assert.equal(closeCalls, 0);
+    assert.equal(
+      closeEditor.$("knowledge-base-editor-body").value,
+      "Keep this text",
+    );
+  },
+);
+const closeEvent = new closeEditor.win.Event("close", { cancelable: true });
+closeEditor.win.dispatchEvent(closeEvent);
+await wait();
+await wait();
+check("Native close requests use the same unsaved-work confirmation", () => {
+  assert.equal(closeEvent.defaultPrevented, true);
+  assert.equal(closeCalls, 0);
+  assert.equal(promptCalls, 2);
+});
+closeChoice = 2;
+await closeEditor.win.__editorEval("closeIfClean()");
+check("Keep draft closes without committing the unsaved card", () => {
+  assert.equal(closeCalls, 1);
+  assert.equal(closeEditor.saved(), undefined);
+  assert.equal(closeDrafts.at(-1).body, "Keep this text");
+});
+closeEditor.win.close = originalClose;
+closeEditor.win.dispatchEvent(new closeEditor.win.Event("unload"));
+originalClose();
+const saveCloseEditor = await editor({
+  prefillTitle: "Save on close",
+  prefillBody: "Saved text",
+});
+let savedCloseCalls = 0;
+const originalSavedClose = saveCloseEditor.win.close.bind(saveCloseEditor.win);
+saveCloseEditor.win.close = () => savedCloseCalls++;
+saveCloseEditor.win.Services = closeEditor.win.Services;
+closeChoice = 0;
+await saveCloseEditor.win.__editorEval("closeIfClean()");
+check("Save and close commits the latest Markdown before closing", () => {
+  assert.equal(saveCloseEditor.saved().body, "Saved text");
+  assert.equal(savedCloseCalls, 1);
+});
+saveCloseEditor.win.close = originalSavedClose;
+saveCloseEditor.win.dispatchEvent(new saveCloseEditor.win.Event("unload"));
+originalSavedClose();
+const failedClose = await editor(
+  { prefillTitle: "Unsaved", prefillBody: "Preserve on failure" },
+  {
+    saveEditorCard: async () => {
+      throw new Error("CARD_CONFLICT");
+    },
+  },
+);
+let failedCloseCalls = 0;
+const originalFailedClose = failedClose.win.close.bind(failedClose.win);
+failedClose.win.close = () => failedCloseCalls++;
+failedClose.win.Services = closeEditor.win.Services;
+failedClose.win.Zotero.logError = () => {};
+await failedClose.win.__editorEval("closeIfClean()");
+check("A failed close-time save keeps the editor and draft recoverable", () => {
+  assert.equal(failedCloseCalls, 0);
+  assert.equal(failedClose.win.__editorEval("allowClose"), false);
+  assert.equal(
+    failedClose.$("knowledge-base-editor-body").value,
+    "Preserve on failure",
+  );
+});
+failedClose.win.close = originalFailedClose;
+failedClose.win.dispatchEvent(new failedClose.win.Event("unload"));
+originalFailedClose();
 // Slow writes must not clear edits made after their snapshot was taken.
 let finishSave;
 let draftSnapshot;
@@ -730,7 +930,9 @@ check(
         .value.includes("Changed directly in visual editor"),
     );
     assert.ok(
-      ed.$("knowledge-base-editor-body").value.includes("[[stable-id]]"),
+      ed
+        .$("knowledge-base-editor-body")
+        .value.includes("[Old name](knowledge-base://card/stable-id)"),
     );
     assert.ok(
       ed
@@ -901,6 +1103,48 @@ check("Typing a display-math opener creates a multiline Markdown block", () => {
   assert.equal(findMath("blockMath").node.textContent, "$$\n\n$$");
   assert.equal(mathEngine.state.selection.$from.parent.type.name, "blockMath");
 });
+controller.setHTML("<p></p>");
+typeMath("[@Author2026]");
+check("Typing a citation in visual mode retains its Markdown key", () => {
+  assert.equal(ed.$("knowledge-base-editor-body").value, "[@Author2026]");
+  assert.equal(
+    richSurface.querySelector("a").getAttribute("data-citation-key"),
+    "Author2026",
+  );
+});
+typeMath(" follows");
+check(
+  "Text typed after a citation is preserved outside the citation key",
+  () => {
+    assert.equal(
+      ed.$("knowledge-base-editor-body").value,
+      "[@Author2026] follows",
+    );
+  },
+);
+controller.setHTML(
+  markdown.renderMarkdown("[@Author2026] [@Author2026]", htmlWindow),
+);
+mathEngine.commands.setTextSelection(mathEngine.state.doc.content.size - 1);
+typeMath(" tail");
+check("Repeated citations stay separate and retain trailing text", () => {
+  assert.equal(
+    ed.$("knowledge-base-editor-body").value,
+    "[@Author2026] [@Author2026] tail",
+  );
+});
+controller.setHTML(citationHTML);
+controller.insertHTML("<p>More notes</p>");
+check(
+  "Editing rendered citations never replaces citation keys with author-year text",
+  () => {
+    assert.ok(
+      ed
+        .$("knowledge-base-editor-body")
+        .value.startsWith("[@Author2026] [@Missing]"),
+    );
+  },
+);
 controller.setHTML(markdown.renderMarkdown(equations, htmlWindow));
 await chooseMode(ed, "source");
 ed.win.__editorEval("toggleSourceDrop()");
@@ -919,12 +1163,61 @@ ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
 ed.$("knowledge-base-src-insert").dispatchEvent(
   new ed.win.Event("command", { bubbles: true }),
 );
+await wait();
+await wait();
 check("Source insertion creates an actual Zotero Markdown link", () =>
   assert.match(
     ed.$("knowledge-base-editor-body").value,
     /^\[Atomic idea\]\(zotero:\/\/select\/library\/items\/ABCD1234\)/,
   ),
 );
+const referenceEditor = await editor(
+  { prefillTitle: "References", sourceItem: { key: "ABCD1234", libraryID: 1 } },
+  {
+    searchItems: async () => [
+      { ...sources[0], citationKey: "Author2026" },
+      noteSummary,
+    ],
+  },
+);
+referenceEditor.win.__editorEval('toggleSourceDrop("reference")');
+await referenceEditor.win.__editorEval("searchSources()");
+referenceEditor.$("knowledge-base-src-results").firstElementChild.click();
+await wait();
+await wait();
+check(
+  "The reference picker inserts citation keys without changing the card's source",
+  () => {
+    assert.equal(
+      referenceEditor.$("knowledge-base-editor-body").value,
+      "[@Author2026]",
+    );
+    assert.equal(referenceEditor.win.__editorEval("source.key"), "ABCD1234");
+  },
+);
+referenceEditor.win.__editorEval('toggleSourceDrop("reference")');
+await referenceEditor.win.__editorEval("searchSources()");
+referenceEditor.$("knowledge-base-src-results").lastElementChild.click();
+await wait();
+await wait();
+check("Zotero note references use ordinary editable Markdown link text", () => {
+  assert.ok(
+    referenceEditor
+      .$("knowledge-base-editor-body")
+      .value.includes(
+        "[Existing note](zotero://select/library/items/NOTE1234)",
+      ),
+  );
+  assert.equal(referenceEditor.win.__editorEval("source.key"), "ABCD1234");
+  const html = markdown.renderMarkdown(
+    "[My note title](zotero://select/library/items/NOTE1234)",
+    htmlWindow,
+  );
+  assert.equal(
+    rich_text.richTextToMarkdown(html),
+    "[My note title](zotero://select/library/items/NOTE1234)",
+  );
+});
 ed.$("knowledge-base-editor-body").value = "";
 ed.$("knowledge-base-editor-body").setSelectionRange(0, 0);
 ed.win.__editorEval("openCardPicker()");
@@ -1206,6 +1499,7 @@ let optionsChanged;
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
+      prepareMarkdown: async () => {},
       loc: (key) => key,
       getGraph: async () => graphData,
       getGraphOptions: () => graphOptions,
@@ -1542,6 +1836,7 @@ managerWin.Zotero = {
   },
   ZoteroKnowledgeBase: {
     api: {
+      prepareMarkdown: async () => {},
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
       listZettels: async () => managerCards,

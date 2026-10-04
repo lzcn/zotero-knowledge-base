@@ -134,6 +134,16 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  window.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+      event.preventDefault();
+      window.close();
+    }
+  });
+  $("knowledge-base-list").addEventListener("mousedown", (event) => {
+    if (event.detail > 1) event.preventDefault();
+    window.getSelection()?.removeAllRanges();
+  });
   document
     .getElementById("knowledge-base-back")
     .addEventListener("command", () => safeCall(navigateHistory, -1));
@@ -229,7 +239,6 @@ const refresh = wrap(async function () {
   const rows = await api.listZettels(q, $("knowledge-base-entries").checked);
   if (version !== listVersion || window.closed) return;
   zettels = rows;
-  const titles = new Map(rows.map((card) => [card.id, card.title]));
   const list = $("knowledge-base-list");
   list.textContent = "";
   for (const z of zettels) {
@@ -260,7 +269,7 @@ const refresh = wrap(async function () {
     const plain = (z.body || "")
       .replace(
         /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-        (_match, id, alias) => alias || titles.get(id) || id,
+        (_match, id, alias) => alias || `[[${id}]]`,
       )
       .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
       .replace(/[#*`>_$]/g, "")
@@ -395,6 +404,7 @@ const renderDetail = wrap(async function (id) {
     api.getBacklinks(id),
   ]);
   if (!z || version !== detailVersion || selectedId !== id) return;
+  await api.prepareMarkdown(z.body);
   const source = z.item_key
     ? await api.getItemSummary(z.item_key, z.library_id)
     : null;

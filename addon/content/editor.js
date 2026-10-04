@@ -13,6 +13,8 @@ const imageDraftId =
 let zettelId = args.zettelId || null;
 let dirty = false;
 let loaded = false;
+let closing = false;
+let allowClose = false;
 let disposed = false;
 let revision = 0;
 let expectedUpdatedAt = null;
@@ -27,6 +29,8 @@ window.knowledgeBaseCardId = zettelId;
 let richBody = null;
 let sourceSelection = { start: 0, end: 0, scroll: 0 };
 let source = null; // {key, libraryID, title, creatorYear, selectURL}
+let sourcePickMode = "source";
+let referenceRange = null;
 let searchTimer = null;
 let sourceSearchVersion = 0;
 let cardSearchVersion = 0;
@@ -366,7 +370,9 @@ function bindEvents() {
     if (mode === "reading" || mode === "visual" || mode === "source")
       run(() => setEditorMode(mode));
   });
-  $("knowledge-base-src-pick").addEventListener("command", toggleSourceDrop);
+  $("knowledge-base-src-pick").addEventListener("command", () =>
+    toggleSourceDrop(),
+  );
   $("knowledge-base-src-jump").addEventListener("command", () => {
     if (source) run(() => api.selectItem(source.key, source.libraryID));
   });
@@ -439,7 +445,7 @@ function bindEvents() {
     save(false),
   );
   $("knowledge-base-editor-cancel").addEventListener("command", () =>
-    closeIfClean(),
+    run(closeIfClean),
   );
   $("knowledge-base-anno-cancel").addEventListener("command", closeAnnoPicker);
   $("knowledge-base-anno-insert").addEventListener(
@@ -449,7 +455,9 @@ function bindEvents() {
   $("knowledge-base-src-selected").addEventListener("command", () =>
     run(useSelectedSource),
   );
-  $("knowledge-base-src-insert").addEventListener("command", insertSourceLink);
+  $("knowledge-base-src-insert").addEventListener("command", () =>
+    run(insertSourceLink),
+  );
   $("knowledge-base-link-pick").addEventListener("command", () =>
     openCardPicker(),
   );
@@ -528,6 +536,9 @@ function bindEvents() {
     } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "e") {
       ev.preventDefault();
       run(toggleReading);
+    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "w") {
+      ev.preventDefault();
+      run(closeIfClean);
     } else if (ev.key === "Escape") {
       if (!$("knowledge-base-command-menu").hidden) {
         closeCommands();
@@ -543,7 +554,7 @@ function bindEvents() {
         $("knowledge-base-link-drop").hidden = true;
       else if (!$("knowledge-base-anno-layer").hidden) closeAnnoPicker();
       else if (!$("knowledge-base-src-drop").hidden) toggleSourceDrop();
-      else closeIfClean();
+      else run(closeIfClean);
     }
   });
   window.addEventListener("beforeunload", () => {
@@ -553,14 +564,23 @@ function bindEvents() {
       persistDraft();
     }
   });
+  window.addEventListener("close", (event) => {
+    if ((dirty || saving) && !allowClose && !window.knowledgeBaseStopping) {
+      event.preventDefault();
+      run(closeIfClean);
+    }
+  });
 }
 
 /* ---------------- source item picker ---------------- */
 
-function toggleSourceDrop() {
+function toggleSourceDrop(mode = "source") {
   const drop = $("knowledge-base-src-drop");
-  drop.hidden = !drop.hidden;
+  drop.hidden = !drop.hidden && sourcePickMode === mode;
+  sourcePickMode = mode;
   if (!drop.hidden) {
+    const body = $("knowledge-base-editor-body");
+    referenceRange = { start: body.selectionStart, end: body.selectionEnd };
     $("knowledge-base-src-search").value = "";
     $("knowledge-base-src-results").textContent = "";
     $("knowledge-base-src-search").focus();
@@ -610,9 +630,10 @@ async function searchSources() {
       li.appendChild(meta);
     }
     li.addEventListener("click", () => {
-      setSource(it);
-      setDirty();
-      toggleSourceDrop();
+      $("knowledge-base-src-drop").hidden = true;
+      if (sourcePickMode === "reference")
+        run(() => insertItemReference(it, referenceRange));
+      else setSource(it, true);
     });
     ul.appendChild(li);
   }
@@ -626,7 +647,9 @@ async function useSelectedSource() {
     );
     return;
   }
-  setSource(item, true);
+  if (sourcePickMode === "reference")
+    await insertItemReference(item, referenceRange);
+  else setSource(item, true);
   $("knowledge-base-src-drop").hidden = true;
 }
 
@@ -729,6 +752,7 @@ async function setEditorMode(mode, focus = true) {
       scroll: body.scrollTop,
     };
   if (editorMode === "reading") readingScroll = preview.scrollTop;
+  if (mode !== "source") await api.prepareMarkdown(body.value);
   if (mode === "visual") await ensureRichEditor();
   if (disposed || window.closed || version !== modeVersion) return;
   editorMode = mode;
@@ -898,11 +922,22 @@ function markdownLabel(text) {
   return text.replace(/([\\[\]`*_])/g, "\\$1").replace(/\n/g, " ");
 }
 
-function insertSourceLink() {
+async function insertSourceLink() {
   if (!source?.selectURL) return;
-  insertText(
-    `[${markdownLabel(source.title || source.key)}](${source.selectURL})`,
-  );
+  const body = $("knowledge-base-editor-body");
+  await insertItemReference(source, {
+    start: body.selectionStart,
+    end: body.selectionEnd,
+  });
+}
+
+async function insertItemReference(item, range) {
+  const text =
+    item.citationKey && !item.isNote
+      ? `[@${item.citationKey}]`
+      : `[${markdownLabel(item.title || item.key)}](${item.selectURL})`;
+  await api.prepareMarkdown(text);
+  if (!disposed) insertText(text, range);
 }
 
 function formatSelection(kind) {
@@ -1215,18 +1250,44 @@ async function save(closeAfter) {
 }
 
 async function closeIfClean() {
-  if (dirty) {
-    if (await save(true)) return;
-    // A failed or conflicting write stays recoverable and never overwrites a card.
-    try {
+  if (closing || disposed) return;
+  closing = true;
+  clearTimeout(autosaveTimer);
+  try {
+    if (dirty || saving) {
+      const prompt = Services.prompt;
+      const choice = prompt.confirmEx(
+        /** @type {Parameters<typeof Services.prompt.confirmEx>[0]} */ (
+          /** @type {unknown} */ (window)
+        ),
+        api.loc("editor-title-edit"),
+        api.loc("editor-close-unsaved"),
+        prompt.BUTTON_POS_0 * prompt.BUTTON_TITLE_IS_STRING +
+          prompt.BUTTON_POS_1 * prompt.BUTTON_TITLE_IS_STRING +
+          prompt.BUTTON_POS_2 * prompt.BUTTON_TITLE_IS_STRING +
+          prompt.BUTTON_POS_1_DEFAULT,
+        api.loc("editor-save-close"),
+        api.loc("editor-close-cancel"),
+        api.loc("editor-draft-close"),
+        null,
+        { value: false },
+      );
+      if (choice === 1) {
+        if (dirty) scheduleSave();
+        return;
+      }
+      if (choice === 0) {
+        allowClose = true;
+        if (!(await save(true))) allowClose = false;
+        return;
+      }
       await persistDraft();
-    } catch {
-      return;
     }
-    if (!window.confirm(api.loc("editor-close-with-draft"))) return;
-    dirty = false;
+    allowClose = true;
+    window.close();
+  } finally {
+    closing = false;
   }
-  window.close();
 }
 
 function setStatus(text) {
@@ -1347,11 +1408,10 @@ function renderCommands() {
       target: "knowledge-base-image-insert",
     },
     {
-      key: "editor-src-insert",
+      key: "editor-reference-insert",
       icon: "note",
-      aliases: "source 来源",
-      target: "knowledge-base-src-insert",
-      disabled: !source?.selectURL,
+      aliases: "citation reference item note source 引用 条目 笔记 来源",
+      action: () => toggleSourceDrop("reference"),
     },
     {
       key: "parent",
@@ -1418,9 +1478,11 @@ function renderCommands() {
             range.start,
             range.end,
           );
-        document
-          .getElementById(command.target)
-          .dispatchEvent(new window.Event("command", { bubbles: true }));
+        if (command.action) command.action();
+        else
+          document
+            .getElementById(command.target)
+            .dispatchEvent(new window.Event("command", { bubbles: true }));
       }
     });
     list.appendChild(button);

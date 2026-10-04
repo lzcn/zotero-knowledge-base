@@ -313,6 +313,16 @@ function select(id) {
     $("graph-node-snippet"),
     node.snippet,
   );
+  api
+    .prepareMarkdown(node.snippet)
+    .then(() => {
+      if (!window.closed && selectedId === id)
+        window.ZoteroKnowledgeBaseMarkdown.render(
+          $("graph-node-snippet"),
+          node.snippet,
+        );
+    })
+    .catch((error) => window.Zotero.logError(error));
   const openLabel = api.loc(
     node.kind === "unresolved"
       ? "graph-create"

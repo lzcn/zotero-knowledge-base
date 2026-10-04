@@ -13,6 +13,7 @@ import { richTextToMarkdown } from "./rich-text";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { cardRefFromURL, renderMarkdown } from "./markdown";
+import { prepareCitations, getCitation, resolveCitation } from "./references";
 import {
   importImage,
   pickImage,
@@ -29,7 +30,6 @@ import {
   type CreateCardsResult,
 } from "./annotations";
 import {
-  getCardTitleSync,
   countByAnnotationKeys,
   countByItem,
   deleteZettel,
@@ -107,9 +107,11 @@ export const api = {
       body,
       mainWindow() as unknown as Parameters<typeof renderMarkdown>[1],
       resolveAssetURL,
-      getCardTitleSync,
+      getCitation,
     );
   },
+
+  prepareMarkdown: prepareCitations,
 
   saveEditorDraft,
   discardEditorDraft,
@@ -147,8 +149,6 @@ export const api = {
     const resolved = await resolveRefs(links.map((link) => link.ref));
     return links.map((link) => ({
       ...link,
-      display:
-        getCardTitleSync(resolved.get(link.ref) || link.ref) || link.display,
       targetId: resolved.get(link.ref) ?? null,
     }));
   },
@@ -163,6 +163,15 @@ export const api = {
   },
 
   async openLink(href: string): Promise<void> {
+    const citation = /^knowledge-base:\/\/cite\/([^?#]+)$/.exec(href);
+    if (citation) {
+      const key = decodeURIComponent(citation[1]);
+      const item = await resolveCitation(key);
+      if (!item)
+        throw new Error(getString("citation-unresolved", { args: { key } }));
+      await selectItem(item.key, item.libraryID);
+      return;
+    }
     const card = await api.resolveCardLink(href);
     if (card) {
       if (card.targetId) api.openManager({ selectId: card.targetId });

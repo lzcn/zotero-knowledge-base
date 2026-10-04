@@ -18,8 +18,13 @@ window.ZoteroKnowledgeBaseMarkdown = {
     );
     index.className = "relation-id";
     index.textContent = id;
+    index.hidden = title === id || title === `[[${id}]]`;
     container.append(name, index);
-    container.setAttribute("title", `${id} · ${title || id}`);
+    container.setAttribute(
+      "title",
+      title && title !== id ? `${id} · ${title}` : id,
+    );
+    container.setAttribute("aria-label", container.getAttribute("title"));
   },
   /** @param {Element} container @param {import("../../src/modules/hierarchy").CardFamily} family @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
   renderFamily(container, family, api) {

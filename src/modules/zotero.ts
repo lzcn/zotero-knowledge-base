@@ -11,6 +11,8 @@ export interface ItemSummary {
   publication?: string;
   selectURL: string;
   libraryName: string;
+  citationKey?: string;
+  isNote?: boolean;
 }
 
 export interface HighlightInfo {
@@ -56,7 +58,69 @@ function summary(item: Zotero.Item): ItemSummary {
     ),
     selectURL: selectURL(item),
     libraryName: library ? library.name : "",
+    citationKey: item.isRegularItem() ? getCitationKey(item) : undefined,
+    isNote: item.isNote(),
   };
+}
+
+interface CitekeyRecord {
+  itemID: number;
+  libraryID: number;
+  citationKey: string;
+}
+
+function keyManager() {
+  return (
+    Zotero as unknown as {
+      BetterBibTeX?: {
+        KeyManager?: {
+          get(id: number): CitekeyRecord | undefined;
+          all(query: (record: CitekeyRecord) => boolean): CitekeyRecord[];
+        };
+      };
+    }
+  ).BetterBibTeX?.KeyManager;
+}
+
+export function getCitationKey(item: Zotero.Item): string {
+  const native = Zotero.ItemFields.getID("citationKey")
+    ? String(item.getField("citationKey", false, true) || "").trim()
+    : "";
+  return (
+    native ||
+    keyManager()?.get(item.id)?.citationKey ||
+    /^Citation Key:\s*(\S+)\s*$/im.exec(
+      String(item.getField("extra", false, true) || ""),
+    )?.[1] ||
+    ""
+  );
+}
+
+/** Citation keys can be duplicated across libraries; never silently pick one. */
+export async function findCitationItems(key: string): Promise<ItemSummary[]> {
+  const ids = new Set(
+    keyManager()
+      ?.all((record) => record.citationKey === key)
+      .map((record) => record.itemID) || [],
+  );
+  for (const library of Zotero.Libraries.getAll()) {
+    if (!["user", "group"].includes(library.libraryType)) continue;
+    const search = new Zotero.Search({ libraryID: library.libraryID });
+    search.addCondition("deleted", "false");
+    search.addCondition("joinMode", "any");
+    if (Zotero.ItemFields.getID("citationKey"))
+      search.addCondition("citationKey", "is", key);
+    search.addCondition("extra", "contains", `Citation Key: ${key}`);
+    for (const id of await search.search()) ids.add(id);
+  }
+  const items = await Zotero.Items.getAsync([...ids]);
+  await Zotero.Items.loadDataTypes(items, ["itemData"]);
+  return items
+    .filter(
+      (item) =>
+        !item.deleted && item.isRegularItem() && getCitationKey(item) === key,
+    )
+    .map(summary);
 }
 
 export async function searchItems(
@@ -69,16 +133,50 @@ export async function searchItems(
   );
   const matches = await Promise.all(
     libraries.map(async (lib) => {
-      const s = new Zotero.Search({ libraryID: lib.libraryID });
-      s.addCondition("deleted", "false");
-      s.addCondition("itemType", "isNot", "attachment");
-      if (q) s.addCondition("quicksearch-titleCreatorYear", "contains", q);
-      const ids = await s.search();
+      const scope = new Zotero.Search({ libraryID: lib.libraryID });
+      scope.addCondition("deleted", "false");
+      scope.addCondition("itemType", "isNot", "attachment");
+      const s = q ? new Zotero.Search({ libraryID: lib.libraryID }) : scope;
+      if (q) {
+        s.setScope(scope, false);
+        s.addCondition("joinMode", "any");
+        s.addCondition("title", "contains", q);
+        s.addCondition("creator", "contains", q);
+        s.addCondition("year", "contains", q);
+        if (Zotero.ItemFields.getID("citationKey"))
+          s.addCondition("citationKey", "contains", q);
+        s.addCondition("extra", "contains", `Citation Key: ${q}`);
+      }
+      let noteIds: number[] = [];
+      if (q) {
+        const notes = new Zotero.Search({ libraryID: lib.libraryID });
+        notes.addCondition("deleted", "false");
+        notes.addCondition("itemType", "is", "note");
+        notes.addCondition("note", "contains", q);
+        noteIds = await notes.search();
+      }
+      const ids = [
+        ...new Set([
+          ...(await s.search()),
+          ...noteIds,
+          ...(q
+            ? keyManager()
+                ?.all(
+                  (record) =>
+                    record.libraryID === lib.libraryID &&
+                    record.citationKey.toLowerCase().includes(q.toLowerCase()),
+                )
+                .map((record) => record.itemID) || []
+            : []),
+        ]),
+      ];
       // Search IDs are not necessarily in Items' cache (especially group items).
       const items = await Zotero.Items.getAsync(ids.slice(0, limit));
       await Zotero.Items.loadDataTypes(items, ["itemData"]);
       return items
-        .filter((item) => item.isRegularItem() || item.isNote())
+        .filter(
+          (item) => !item.deleted && (item.isRegularItem() || item.isNote()),
+        )
         .map(summary);
     }),
   );

@@ -1,4 +1,4 @@
-import { Editor, Extension } from "@tiptap/core";
+import { Editor, Extension, InputRule, Node as EditorNode } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table";
@@ -104,6 +104,59 @@ export function createRichEditor(
           ];
         },
       }),
+      // Citation labels are indivisible so adjacent typing cannot alter or lose a key.
+      EditorNode.create({
+        name: "citation",
+        priority: 1100,
+        inline: true,
+        group: "inline",
+        atom: true,
+        addAttributes() {
+          return {
+            key: {
+              default: "",
+              parseHTML: (element) => element.getAttribute("data-citation-key"),
+            },
+            label: { default: "", parseHTML: (element) => element.textContent },
+            href: {
+              default: "",
+              parseHTML: (element) => element.getAttribute("href"),
+            },
+          };
+        },
+        parseHTML() {
+          return [{ tag: "a[data-citation-key]", priority: 100 }];
+        },
+        renderHTML({ node }) {
+          return [
+            "a",
+            {
+              "data-citation-key": node.attrs.key,
+              href: node.attrs.href,
+              title: `@${node.attrs.key}`,
+            },
+            node.attrs.label,
+          ];
+        },
+        addInputRules() {
+          return [
+            new InputRule({
+              find: /\[@([^\s\][;]+)\]$/,
+              handler: ({ state, range, match }) => {
+                state.tr.replaceWith(
+                  range.from,
+                  range.to,
+                  this.type.create({
+                    key: match[1],
+                    label: match[0],
+                    href: `knowledge-base://cite/${encodeURIComponent(match[1])}`,
+                  }),
+                );
+              },
+            }),
+          ];
+        },
+      }),
       Image.configure({ inline: true }),
       TableKit.configure({ table: { resizable: false } }),
       TaskList,
@@ -173,7 +226,14 @@ export function createRichEditor(
   });
   return {
     setHTML: (html) => {
-      editor.commands.setContent(prepareHTML(html), { emitUpdate: false });
+      editor
+        .chain()
+        .setContent(prepareHTML(html), { emitUpdate: false })
+        .command(({ tr }) => {
+          tr.setMeta("addToHistory", false);
+          return true;
+        })
+        .run();
       editor.commands.setTextSelection(editor.state.doc.content.size);
     },
     getHTML: () => markdownHTML(editor.getHTML()),
