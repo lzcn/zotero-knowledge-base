@@ -689,6 +689,8 @@ html|button[disabled] {
 }
 .markdown-body img {
   max-width: 100%;
+  height: auto;
+  object-fit: contain;
 }
 .markdown-body input[type="checkbox"] {
   margin-right: 6px;
@@ -1315,6 +1317,7 @@ summary {
   color: var(--fg);
 }
 #knowledge-base-toolbar {
+  flex-wrap: nowrap;
   background: var(--surface-subtle);
   padding: 8px 12px;
   gap: 10px;
@@ -1415,14 +1418,59 @@ summary {
 #knowledge-base-detail-source:empty {
   display: none;
 }
+#knowledge-base-detail-source {
+  margin-bottom: 10px;
+  padding: 9px 12px;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.source-item-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.source-item-icon {
+  display: inline-block;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  background: url("chrome://zotero/skin/16/universal/book.svg") center / contain
+    no-repeat;
+  -moz-context-properties: fill;
+  fill: currentColor;
+}
 #knowledge-base-detail-source .source-link {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
   background: transparent;
-  padding: 0 0 14px;
+  padding: 0;
   border: 0;
   border-radius: 0;
   white-space: normal;
   line-height: 1.5;
 }
+#knowledge-base-detail-source .source-link .source-item-icon {
+  margin-top: 2px;
+  color: var(--muted);
+}
+.source-item-text {
+  min-width: 0;
+}
+.source-item-title {
+  font-weight: 500;
+}
+#knowledge-base-detail-source .source-link:hover .source-item-title {
+  text-decoration: underline;
+}
+#knowledge-base-toolbar .card-actions {
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+
 #knowledge-base-preview {
   background: transparent;
   color: inherit;
@@ -1527,7 +1575,7 @@ summary {
 #knowledge-base-forward {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/forward.svg");
 }
-.kb-native-tool[disabled="true"] {
+.kb-native-tool[disabled] {
   opacity: 0.4;
 }
 #knowledge-base-btn-edit {
@@ -1793,7 +1841,7 @@ summary {
   max-height: 100px;
   overflow-y: auto;
 }
-.kb-native-tool:not([disabled="true"]):hover {
+.kb-native-tool:not([disabled]):hover {
   color: var(--accent);
 }
 #knowledge-base-btn-delete:hover {
@@ -1967,5 +2015,14 @@ summary {
   .card-connections,
   .editor-connections {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 760px) {
+  #knowledge-base-toolbar {
+    flex-wrap: wrap;
+  }
+  #knowledge-base-toolbar .card-actions {
+    margin-left: auto;
   }
 }

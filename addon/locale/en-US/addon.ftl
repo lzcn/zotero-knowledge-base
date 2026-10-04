@@ -46,10 +46,10 @@ manager-confirm-delete = Delete "{ $title }"? Links to this note will remain but
 editor-title-new = New Note
 editor-title-edit = Edit Note
 editor-title-placeholder = Note title
-editor-source-label = Parent item:
-editor-src-none = No parent item selected
-editor-src-pick = Choose parent item
-editor-src-change = Change parent item
+editor-source-label = Source · Zotero:
+editor-src-none = No source item linked
+editor-src-pick = Choose source
+editor-src-change = Change source
 editor-src-jump = Open item
 editor-src-anno = Insert highlights
 editor-src-placeholder = Search title or author…
@@ -224,7 +224,7 @@ manager-forward = Forward
 manager-drafts = Recovery drafts
 manager-restore-draft = Open draft
 editor-save-copy = Save as new card
-editor-remove-source = Clear parent item
+editor-remove-source = Remove source
 
 editor-note-missing = The linked Zotero note is missing or in the trash. Restore it in Zotero before editing this card.
 
@@ -265,3 +265,5 @@ native-markdown-draft = Draft restored
 native-markdown-close = Save changes before closing?
 
 editor-outline-parent = Parent note
+
+manager-source-item = Source · Zotero

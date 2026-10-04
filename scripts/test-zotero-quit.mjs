@@ -332,6 +332,40 @@ function runQuitTest() {
             && text && button.ownerGlobal.getComputedStyle(text).display === "none"
             && button.getBoundingClientRect().width === (largeIcon ? 32 : 28);
         });
+        const actions = [...manager.document.querySelectorAll(".card-actions toolbarbutton")];
+        if (actions.length !== 3 || actions.some(button => !button.closest("#knowledge-base-toolbar")) || manager.document.querySelector("#knowledge-base-detail .card-actions")) throw new Error("Note actions are not confined to the top toolbar");
+        const toolbar = manager.document.getElementById("knowledge-base-toolbar");
+        if (toolbar.getBoundingClientRect().height > 55) throw new Error("Default-width toolbar wraps note actions onto another row");
+        const sourceBox = manager.document.getElementById("knowledge-base-detail-source");
+        if (sourceBox.querySelector(".source-item-label")?.textContent !== kb.api.loc("manager-source-item") || !sourceBox.querySelector(".source-item-icon")) throw new Error("Source is not identified as a Zotero item");
+        const iconSVG = (await Zotero.HTTP.request("GET", "chrome://zotero/skin/16/universal/book.svg")).responseText;
+        if (!iconSVG.includes("<svg")) throw new Error("Native source item icon is unavailable");
+        const preview = manager.document.getElementById("knowledge-base-preview");
+        const imageCanvas = manager.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+        imageCanvas.width = 800; imageCanvas.height = 200;
+        const context = imageCanvas.getContext("2d");
+        context.fillStyle = "#e9f1ff"; context.fillRect(0,0,800,200);
+        context.fillStyle = "#2469c9"; context.fillRect(30,30,140,140);
+        const probe = manager.document.createElementNS("http://www.w3.org/1999/xhtml", "img");
+        probe.width = 800; probe.height = 200; probe.src = imageCanvas.toDataURL("image/png");
+        preview.append(probe); await probe.decode();
+        const imageBounds = probe.getBoundingClientRect();
+        if (imageBounds.width >= 800 || imageBounds.width > preview.clientWidth || Math.abs(imageBounds.height * 4 - imageBounds.width) > 1) throw new Error("Wide preview image stretched instead of shrinking proportionally");
+        probe.width = 120; probe.height = 400;
+        const smallBounds = probe.getBoundingClientRect();
+        if (Math.abs(smallBounds.width - 120) > 1 || Math.abs(smallBounds.height - 30) > 1) throw new Error("Stored image height distorted a small preview image");
+        const imageShots = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
+        if (imageShots) {
+          probe.width = 800; probe.height = 200;
+          await IOUtils.makeDirectory(imageShots, {ignoreExisting:true});
+          const image = await manager.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
+          const canvas = manager.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+          canvas.width = image.width; canvas.height = image.height;
+          canvas.getContext("2d").drawImage(image, 0, 0); image.close();
+          const blob = await new Promise(resolve => canvas.toBlob(resolve));
+          await IOUtils.write(PathUtils.join(imageShots, "image-proportions.png"), new Uint8Array(await blob.arrayBuffer()));
+        }
+        probe.remove();
         for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = true;
         const relations = [...manager.document.querySelectorAll(".relation-link")];
         const identitiesVisible = relations.length >= 2 && relations.every(button => {
@@ -846,7 +880,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, parent item titles, native toolbar Markdown menus, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown menus, resizable panels and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

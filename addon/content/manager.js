@@ -25,6 +25,15 @@ const args = /** @type {import("../../src/modules/api").ManagerArgs} */ (
 /** @type {import("../../src/modules/api").KnowledgeBaseAPI} */
 let api = null;
 
+function updateActions() {
+  for (const id of [
+    "knowledge-base-btn-edit",
+    "knowledge-base-btn-local-graph",
+    "knowledge-base-btn-delete",
+  ])
+    document.getElementById(id).toggleAttribute("disabled", !selectedId);
+}
+
 function showError(msg) {
   const box = $("knowledge-base-error");
   box.hidden = false;
@@ -59,6 +68,7 @@ const load = wrap(async function () {
     )
   );
   applyLocale();
+  updateActions();
   bindEvents();
   window.KnowledgeBasePanels.attach(
     $("knowledge-base-splitter"),
@@ -151,6 +161,7 @@ function applyLocale() {
 function bindEvents() {
   $("knowledge-base-kind").addEventListener("change", () => {
     selectedId = null;
+    updateActions();
     safeCall(refresh);
     $("knowledge-base-detail").hidden = true;
     $("knowledge-base-detail-empty").hidden = false;
@@ -212,6 +223,7 @@ function bindEvents() {
   });
   $("knowledge-base-entries").addEventListener("change", () => {
     selectedId = null;
+    updateActions();
     $("knowledge-base-detail").hidden = true;
     $("knowledge-base-detail-empty").hidden = false;
     safeCall(refresh);
@@ -269,6 +281,7 @@ const refresh = wrap(async function () {
   zettels = rows;
   if (selectedId && !rows.some((row) => row.id === selectedId)) {
     selectedId = null;
+    updateActions();
     $("knowledge-base-detail").hidden = true;
     $("knowledge-base-detail-empty").hidden = false;
   }
@@ -385,6 +398,7 @@ function select(id, record = true) {
     .getElementById("knowledge-base-forward")
     .toggleAttribute("disabled", historyIndex >= history.length - 1);
   selectedId = id;
+  updateActions();
   for (const li of /** @type {HTMLLIElement[]} */ (
     Array.from($("knowledge-base-list").children)
   )) {
@@ -470,30 +484,55 @@ const renderDetail = wrap(async function (id) {
   const srcBox = $("knowledge-base-detail-source");
   srcBox.textContent = "";
   if (z.item_key) {
-    const s = source;
-    if (s) {
+    const label = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    label.className = "source-item-label";
+    label.textContent = api.loc("manager-source-item");
+    srcBox.appendChild(label);
+    if (source) {
       const link = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
         "button",
       );
       link.className = "source-link";
-      link.textContent = s.title;
-      const citation = document.createElementNS(
+      const icon = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
-        "small",
+        "span",
       );
-      citation.textContent = [s.creatorYear, s.publication]
+      icon.className = "source-item-icon";
+      icon.setAttribute("aria-hidden", "true");
+      const content = document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "span",
+      );
+      content.className = "source-item-text";
+      const title = document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "span",
+      );
+      title.className = "source-item-title";
+      title.textContent = source.title;
+      content.appendChild(title);
+      const context = [source.creatorYear, source.publication]
         .filter(Boolean)
         .join(" · ");
-      link.appendChild(citation);
+      if (context) {
+        const citation = document.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "small",
+        );
+        citation.textContent = context;
+        content.appendChild(citation);
+      }
+      link.append(icon, content);
       link.title = api.loc("manager-source-open");
       link.addEventListener("click", () =>
-        safeCall(() => api.selectItem(s.key, s.libraryID)),
+        safeCall(() => api.selectItem(source.key, source.libraryID)),
       );
       srcBox.appendChild(link);
     } else {
-      // The source item is gone (deleted, or in a detached library): say so
-      // instead of silently showing nothing.
       const gone = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
         "div",
@@ -599,6 +638,7 @@ const removeZettel = wrap(async function (id) {
   if (!ok) return;
   await api.deleteZettel(id);
   selectedId = null;
+  updateActions();
   $("knowledge-base-detail").hidden = true;
   $("knowledge-base-detail-empty").hidden = false;
   await refresh();

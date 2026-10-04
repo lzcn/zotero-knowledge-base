@@ -40,10 +40,10 @@ manager-confirm-delete = 确定删除「{ $title }」吗？指向此笔记的链
 editor-title-new = 新建笔记
 editor-title-edit = 编辑笔记
 editor-title-placeholder = 笔记标题
-editor-source-label = 父条目：
-editor-src-none = 尚未选择父条目
-editor-src-pick = 选择父条目
-editor-src-change = 更换父条目
+editor-source-label = 来源 · Zotero：
+editor-src-none = 尚未关联来源条目
+editor-src-pick = 选择来源
+editor-src-change = 更换来源
 editor-src-jump = 打开条目
 editor-src-anno = 插入高亮
 editor-src-placeholder = 搜索标题或作者…
@@ -198,7 +198,7 @@ manager-forward = 前进
 manager-drafts = 可恢复草稿
 manager-restore-draft = 打开草稿
 editor-save-copy = 另存为新卡片
-editor-remove-source = 清除父条目
+editor-remove-source = 移除来源
 
 editor-note-missing = 关联的 Zotero 笔记不存在或已移入回收站。请先在 Zotero 中恢复笔记。
 
@@ -239,3 +239,5 @@ native-markdown-draft = 已恢复草稿
 native-markdown-close = 关闭前保存修改吗？
 
 editor-outline-parent = 上级笔记
+
+manager-source-item = 来源 · Zotero

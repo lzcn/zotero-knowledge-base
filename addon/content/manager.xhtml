@@ -33,6 +33,14 @@ type="text/css"?>
       /></html:label>
       <html:div class="spacer" />
       <html:span id="knowledge-base-stats" class="muted"></html:span>
+      <html:div class="card-actions" role="group">
+        <toolbarbutton id="knowledge-base-btn-edit" class="kb-native-tool" />
+        <toolbarbutton
+          id="knowledge-base-btn-local-graph"
+          class="kb-native-tool"
+        />
+        <toolbarbutton id="knowledge-base-btn-delete" class="kb-native-tool" />
+      </html:div>
     </html:header>
     <html:main id="knowledge-base-main">
       <html:section id="knowledge-base-list-pane">
@@ -44,20 +52,6 @@ type="text/css"?>
         <html:div id="knowledge-base-detail" hidden="hidden">
           <html:header class="card-heading">
             <html:h1 id="knowledge-base-detail-title" />
-            <html:div class="card-actions" role="group">
-              <toolbarbutton
-                id="knowledge-base-btn-edit"
-                class="kb-native-tool"
-              />
-              <toolbarbutton
-                id="knowledge-base-btn-local-graph"
-                class="kb-native-tool"
-              />
-              <toolbarbutton
-                id="knowledge-base-btn-delete"
-                class="kb-native-tool"
-              />
-            </html:div>
           </html:header>
           <html:div class="card-metadata">
             <html:div id="knowledge-base-detail-id" class="card-index" />

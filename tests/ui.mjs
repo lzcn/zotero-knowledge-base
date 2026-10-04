@@ -1915,6 +1915,8 @@ let managerCards = [
   {
     id: "20261002011320",
     title: "这是2017的Zettel",
+    item_key: "SRC00001",
+    library_id: 1,
     body: '<span class="highlight" data-annotation="native-annotation">An idea with a clear source and related notes.</span><img data-attachment-key="IMAGE001" />',
     updated_at: 1790874821032,
     outgoing: 1,
@@ -1963,6 +1965,16 @@ managerWin.Zotero = {
         editable: true,
       }),
       prepareMarkdown: async () => {},
+      getItemSummary: async () => ({
+        key: "SRC00001",
+        libraryID: 1,
+        title: "Linked Zotero item",
+        creatorYear: "Author 2026",
+        publication: "Journal",
+      }),
+      selectItem: async (...args) => {
+        managerCalls.sources = args;
+      },
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
       listZettels: async (_query, _entries, kind) =>
@@ -2033,7 +2045,12 @@ check(
       ...managerDoc.querySelectorAll(".card-actions toolbarbutton"),
     ];
     assert.equal(actions.length, 3);
+    assert.equal(
+      managerDoc.querySelector("#knowledge-base-detail .card-actions"),
+      null,
+    );
     for (const button of actions) {
+      assert.ok(button.closest("#knowledge-base-toolbar"));
       assert.equal(
         button.namespaceURI,
         "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
@@ -2050,6 +2067,24 @@ check(
         .getAttribute("aria-current"),
       "true",
     );
+  },
+);
+managerDoc.querySelector("#knowledge-base-detail-source .source-link").click();
+await wait();
+check(
+  "Source is visibly marked as a Zotero item and opens the linked item",
+  () => {
+    const box = managerDoc.getElementById("knowledge-base-detail-source");
+    assert.equal(
+      box.querySelector(".source-item-label").textContent,
+      "manager-source-item",
+    );
+    assert.equal(
+      box.querySelector(".source-item-title").textContent,
+      "Linked Zotero item",
+    );
+    assert.ok(box.querySelector(".source-item-icon"));
+    assert.deepEqual(managerCalls.sources, ["SRC00001", 1]);
   },
 );
 managerDoc.getElementById("knowledge-base-preview").scrollTop = 64;
@@ -2123,6 +2158,10 @@ kindFilter.dispatchEvent(new managerWin.Event("change"));
 await wait();
 await wait();
 check("Type filtering hides cards from other note kinds", () => {
+  for (const button of managerDoc.querySelectorAll(
+    ".card-actions toolbarbutton",
+  ))
+    assert.ok(button.hasAttribute("disabled"));
   assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0);
 });
 nativeClick(managerDoc.getElementById("knowledge-base-btn-new"), managerWin);
