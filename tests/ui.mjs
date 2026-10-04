@@ -1638,7 +1638,7 @@ let managerCards = [
   {
     id: "20261002011320",
     title: "这是2017的Zettel",
-    body: "An idea with a clear source and related notes.",
+    body: '<span class="highlight" data-annotation="native-annotation">An idea with a clear source and related notes.</span><img data-attachment-key="IMAGE001" />',
     updated_at: 1790874821032,
     outgoing: 1,
     incoming: 0,
@@ -1681,7 +1681,10 @@ managerWin.Zotero = {
       prepareMarkdown: async () => {},
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
-      listZettels: async () => managerCards,
+      listZettels: async (_query, _entries, kind) =>
+        managerCards.filter(
+          (card) => !kind || (card.kind || "zettel") === kind,
+        ),
       getZettel: async (id) => managerCards.find((card) => card.id === id),
       getFamily: async () => ({
         parent: null,
@@ -1695,6 +1698,7 @@ managerWin.Zotero = {
       openEditor: (args) => managerCalls.edits.push(args),
       openGraph: (args) => managerCalls.graphs.push(args),
       openManager: (args) => managerCalls.opens.push(args),
+      isExternalNote: async () => false,
       deleteZettel: async (id) => {
         managerCalls.deletes.push(id);
         managerCards = managerCards.filter((card) => card.id !== id);
@@ -1775,6 +1779,12 @@ managerDoc.querySelector("#knowledge-base-family .family-link").click();
 check("Compact child entries still navigate to their card", () =>
   assert.equal(managerCalls.opens[0].selectId, managerCards[1].id),
 );
+check("Native highlights and images leave only readable list summaries", () => {
+  const summary = managerDoc.querySelector(".card-snippet").textContent;
+  assert.equal(summary, "An idea with a clear source and related notes.");
+  assert.ok(!summary.includes("data-annotation"));
+  assert.ok(!summary.includes("IMAGE001"));
+});
 // Save the real rendered fixture for browser visual inspection when requested.
 if (process.env.KNOWLEDGE_BASE_PREVIEW) {
   const css = await readFile(
@@ -1796,6 +1806,25 @@ check("Delete action removes the selected card and clears its details", () => {
   assert.equal(managerCalls.deletes[0], "20261002011320");
   assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
   assert.equal(managerDoc.getElementById("knowledge-base-detail").hidden, true);
+});
+const kindFilter = managerDoc.getElementById("knowledge-base-kind");
+kindFilter.value = "thinking";
+kindFilter.dispatchEvent(new managerWin.Event("change"));
+await wait();
+await wait();
+check("Type filtering hides cards from other note kinds", () => {
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0);
+});
+nativeClick(managerDoc.getElementById("knowledge-base-btn-new"), managerWin);
+check("A new note inherits the selected kind", () => {
+  assert.equal(managerCalls.edits.at(-1).kind, "thinking");
+});
+kindFilter.value = "";
+kindFilter.dispatchEvent(new managerWin.Event("change"));
+await wait();
+await wait();
+check("All notes restores the remaining card", () => {
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
 });
 for (const win of windows) {
   win.dispatchEvent(new win.Event("unload"));

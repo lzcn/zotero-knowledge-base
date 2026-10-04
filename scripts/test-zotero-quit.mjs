@@ -73,12 +73,16 @@ function runQuitTest() {
         const first = JSON.parse(await IOUtils.readUTF8(${JSON.stringify(marker)}));
         const cards = await kb.api.listZettels();
         const card = cards.find(row => row.id === first.cardID);
-        if (cards.length !== 2 || card?.body !== "Recovered draft body" || (await kb.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
+        if (cards.length !== 4 || card?.body !== "Recovered draft body" || (await kb.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
         const organizedNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.noteKey);
         const organizedLoose = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.looseNoteKey);
         const organizedCollection = await Zotero.Collections.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.collectionKey);
         await Zotero.Items.loadDataTypes([organizedLoose], ["collections"]);
         if (!organizedNote.parentItemID || organizedLoose.parentItemID || !organizedLoose.inCollection(organizedCollection.id)) throw new Error("Startup did not organize existing linked notes");
+        const projectCard = await kb.api.getZettel(first.thinkingID);
+        const readingCard = await kb.api.getZettel(first.literatureID);
+        const projectNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.thinkingKey);
+        if (projectCard?.kind !== "thinking" || projectCard.item_key || readingCard?.kind !== "literature" || projectNote.parentItemID !== organizedNote.parentItemID || projectNote.getNote() !== first.thinkingHTML) throw new Error("Restart changed an adopted note's type, content or placement");
         const linked = await kb.api.acquireNativeNote({ id: card.id, title: card.title, body: card.body });
         const restoredNote = await Zotero.Items.getAsync(linked.noteID);
         if (!restoredNote.parentItemID || restoredNote.key !== first.noteKey || !restoredNote.getNote().includes("Recovered draft body")) throw new Error("Restart duplicated or lost the linked note");
@@ -106,6 +110,42 @@ function runQuitTest() {
       if ((await kb.api.searchItems("NoSuchCitation2026")).length) throw new Error("Source search returned unrelated items");
       await kb.api.openLink("zotero://select/library/items/" + note.key);
       if (Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== note.key) throw new Error("Note hyperlink did not select its Zotero note");
+      const thinking = new Zotero.Item("note");
+      thinking.libraryID = item.libraryID;
+      thinking.parentItemID = item.id;
+      thinking.setNote('<div data-schema-version="9"><h1>Existing project</h1><p>[[]] Original thinking</p></div>');
+      thinking.setTags([{tag: "#Ideas"}]);
+      await thinking.saveTx({skipSelect: true});
+      const originalThinking = thinking.getNote();
+      const thinkingID = await kb.api.registerExistingNote({noteID: thinking.id, kind: "thinking"});
+      const sameThinkingID = await kb.api.registerExistingNote({noteID: thinking.id, kind: "thinking"});
+      if (thinkingID !== sameThinkingID || thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id || thinking.getTags()[0]?.tag !== "#Ideas") throw new Error("Registering an existing note copied or changed it");
+      const acquiredThinking = await kb.api.acquireNativeNote({id: thinkingID, title: "", body: ""});
+      if (acquiredThinking.noteID !== thinking.id || thinking.parentItemID !== item.id) throw new Error("Existing project note identity or placement changed on open");
+      await kb.api.releaseNativeNote(thinking.id);
+      const literatureID = await kb.api.registerExistingNote({noteID: note.id, kind: "literature", itemKey: item.key, libraryID: item.libraryID});
+      let duplicateLiteratureRejected = false;
+      try { await kb.api.registerExistingNote({noteID: thinking.id, kind: "literature", itemKey: item.key, libraryID: item.libraryID}); } catch (error) { duplicateLiteratureRejected = String(error).includes("LITERATURE_EXISTS"); }
+      if (!duplicateLiteratureRejected || (await kb.api.getZettel(thinkingID)).kind !== "thinking") throw new Error("Duplicate Literature Note was not rejected atomically");
+      await kb.api.saveZettel({id: thinkingID, kind: "thinking", title: "Existing project", body: "[Reading](zotero://note/u/" + note.key + "/)"});
+      if ((await kb.api.getOutgoing(thinkingID))[0]?.targetId !== literatureID) throw new Error("Native note links did not enter the graph");
+      await Promise.all([kb.api.openLiteratureNote(item.key, item.libraryID), kb.api.openLiteratureNote(item.key, item.libraryID)]);
+      let literatureEditors = [];
+      for (let n = 0; n < 100; n++) {
+        literatureEditors = [...Services.wm.getEnumerator("knowledge-base:editor")];
+        if (literatureEditors.length) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (literatureEditors.length !== 1 || (await kb.api.listZettels("", false, "literature")).length !== 1) throw new Error("Repeated literature requests opened duplicate notes or windows: " + literatureEditors.length + "/" + (await kb.api.listZettels("", false, "literature")).length);
+      const literatureEditor = literatureEditors[0];
+      for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (literatureEditor.document.getElementById("knowledge-base-kind").value !== "literature" || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the adopted native note");
+      await literatureEditor.save(false);
+      literatureEditor.close();
+      for (let n = 0; n < 100 && !literatureEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 25));
+      await kb.api.deleteZettel(literatureID);
+      await kb.api.deleteZettel(thinkingID);
+      if (thinking.deleted || note.deleted || thinking.getNote() !== originalThinking) throw new Error("Removing registered notes trashed or rewrote original notes");
       const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a1ioAAAAASUVORK5CYII=";
       const imageURL = await kb.api.importImage([...atob(png)].map(char => char.charCodeAt(0)), "image/png", "host-migration");
       await kb.api.saveZettel({ title: "Shutdown test", body: "Inline $E = mc^2$.\\n\\n![Migration image](" + imageURL + ")", itemKey: item.key, libraryID: item.libraryID });
@@ -265,8 +305,8 @@ function runQuitTest() {
         };
         click(cardLink);
         const childID = (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id;
-        for (let n = 0; n < 80 && manager.document.getElementById("knowledge-base-detail-id").textContent !== childID; n++) await new Promise(resolve => setTimeout(resolve, 50));
-        if (manager.document.getElementById("knowledge-base-detail-id").textContent !== childID) throw new Error("Native card hyperlink did not navigate");
+        for (let n = 0; n < 80 && !manager.document.getElementById("knowledge-base-detail-id").textContent.endsWith(childID); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        if (!manager.document.getElementById("knowledge-base-detail-id").textContent.endsWith(childID)) throw new Error("Native card hyperlink did not navigate");
         const math = richSurface.querySelector("math-inline .math-render");
         const mathBounds = math.getBoundingClientRect();
         for (const type of ["mousedown", "mouseup", "click"]) math.dispatchEvent(new frameWindow.MouseEvent(type, { bubbles: true, cancelable: true, clientX: mathBounds.x + mathBounds.width / 2, clientY: mathBounds.y + mathBounds.height / 2 }));
@@ -429,9 +469,12 @@ function runQuitTest() {
         // Simulate previously unfiled linked notes so startup must organize them.
         nativeNote.parentItemID = false; await nativeNote.saveTx();
         looseNote.removeFromCollection(collection.id); await looseNote.saveTx();
+        const persistedThinkingID = await kb.api.registerExistingNote({noteID: thinking.id, kind: "thinking"});
+        const persistedLiteratureID = await kb.api.registerExistingNote({noteID: note.id, kind: "literature", itemKey: item.key, libraryID: item.libraryID});
+        if (thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id) throw new Error("Adoption changed the original project before restart");
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 2, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, collectionKey: collection.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, collectionKey: collection.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, preferencesVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -482,7 +525,7 @@ try {
   if (
     state.error ||
     result.code !== 0 ||
-    state.cards !== 2 ||
+    state.cards !== 4 ||
     !state.iconsVisible ||
     !state.identitiesVisible ||
     !state.mathVisible ||
@@ -500,10 +543,12 @@ try {
   try {
     if (
       db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      db.prepare("SELECT count(*) AS n FROM zettels").get().n !== 2
+      db.prepare("SELECT count(*) AS n FROM zettels").get().n !== 4
     )
       throw new Error("Saved database failed verification");
-    const migration = db.prepare("SELECT original_body FROM card_notes").get();
+    const migration = db
+      .prepare("SELECT original_body FROM card_notes WHERE card_id = ?")
+      .get(state.cardID);
     if (!migration?.original_body.includes("![Migration image]"))
       throw new Error("Original Markdown migration backup was not preserved");
     if (
@@ -540,7 +585,7 @@ try {
     const restored = JSON.parse(await readFile(restartMarker, "utf8"));
     if (
       code !== 0 ||
-      restored.cards !== 2 ||
+      restored.cards !== 4 ||
       restored.noteKey !== state.noteKey
     )
       throw new Error("Restart validation failed");
@@ -549,7 +594,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; one browse/edit toggle, automatic source/collection placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, existing-note registration without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; one browse/edit toggle, automatic source/collection placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

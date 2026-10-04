@@ -19,11 +19,18 @@ import {
   duplicateNativeNote,
   prepareNativePreview,
   nativePreviewHTML,
+  registerExistingNote,
+  isExternalNote,
+  ensureLiteratureNote,
 } from "./native-notes";
 import { richTextToMarkdown } from "./rich-text";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
-import { cardRefFromURL, renderMarkdown } from "./markdown";
+import {
+  cardRefFromURL,
+  nativeNoteRefFromURL,
+  renderMarkdown,
+} from "./markdown";
 import { prepareCitations, getCitation, resolveCitation } from "./references";
 import {
   importImage,
@@ -75,6 +82,7 @@ const ANNOTATIONS_URL = `chrome://${config.addonRef}/content/annotations.xhtml`;
 export type HighlightWithCards = HighlightInfo & { cards: number };
 
 export interface EditorArgs {
+  kind?: import("./db").NoteKind;
   zettelId?: string | null;
   draftId?: string;
   prefillTitle?: string;
@@ -101,7 +109,16 @@ function mainWindow(): Window {
   return Zotero.getMainWindow();
 }
 
+const editorWindows = new Map<string, Window>();
+
 export const api = {
+  ensureLiteratureNote,
+  registerExistingNote,
+  isExternalNote,
+  async openLiteratureNote(key: string, libraryID: number): Promise<void> {
+    const id = await ensureLiteratureNote(key, libraryID);
+    api.openEditor({ zettelId: id });
+  },
   loc(key: string, args?: Record<string, string | number | null>): string {
     return getString(key, { args });
   },
@@ -166,18 +183,23 @@ export const api = {
   async getDraftLinks(body: string): Promise<ResolvedLink[]> {
     const links = parseLinks(body);
     const resolved = await resolveRefs(links.map((link) => link.ref));
-    return links.map((link) => ({
-      ...link,
-      targetId: resolved.get(link.ref) ?? null,
-    }));
+    return links
+      .filter(
+        (link) => !link.ref.startsWith("zotero://") || resolved.has(link.ref),
+      )
+      .map((link) => ({
+        ...link,
+        targetId: resolved.get(link.ref) ?? null,
+      }));
   },
 
   async resolveCardLink(
     href: string,
   ): Promise<{ ref: string; targetId: string | null } | null> {
-    const ref = cardRefFromURL(href);
+    const ref = cardRefFromURL(href) || nativeNoteRefFromURL(href);
     if (!ref) return null;
     const resolved = await resolveRefs([ref]);
+    if (ref.startsWith("zotero://") && !resolved.has(ref)) return null;
     return { ref, targetId: resolved.get(ref) ?? null };
   },
 
@@ -218,8 +240,12 @@ export const api = {
 
   /* ---------------- data ---------------- */
 
-  listZettels(query = "", entriesOnly = false): Promise<Zettel[]> {
-    return listZettels(query, entriesOnly);
+  listZettels(
+    query = "",
+    entriesOnly = false,
+    kind?: import("./db").NoteKind,
+  ): Promise<Zettel[]> {
+    return listZettels(query, entriesOnly, kind);
   },
 
   listByItem(itemKey: string): Promise<Zettel[]> {
@@ -246,14 +272,7 @@ export const api = {
     return getUnresolvedRefs();
   },
 
-  saveZettel(input: {
-    id?: string;
-    title: string;
-    body: string;
-    parentId?: string | null;
-    itemKey?: string | null;
-    libraryID?: number | null;
-  }): Promise<string> {
+  saveZettel(input: Parameters<typeof saveZettel>[0]): Promise<string> {
     return saveZettel(input);
   },
 
@@ -330,6 +349,16 @@ export const api = {
   },
 
   openEditor(args: EditorArgs = {}): void {
+    const key = args.zettelId
+      ? `note:${args.zettelId}`
+      : args.draftId
+        ? `draft:${args.draftId}`
+        : null;
+    const pending = key ? editorWindows.get(key) : null;
+    if (pending && !pending.closed) {
+      pending.focus();
+      return;
+    }
     for (const win of Services.wm.getEnumerator("knowledge-base:editor")) {
       const editor = win as unknown as Window & {
         knowledgeBaseCardId?: string;
@@ -343,12 +372,28 @@ export const api = {
         return;
       }
     }
-    mainWindow().openDialog(
+    const opened = mainWindow().openDialog(
       EDITOR_URL,
       "knowledge-base:editor",
       "chrome,centerscreen,resizable=yes,width=1000,height=720",
       args,
-    );
+    ) as Window & {
+      knowledgeBaseCardId?: string;
+      knowledgeBaseDraftId?: string;
+    };
+    if (key) {
+      editorWindows.set(key, opened);
+      opened.addEventListener(
+        "unload",
+        () => {
+          if (editorWindows.get(key) === opened) editorWindows.delete(key);
+        },
+        { once: true },
+      );
+    }
+    // Stamp identity before the window script loads, so rapid requests reuse it.
+    if (args.zettelId) opened.knowledgeBaseCardId = args.zettelId;
+    if (args.draftId) opened.knowledgeBaseDraftId = args.draftId;
   },
 
   openGraph(args: { centerId?: string } = {}): void {

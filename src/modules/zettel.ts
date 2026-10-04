@@ -2,7 +2,14 @@
  * Zettel data model: timestamp IDs, [[wiki-link]] parsing, CRUD, backlinks.
  */
 
-import { exec, getAll, getOne, transaction, type ZettelRow } from "./db";
+import {
+  exec,
+  getAll,
+  getOne,
+  transaction,
+  type NoteKind,
+  type ZettelRow,
+} from "./db";
 import { saveParent, removeParent } from "./hierarchy";
 import { parseCardLinks } from "./markdown";
 import { notifyDataChange } from "./events";
@@ -69,6 +76,28 @@ export async function resolveRefs(
   const map = new Map<string, string>();
   if (!refs.length || shouldStop()) return map;
   const placeholders = refs.map(() => "?").join(",");
+  // Native note hyperlinks retain their user-written labels and URLs.
+  for (const ref of refs) {
+    const match =
+      /^zotero:\/\/(?:note\/(u|\d+)\/|select\/(?:items\/|library\/items\/|groups\/(\d+)\/items\/))([A-Z0-9]{8})(?:[/?#].*)?$/i.exec(
+        ref,
+      );
+    if (!match) continue;
+    const groupID = match[2] || (match[1] !== "u" ? match[1] : null);
+    const libraryID = groupID
+      ? Zotero.Libraries.getAll().find(
+          (lib) =>
+            lib.libraryType === "group" &&
+            lib.libraryTypeID === Number(groupID),
+        )?.libraryID
+      : Zotero.Libraries.userLibraryID;
+    if (!libraryID) continue;
+    const note = await getOne<{ card_id: string }>(
+      "SELECT card_id FROM card_notes WHERE library_id = ? AND note_key = ?",
+      [libraryID, match[3]],
+    );
+    if (note) map.set(ref, note.card_id);
+  }
   // by id
   const byId = await getAll<{ id: string; title: string }>(
     `SELECT id, title FROM zettels WHERE id IN (${placeholders})`,
@@ -113,6 +142,7 @@ export async function resolveRefs(
  */
 function rowToZettel(row: ZettelRow, outgoing = 0, incoming = 0): Zettel {
   return {
+    kind: row.kind,
     id: row.id,
     title: row.title,
     body: row.body,
@@ -143,10 +173,15 @@ export async function getZettel(id: string): Promise<Zettel | null> {
 export async function listZettels(
   query = "",
   entriesOnly = false,
+  kind?: NoteKind,
 ): Promise<Zettel[]> {
-  const entryFilter = entriesOnly
-    ? "id IN (SELECT card_id FROM card_parents WHERE parent_id IS NULL)"
-    : "1 = 1";
+  if (kind && !["literature", "zettel", "thinking"].includes(kind))
+    throw new Error("Invalid note type");
+  const entryFilter =
+    (kind ? `kind = '${kind}' AND ` : "") +
+    (entriesOnly
+      ? "id IN (SELECT card_id FROM card_parents WHERE parent_id IS NULL)"
+      : "1 = 1");
   const q = query.trim();
   let rows: ZettelRow[];
   if (q) {
@@ -186,10 +221,13 @@ export async function listZettels(
 }
 
 /** All zettels whose source is the given Zotero item, newest first. */
-export async function listByItem(itemKey: string): Promise<Zettel[]> {
+export async function listByItem(
+  itemKey: string,
+  libraryID?: number,
+): Promise<Zettel[]> {
   const rows = await getAll<ZettelRow>(
-    `SELECT * FROM zettels WHERE item_key = ? ORDER BY updated_at DESC`,
-    [itemKey],
+    `SELECT * FROM zettels WHERE item_key = ?${libraryID === undefined ? "" : " AND library_id = ?"} ORDER BY updated_at DESC`,
+    libraryID === undefined ? [itemKey] : [itemKey, libraryID],
   );
   return rows.map((r) => rowToZettel(r));
 }
@@ -279,7 +317,7 @@ export function getAnnotationCountSync(annotationKey: string): number {
   return annotationCounts.get(annotationKey) ?? 0;
 }
 
-async function refreshItemCount(itemKey: string | null): Promise<void> {
+export async function refreshItemCount(itemKey: string | null): Promise<void> {
   if (!itemKey) return;
   itemCounts.set(itemKey, await countByItem(itemKey));
 }
@@ -304,6 +342,7 @@ async function refreshAnnotationCount(
  * On update, omitting it preserves the stored value.
  */
 export interface SaveCardInput {
+  kind?: NoteKind;
   id?: string;
   title: string;
   body: string;
@@ -339,6 +378,19 @@ export async function saveEditorCard(
     ) {
       throw new Error("CARD_CONFLICT");
     }
+    const kind = input.kind ?? previous?.kind ?? "zettel";
+    if (!["literature", "zettel", "thinking"].includes(kind))
+      throw new Error("Invalid note type");
+    if (kind === "literature") {
+      if (!input.itemKey || !input.libraryID)
+        throw new Error("LITERATURE_SOURCE_REQUIRED");
+      const existing = await getOne<{ id: string }>(
+        "SELECT id FROM zettels WHERE kind = 'literature' AND item_key = ? AND library_id = ?",
+        [input.itemKey, input.libraryID],
+      );
+      if (existing && existing.id !== input.id)
+        throw new Error("LITERATURE_EXISTS");
+    }
     if (previous) now = Math.max(now, previous.updated_at + 1);
     if (input.id && previous) {
       id = input.id;
@@ -354,7 +406,7 @@ export async function saveEditorCard(
       await exec(
         `UPDATE zettels
          SET title = ?, body = ?, item_key = ?, library_id = ?,
-             annotation_key = ?, updated_at = ?
+             annotation_key = ?, kind = ?, updated_at = ?
          WHERE id = ?`,
         [
           title,
@@ -362,6 +414,7 @@ export async function saveEditorCard(
           input.itemKey ?? null,
           input.libraryID ?? null,
           effectiveAnnotationKey,
+          kind,
           now,
           id,
         ],
@@ -373,8 +426,8 @@ export async function saveEditorCard(
           ? input.id
           : newZettelID(new Set(allIds.map((r) => r.id)));
       await exec(
-        `INSERT INTO zettels (id, title, body, item_key, library_id, annotation_key, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO zettels (id, title, body, item_key, library_id, annotation_key, kind, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           title,
@@ -382,6 +435,7 @@ export async function saveEditorCard(
           input.itemKey ?? null,
           input.libraryID ?? null,
           effectiveAnnotationKey,
+          kind,
           now,
           now,
         ],
@@ -442,7 +496,9 @@ async function reindexLinks(zettelId: string, body: string): Promise<void> {
 }
 
 /** Resolve forward references when their target is created later. */
-async function resolveUnresolvedLinks(shouldStop = () => false): Promise<void> {
+export async function resolveUnresolvedLinks(
+  shouldStop = () => false,
+): Promise<void> {
   if (shouldStop()) return;
   const rows = await getAll<{ ref: string }>(
     `SELECT DISTINCT ref FROM links WHERE target_id IS NULL`,
@@ -477,7 +533,7 @@ export async function getOutgoing(id: string): Promise<ResolvedLink[]> {
   }>(
     `SELECT l.ref, l.target_id, t.title
      FROM links l LEFT JOIN zettels t ON t.id = l.target_id
-     WHERE l.source_id = ? ORDER BY l.ref`,
+     WHERE l.source_id = ? AND (l.target_id IS NOT NULL OR substr(l.ref, 1, 9) <> 'zotero://') ORDER BY l.ref`,
     [id],
   );
   return rows.map((r) => ({
@@ -515,7 +571,7 @@ export async function getUnresolvedRefs(): Promise<
 > {
   const rows = await getAll<{ ref: string; count: number }>(
     `SELECT ref, COUNT(*) AS count FROM links
-     WHERE target_id IS NULL GROUP BY ref ORDER BY count DESC, ref LIMIT 100`,
+     WHERE target_id IS NULL AND substr(ref, 1, 9) <> 'zotero://' GROUP BY ref ORDER BY count DESC, ref LIMIT 100`,
   );
   return rows.map((r) => ({ ref: r.ref, count: r.count }));
 }

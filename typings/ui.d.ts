@@ -41,6 +41,7 @@ declare global {
 }
 
 export interface EditorElements {
+  "knowledge-base-kind": HTMLSelectElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;
   "knowledge-base-command-menu": HTMLDivElement;
@@ -102,6 +103,7 @@ export interface EditorElements {
 }
 
 export interface ManagerElements {
+  "knowledge-base-kind": HTMLSelectElement;
   "knowledge-base-entries": HTMLInputElement;
   "knowledge-base-entries-label": HTMLSpanElement;
   "knowledge-base-family": HTMLDivElement;

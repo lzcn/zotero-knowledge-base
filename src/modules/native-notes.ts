@@ -1,4 +1,5 @@
-import { exec, getAll, getOne } from "./db";
+import { exec, getAll, getOne, transaction, type NoteKind } from "./db";
+import { notifyDataChange } from "./events";
 import { getFamily } from "./hierarchy";
 import { richTextToMarkdown } from "./rich-text";
 import { renderMarkdown } from "./markdown";
@@ -6,12 +7,19 @@ import { getCitation, prepareCitations, resolveCitation } from "./references";
 import { resolveAssetURL } from "./assets";
 import { getCitationKey } from "./zotero";
 import { getString } from "../utils/locale";
-import { getZettel, saveEditorCard, type SaveCardInput } from "./zettel";
+import {
+  getZettel,
+  saveEditorCard,
+  resolveUnresolvedLinks,
+  refreshItemCount,
+  type SaveCardInput,
+} from "./zettel";
 
 interface NoteMapping {
   card_id: string;
   note_key: string;
   library_id: number;
+  external: number;
 }
 export interface NativeCardInput extends SaveCardInput {
   noteID?: number;
@@ -104,7 +112,9 @@ export function projectNativeNote(html: string): {
     if (next) paragraph.appendChild(doc.createElement("br"));
     paragraph.replaceWith(...(Array.from(paragraph.childNodes) as ChildNode[]));
   }
-  const heading = root.firstElementChild;
+  const heading = Array.from(root.children).find((element) =>
+    element.textContent?.trim(),
+  );
   const title = heading?.textContent?.trim() || "";
   if (heading?.tagName === "H1") heading.remove();
   return { title, body: richTextToMarkdown(root as HTMLElement) };
@@ -213,7 +223,14 @@ async function mappedNote(id: string): Promise<Zotero.Item | null> {
 async function organizeNativeNote(
   note: Zotero.Item,
   input: SaveCardInput,
+  relocate = false,
 ): Promise<void> {
+  // Existing user notes retain their original parent and collections.
+  const mapping = await getOne<NoteMapping>(
+    "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
+    [note.key, note.libraryID],
+  );
+  if (mapping?.external && !relocate) return;
   const library = Zotero.Libraries.get(note.libraryID);
   if (!library || !library.editable) return;
   await Zotero.Items.loadDataTypes([note], ["collections"]);
@@ -291,7 +308,12 @@ export async function acquireNativeNote(
   const original = input.id ? await getZettel(input.id) : null;
   if (!note) {
     note = new Zotero.Item("note");
-    note.libraryID = Zotero.Libraries.userLibraryID;
+    note.libraryID =
+      (original?.kind ?? input.kind) === "literature"
+        ? (original?.library_id ??
+          input.libraryID ??
+          Zotero.Libraries.userLibraryID)
+        : Zotero.Libraries.userLibraryID;
     note.setNote(
       await nativeNoteHTML(
         original?.title ?? input.title,
@@ -328,6 +350,19 @@ export async function acquireNativeNote(
 export async function saveNativeCard(
   input: NativeCardInput,
 ): Promise<{ id: string; updatedAt: number; html?: string; noteID?: number }> {
+  const kind =
+    input.kind ?? (input.id ? (await getZettel(input.id))?.kind : null);
+  if (kind === "literature") {
+    const source =
+      input.itemKey && input.libraryID
+        ? await Zotero.Items.getByLibraryAndKeyAsync(
+            input.libraryID,
+            input.itemKey,
+          )
+        : null;
+    if (!source || !source.isRegularItem() || source.deleted)
+      throw new Error("LITERATURE_SOURCE_REQUIRED");
+  }
   if (!input.noteID) {
     if (input.sourceMode === undefined) return saveEditorCard(input);
     const acquired = await acquireNativeNote(input);
@@ -379,7 +414,13 @@ export async function saveNativeCard(
           await note.save();
         }
       });
-      await organizeNativeNote(note, input);
+      await organizeNativeNote(
+        note,
+        input,
+        !!previous &&
+          (previous.item_key !== (input.itemKey ?? null) ||
+            previous.library_id !== (input.libraryID ?? null)),
+      );
     },
   );
   const html = note.getNote();
@@ -517,7 +558,7 @@ export async function trashNativeNote(id: string): Promise<void> {
     row.library_id,
     row.note_key,
   );
-  if (note && !note.deleted) {
+  if (!row.external && note && !note.deleted) {
     note.deleted = true;
     await note.saveTx();
   }
@@ -575,4 +616,104 @@ export async function duplicateNativeNote(
   });
   activeNotes.add(note.id);
   return { noteID: note.id, html: note.getNote() };
+}
+
+/** Register an existing native note without changing its content or placement.
+ * Used for a one-off, reviewed library arrangement; no import UI is exposed.
+ */
+export async function registerExistingNote(input: {
+  noteID: number;
+  kind: NoteKind;
+  id?: string;
+  itemKey?: string | null;
+  libraryID?: number;
+}): Promise<string> {
+  const note = await Zotero.Items.getAsync(input.noteID);
+  if (!note || !note.isNote() || note.deleted)
+    throw new Error("Native note not found");
+  await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
+  const mapped = await getOne<NoteMapping>(
+    "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
+    [note.key, note.libraryID],
+  );
+  const id =
+    mapped?.card_id ?? input.id ?? `note-${note.libraryID}-${note.key}`;
+  const existing = await getZettel(id);
+  if (existing && !mapped) throw new Error("CARD_CONFLICT: ID already in use");
+  if (input.kind === "literature") {
+    const source = input.itemKey
+      ? await Zotero.Items.getByLibraryAndKeyAsync(
+          input.libraryID ?? note.libraryID,
+          input.itemKey,
+        )
+      : null;
+    if (
+      !source ||
+      !source.isRegularItem() ||
+      source.deleted ||
+      source.libraryID !== note.libraryID
+    )
+      throw new Error("LITERATURE_SOURCE_REQUIRED");
+  }
+  const projection = projectNativeNote(note.getNote());
+  await saveEditorCard(
+    {
+      id,
+      kind: input.kind,
+      ...projection,
+      itemKey: input.itemKey ?? null,
+      libraryID: input.itemKey ? (input.libraryID ?? note.libraryID) : null,
+      parentId: existing ? ((await getFamily(id)).parent?.id ?? null) : null,
+      expectedUpdatedAt: existing?.updated_at ?? null,
+    },
+    async () => {
+      await exec(
+        "INSERT OR IGNORE INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, ?, ?, ?, 1)",
+        [id, note.key, note.libraryID, projection.body],
+      );
+      await exec("UPDATE card_notes SET external = 1 WHERE card_id = ?", [id]);
+      await resolveUnresolvedLinks();
+    },
+  );
+  return id;
+}
+
+export async function isExternalNote(id: string): Promise<boolean> {
+  return !!(
+    await getOne<NoteMapping>("SELECT * FROM card_notes WHERE card_id = ?", [
+      id,
+    ])
+  )?.external;
+}
+
+/** Repeated requests open the same literature record, including before editing. */
+export async function ensureLiteratureNote(
+  itemKey: string,
+  libraryID: number,
+): Promise<string> {
+  const source = await Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey);
+  if (!source || !source.isRegularItem() || source.deleted)
+    throw new Error("LITERATURE_SOURCE_REQUIRED");
+  // Serialize discovery and creation on the plugin connection.
+  const id = await transaction(async () => {
+    const found = await getOne<{ id: string }>(
+      "SELECT id FROM zettels WHERE kind = 'literature' AND item_key = ? AND library_id = ?",
+      [itemKey, libraryID],
+    );
+    if (found) return found.id;
+    const id = `literature-${libraryID}-${itemKey}`;
+    const now = Date.now();
+    await exec(
+      "INSERT INTO zettels (id, title, body, item_key, library_id, kind, created_at, updated_at) VALUES (?, ?, '', ?, ?, 'literature', ?, ?)",
+      [id, source.getField("title"), itemKey, libraryID, now, now],
+    );
+    await exec(
+      "INSERT INTO card_parents (card_id, parent_id) VALUES (?, NULL)",
+      [id],
+    );
+    return id;
+  });
+  await refreshItemCount(itemKey);
+  notifyDataChange();
+  return id;
 }

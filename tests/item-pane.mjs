@@ -60,6 +60,9 @@ globalThis.addon = {
     async getHighlights() {
       throw new Error("Broken attachment");
     },
+    async openLiteratureNote(key, libraryID) {
+      state.literature = { key, libraryID };
+    },
     openEditor(args) {
       state.opens.push(args);
     },
@@ -86,10 +89,15 @@ check(
   "The source pane shows cards without requesting or importing highlights",
   () => {
     assert.equal(body.querySelector("li").textContent, "A linked idea");
-    assert.equal(body.querySelector("button").textContent, "section-new");
-    assert.equal(body.querySelectorAll("button").length, 1);
+    assert.equal(body.querySelectorAll("button")[1].textContent, "section-new");
+    assert.equal(body.querySelectorAll("button").length, 2);
     assert.equal(state.errors.length, 0);
   },
+);
+body.querySelector("button").click();
+await settle();
+check("The source pane opens its unique Literature Note", () =>
+  assert.deepEqual(state.literature, { key: "A", libraryID: 1 }),
 );
 body.querySelector("li").click();
 check("A source card opens its actual editor", () =>

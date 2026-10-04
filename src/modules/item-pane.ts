@@ -99,7 +99,8 @@ function renderSection(body: HTMLElement, item?: Zotero.Item): void {
 }
 
 async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
-  const zettels = await listByItem(item.key);
+  const notes = await listByItem(item.key, item.libraryID);
+  const zettels = notes.filter((note) => note.kind !== "literature");
   if (
     !container.isConnected ||
     container.parentElement?.dataset.itemKey !== item.key
@@ -107,6 +108,16 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
     return;
   }
   container.textContent = "";
+
+  const literature = el(container, "button");
+  literature.className = "knowledge-base-mini-btn";
+  literature.textContent = getString("note-kind-literature");
+  literature.addEventListener("click", () => {
+    void addon.api
+      .openLiteratureNote(item.key, item.libraryID)
+      .catch((error: Error) => Zotero.logError(error));
+  });
+  container.appendChild(literature);
 
   const head = el(container, "div");
   head.className = "knowledge-base-count";

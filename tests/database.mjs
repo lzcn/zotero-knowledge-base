@@ -266,6 +266,7 @@ const REQUIRED = [
   "item_key",
   "library_id",
   "annotation_key",
+  "kind",
   "created_at",
   "updated_at",
 ];
@@ -287,7 +288,7 @@ async function initialize(label, dataDir, prepare) {
   }
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
-  check("schemaVersion is 6", schema.version === "6", `got ${schema.version}`);
+  check("schemaVersion is 7", schema.version === "7", `got ${schema.version}`);
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
     "all required columns present",
@@ -295,8 +296,8 @@ async function initialize(label, dataDir, prepare) {
     missing.join(", "),
   );
   check(
-    "all 7 indexes present",
-    schema.indexes.length === 7,
+    "all 8 indexes present",
+    schema.indexes.length === 8,
     `got ${schema.indexes.length}`,
   );
   return schema;
@@ -520,6 +521,115 @@ if (currentSchema) {
     "code examples do not create phantom graph references",
     !(await zettel.getUnresolvedRefs()).some((ref) => ref.ref === "Not a card"),
   );
+  const literature = await zettel.saveZettel({
+    kind: "literature",
+    title: "Reading",
+    body: "",
+    itemKey: "READING1",
+    libraryID: 1,
+  });
+  let duplicateRejected = false;
+  try {
+    await zettel.saveZettel({
+      kind: "literature",
+      title: "Duplicate",
+      body: "",
+      itemKey: "READING1",
+      libraryID: 1,
+    });
+  } catch (error) {
+    duplicateRejected = error.message === "LITERATURE_EXISTS";
+  }
+  check("A source has only one Literature Note", duplicateRejected);
+  let noSourceRejected = false;
+  try {
+    await zettel.saveZettel({
+      kind: "literature",
+      title: "No source",
+      body: "",
+    });
+  } catch (error) {
+    noSourceRejected = error.message === "LITERATURE_SOURCE_REQUIRED";
+  }
+  check("Literature Notes require a source", noSourceRejected);
+  const anotherLibrary = await zettel.saveZettel({
+    kind: "literature",
+    title: "Group reading",
+    body: "",
+    itemKey: "READING1",
+    libraryID: 2,
+  });
+  const thought = await zettel.saveZettel({
+    kind: "thinking",
+    title: "Survey",
+    body: "[[Reading]]",
+  });
+  const firstCard = await zettel.saveZettel({
+    kind: "zettel",
+    title: "First claim",
+    body: "",
+    itemKey: "READING1",
+    libraryID: 1,
+  });
+  const secondCard = await zettel.saveZettel({
+    kind: "zettel",
+    title: "Second claim",
+    body: "",
+    itemKey: "READING1",
+    libraryID: 1,
+  });
+  check(
+    "One item supports multiple Zettels alongside its Literature Note",
+    (await zettel.listByItem("READING1", 1)).length === 3,
+  );
+  check(
+    "Thinking Notes need no source and link across types",
+    (await zettel.getZettel(thought)).kind === "thinking" &&
+      (await zettel.getOutgoing(thought))[0].targetId === literature,
+  );
+  check(
+    "Type filters search their own notes",
+    (await zettel.listZettels("Survey", false, "thinking")).some(
+      (row) => row.id === thought,
+    ) && !(await zettel.listZettels("Survey", false, "literature")).length,
+  );
+  await zettel.saveZettel({ id: thought, title: "Survey edited", body: "" });
+  check(
+    "Editing through older callers retains note type",
+    (await zettel.getZettel(thought)).kind === "thinking",
+  );
+  zoteroStub.Libraries = { userLibraryID: 1, getAll: () => [] };
+  await db.exec(
+    "INSERT INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, 'NOTE0001', 1, '', 1)",
+    [literature],
+  );
+  await zettel.saveZettel({
+    id: thought,
+    title: "Survey edited",
+    body: "[My own label](zotero://note/u/NOTE0001/)",
+  });
+  check(
+    "Existing native note links connect across types without rewriting labels",
+    (await zettel.getOutgoing(thought))[0]?.targetId === literature &&
+      (await zettel.getZettel(thought)).body.includes("My own label"),
+  );
+  await zettel.saveZettel({
+    id: thought,
+    title: "Survey edited",
+    body: "[Unmanaged item](zotero://select/items/UNMANAGE)",
+  });
+  check(
+    "Unmanaged Zotero items are not offered as missing cards",
+    !(await zettel.getUnresolvedRefs()).some((row) =>
+      row.ref.includes("UNMANAGE"),
+    ) &&
+      !(await graph.getGraphData()).nodes.some((row) =>
+        row.id.includes("UNMANAGE"),
+      ),
+  );
+  await db.exec("DELETE FROM card_notes WHERE card_id = ?", [literature]);
+  for (const id of [literature, anotherLibrary, thought, firstCard, secondCard])
+    await zettel.deleteZettel(id);
   const rootId = await zettel.saveZettel({ title: "Outline root", body: "" });
   const branchId = await zettel.saveZettel({
     title: "Outline branch",

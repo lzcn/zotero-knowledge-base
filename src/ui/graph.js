@@ -308,7 +308,9 @@ function select(id) {
   $("graph-selection").hidden = false;
   $("graph-node-title").textContent = node.title;
   $("graph-node-kind").textContent =
-    node.kind === "card" ? node.id : api.loc(`graph-kind-${node.kind}`);
+    node.kind === "card"
+      ? `${api.loc("note-kind-" + (node.noteKind || "zettel"))} · ${node.id}`
+      : api.loc(`graph-kind-${node.kind}`);
   window.ZoteroKnowledgeBaseMarkdown.render(
     $("graph-node-snippet"),
     node.snippet,

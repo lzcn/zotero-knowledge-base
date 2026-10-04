@@ -10,9 +10,12 @@
  */
 
 const DB_FILENAME = "knowledge-base.sqlite";
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
+
+export type NoteKind = "literature" | "zettel" | "thinking";
 
 export interface ZettelRow {
+  kind: NoteKind;
   id: string;
   title: string;
   body: string;
@@ -45,6 +48,7 @@ const SCHEMA_TABLES: string[] = [
     item_key TEXT,
     library_id INTEGER,
     annotation_key TEXT,
+    kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
@@ -166,6 +170,21 @@ async function ensureSchema(): Promise<void> {
   for (const sql of SCHEMA_TABLES) {
     await runSchemaStatement(sql);
   }
+  const columns = await getAll<{ name: string }>("PRAGMA table_info(zettels)");
+  if (!columns.some((column) => column.name === "kind"))
+    await exec(
+      "ALTER TABLE zettels ADD COLUMN kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL)))",
+    );
+  const mappings = await getAll<{ name: string }>(
+    "PRAGMA table_info(card_notes)",
+  );
+  if (!mappings.some((column) => column.name === "external"))
+    await exec(
+      "ALTER TABLE card_notes ADD COLUMN external INTEGER NOT NULL DEFAULT 0",
+    );
+  await exec(
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_literature_source ON zettels(library_id, item_key) WHERE kind = 'literature'",
+  );
   for (const sql of SCHEMA_INDEXES) {
     await runSchemaStatement(sql, true);
   }
@@ -188,6 +207,7 @@ const REQUIRED_COLUMNS = [
   "item_key",
   "library_id",
   "annotation_key",
+  "kind",
   "created_at",
   "updated_at",
 ];

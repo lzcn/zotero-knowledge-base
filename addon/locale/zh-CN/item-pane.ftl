@@ -1,4 +1,4 @@
 pane-header =
-    .label = 卡片
+    .label = 知识库
 pane-sidenav =
-    .tooltiptext = 卡片
+    .tooltiptext = 知识库

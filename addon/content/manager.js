@@ -62,6 +62,7 @@ const load = wrap(async function () {
   bindEvents();
   await refreshDrafts();
   if (args.selectId) $("knowledge-base-entries").checked = false;
+  $("knowledge-base-kind").value = "";
   await refresh();
   const wanted =
     args.selectId && (await api.getZettel(args.selectId))
@@ -86,12 +87,20 @@ window.ZoteroKnowledgeBase_selectZettel = function (id) {
   safeCall(async () => {
     $("knowledge-base-search").value = "";
     $("knowledge-base-entries").checked = false;
+    $("knowledge-base-kind").value = "";
     await refresh();
     if (await api.getZettel(id)) select(id);
   });
 };
 
 function applyLocale() {
+  $("knowledge-base-kind").setAttribute("aria-label", api.loc("note-kind"));
+  for (const option of /** @type {HTMLOptionElement[]} */ (
+    Array.from($("knowledge-base-kind").options)
+  ))
+    option.textContent = api.loc(
+      option.value ? "note-kind-" + option.value : "note-kind-all",
+    );
   for (const [id, key] of [
     ["knowledge-base-back", "manager-back"],
     ["knowledge-base-forward", "manager-forward"],
@@ -134,6 +143,12 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  $("knowledge-base-kind").addEventListener("change", () => {
+    selectedId = null;
+    safeCall(refresh);
+    $("knowledge-base-detail").hidden = true;
+    $("knowledge-base-detail-empty").hidden = false;
+  });
   window.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
       event.preventDefault();
@@ -183,6 +198,7 @@ function bindEvents() {
       onSaved: (id) =>
         safeCall(async () => {
           $("knowledge-base-entries").checked = false;
+          $("knowledge-base-kind").value = "";
           await refresh();
           select(id);
         }),
@@ -236,9 +252,20 @@ function bindEvents() {
 const refresh = wrap(async function () {
   const version = ++listVersion;
   const q = $("knowledge-base-search").value || "";
-  const rows = await api.listZettels(q, $("knowledge-base-entries").checked);
+  const rows = await api.listZettels(
+    q,
+    $("knowledge-base-entries").checked,
+    /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
+      $("knowledge-base-kind").value || undefined
+    ),
+  );
   if (version !== listVersion || window.closed) return;
   zettels = rows;
+  if (selectedId && !rows.some((row) => row.id === selectedId)) {
+    selectedId = null;
+    $("knowledge-base-detail").hidden = true;
+    $("knowledge-base-detail-empty").hidden = false;
+  }
   const list = $("knowledge-base-list");
   list.textContent = "";
   for (const z of zettels) {
@@ -266,7 +293,13 @@ const refresh = wrap(async function () {
       "span",
     );
     snippet.className = "card-snippet";
-    const plain = (z.body || "")
+    const summary = new window.DOMParser().parseFromString(
+      z.body || "",
+      "text/html",
+    );
+    for (const node of summary.querySelectorAll("script, style"))
+      node.parentNode?.removeChild(node);
+    const plain = (summary.body.textContent || "")
       .replace(
         /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
         (_match, id, alias) => alias || `[[${id}]]`,
@@ -297,7 +330,8 @@ const refresh = wrap(async function () {
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
     id.className = "zid muted";
-    id.textContent = z.id;
+    id.textContent =
+      z.kind && z.kind !== "zettel" ? api.loc("note-kind-" + z.kind) : z.id;
     id.title = z.id;
     li.appendChild(id);
 
@@ -367,6 +401,7 @@ async function navigateHistory(direction) {
   historyIndex = index;
   $("knowledge-base-search").value = "";
   $("knowledge-base-entries").checked = false;
+  $("knowledge-base-kind").value = "";
   await refresh();
   select(card.id, false);
 }
@@ -412,7 +447,8 @@ const renderDetail = wrap(async function (id) {
   $("knowledge-base-detail-empty").hidden = true;
   $("knowledge-base-detail").hidden = false;
 
-  $("knowledge-base-detail-id").textContent = z.id;
+  $("knowledge-base-detail-id").textContent =
+    api.loc("note-kind-" + (z.kind || "zettel")) + " · " + z.id;
   $("knowledge-base-detail-title").title = z.id;
   $("knowledge-base-detail-title").textContent =
     z.title || api.loc("manager-untitled");
@@ -526,6 +562,9 @@ function openEditor(id) {
 
 function newZettel(title = "") {
   api.openEditor({
+    kind: /** @type {import("../../src/modules/db").NoteKind} */ (
+      $("knowledge-base-kind").value || "zettel"
+    ),
     prefillTitle: title,
     onSaved: (id) =>
       safeCall(async () => {
@@ -538,7 +577,12 @@ function newZettel(title = "") {
 const removeZettel = wrap(async function (id) {
   const z = await api.getZettel(id);
   const ok = window.confirm(
-    api.loc("manager-confirm-delete", { title: (z && z.title) || id }),
+    api.loc(
+      (await api.isExternalNote(id))
+        ? "manager-confirm-remove"
+        : "manager-confirm-delete",
+      { title: (z && z.title) || id },
+    ),
   );
   if (!ok) return;
   await api.deleteZettel(id);

@@ -1,5 +1,5 @@
 import { hierarchy, tree } from "d3-hierarchy";
-import { getAll, type ZettelRow, type LinkRow } from "./db";
+import { getAll, type ZettelRow, type LinkRow, type NoteKind } from "./db";
 import { getItemSummary } from "./zotero";
 
 export interface GraphNode {
@@ -7,6 +7,7 @@ export interface GraphNode {
   title: string;
   kind: "card" | "source" | "unresolved";
   snippet: string;
+  noteKind?: NoteKind;
   citation?: string;
   parentId?: string | null;
   itemKey?: string;
@@ -52,6 +53,7 @@ export async function getGraphData(): Promise<GraphData> {
       id: row.id,
       title: row.title || row.id,
       kind: "card",
+      noteKind: row.kind,
       parentId: parentMap.get(row.id) ?? null,
       snippet: row.body,
     });
@@ -67,7 +69,11 @@ export async function getGraphData(): Promise<GraphData> {
         context: "",
       });
   for (const link of links) {
-    if (!nodes.has(link.source_id)) continue;
+    if (
+      !nodes.has(link.source_id) ||
+      (!link.target_id && link.ref.startsWith("zotero://"))
+    )
+      continue;
     const target =
       link.target_id && nodes.has(link.target_id)
         ? link.target_id

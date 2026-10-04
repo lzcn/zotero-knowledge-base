@@ -10,17 +10,17 @@ section-header =
 section-sidenav =
     .tooltiptext = 卡片
 section-count =
-    { $count } 张卡片
-section-no-item = 选中文献条目后显示其卡片
+    { $count } 篇笔记
+section-no-item = 选中文献条目后显示其笔记
 section-loading = 加载中…
 section-new = ＋ 新建卡片
 
 manager-title = 知识库
-manager-new = 新建卡片
+manager-new = 新建笔记
 manager-search-placeholder = 搜索标题、正文或 ID…
-manager-empty-detail = 选择左侧卡片查看详情；双击卡片可编辑
-manager-outgoing = 引用的卡片
-manager-backlinks = 引用此卡片
+manager-empty-detail = 选择笔记查看详情；双击可编辑
+manager-outgoing = 链接的笔记
+manager-backlinks = 反向链接
 manager-preview = 内容
 manager-edit = 编辑
 manager-delete = 删除
@@ -31,13 +31,13 @@ manager-source = 来源
 manager-source-open = 在 Zotero 中打开该条目
 manager-source-missing = 来源条目已删除或不可用
 manager-count =
-    { $count } 张卡片
+    { $count } 篇笔记
 manager-updated = 更新于
-manager-confirm-delete = 确定删除「{ $title }」吗？其他卡片中指向它的链接将保留，但无法打开。
+manager-confirm-delete = 确定删除「{ $title }」吗？指向此笔记的链接会保留，但无法打开。
 
-editor-title-new = 新建卡片
-editor-title-edit = 编辑卡片
-editor-title-placeholder = 卡片标题
+editor-title-new = 新建笔记
+editor-title-edit = 编辑笔记
+editor-title-placeholder = 笔记标题
 editor-source-label = 来源：
 editor-src-none = 尚未关联文献条目
 editor-src-pick = 选择来源
@@ -94,9 +94,9 @@ editor-src-selected = 使用当前选中条目
 editor-src-no-selection = 请先在 Zotero 中选中文献或笔记
 editor-src-insert = 插入来源链接
 editor-reference-insert = 插入条目或笔记引用
-editor-link-pick = 插入卡片链接
-editor-link-placeholder = 搜索卡片标题、正文或 ID…
-editor-link-empty = 没有匹配的卡片；也可以直接写 [[新概念]]
+editor-link-pick = 插入笔记链接
+editor-link-placeholder = 搜索笔记标题、正文或 ID…
+editor-link-empty = 没有匹配的笔记；也可以直接写 [[新概念]]
 editor-reading = 浏览模式
 editor-mode = 编辑模式
 editor-body-placeholder = 用 Markdown 写正文，通过 [[ID]] 引用卡片。
@@ -108,10 +108,10 @@ editor-action-failed = 操作失败：
 editor-url-insert = 插入链接
 editor-url-prompt = 链接地址（https://、mailto: 或 zotero://）
 editor-image = 插入图片
-editor-relations-empty = 暂无关联卡片
+editor-relations-empty = 暂无关联笔记
 
-graph-title = 卡片关系图
-graph-all = 全部卡片
+graph-title = 笔记关系图
+graph-all = 全部笔记
 graph-local-one = 在关系图中查看
 graph-local-two = 间接关联
 graph-unresolved = 待创建的卡片
@@ -121,21 +121,21 @@ graph-focus = 聚焦此节点
 graph-open = 打开
 graph-create = 创建卡片
 graph-connections = 链接与反向链接
-graph-search = 搜索卡片…
+graph-search = 搜索笔记…
 graph-hint = 单击查看，双击打开。实线为父 → 子，虚线为双链。
 graph-empty = 当前筛选下没有节点。新建卡片，并在正文中插入卡片链接来建立连接。
-graph-stats = { $cards } 张卡片 · { $links } 条连接
-graph-kind-card = 卡片
+graph-stats = { $cards } 篇笔记 · { $links } 条连接
+graph-kind-card = 笔记
 graph-kind-source = 来源文献
 graph-kind-unresolved = 待创建的卡片
-graph-legend-cards = ● 卡片 · 实线：父子层级 · 虚线：卡片链接
+graph-legend-cards = ● 笔记 · 实线：父子层级 · 虚线：卡片链接
 graph-legend-sources = ◈ 来源
 graph-legend-unresolved = ○ 待创建的卡片
 
-section-load-error = 卡片加载失败，请重新选择条目重试。
+section-load-error = 笔记加载失败，请重新选择条目重试。
 
 
-editor-relations = 卡片关联
+editor-relations = 笔记关联
 
 editor-visual = 所见即所得
 
@@ -173,11 +173,11 @@ graph-outgoing = 链接到
 
 graph-backlinks = 反向链接
 
-graph-open-card = 编辑卡片
+graph-open-card = 编辑笔记
 
 graph-open-source = 打开来源文献
 
-column-card-count = 卡片
+column-card-count = 笔记
 
 preferences-graph = 图谱显示
 pref-outline =
@@ -210,3 +210,12 @@ editor-note-missing = 关联的 Zotero 笔记不存在或已移入回收站。�
 
 editor-browse = 浏览
 editor-edit = 编辑
+
+note-kind = 笔记类型
+note-kind-all = 全部笔记
+note-kind-literature = 文献笔记
+note-kind-zettel = 卡片
+note-kind-thinking = 思考笔记
+literature-source-required = 请先选择文献条目作为来源。
+literature-exists = 这个条目已有文献笔记，请从条目侧栏打开。
+manager-confirm-remove = 从 Knowledge Base 移除“{ $title }”？原 Zotero 笔记会保留。

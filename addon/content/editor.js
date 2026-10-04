@@ -86,6 +86,7 @@ async function load() {
     api.loc("command-menu"),
   );
   $("knowledge-base-command-search").placeholder = api.loc("command-search");
+  $("knowledge-base-kind").value = args.kind || "zettel";
   setSource(null, false);
   if (parentId) setDirty();
   if (!zettelId && args.prefillTitle) {
@@ -100,6 +101,7 @@ async function load() {
   if (zettelId) {
     const z = await api.getZettel(zettelId);
     if (z) {
+      $("knowledge-base-kind").value = z.kind || "zettel";
       expectedUpdatedAt = z.updated_at;
       $("knowledge-base-editor-title").value = z.title;
       $("knowledge-base-editor-body").value = z.body;
@@ -134,6 +136,7 @@ async function load() {
   if (args.draftId) {
     const draft = await api.getEditorDraft(args.draftId);
     if (!draft) throw new Error(api.loc("editor-draft-missing"));
+    $("knowledge-base-kind").value = draft.kind || "zettel";
     zettelId = draft.id || null;
     expectedUpdatedAt = draft.expectedUpdatedAt ?? null;
     revision = draft.draftRevision;
@@ -175,6 +178,11 @@ async function load() {
 }
 
 function applyLocale() {
+  $("knowledge-base-kind").setAttribute("aria-label", api.loc("note-kind"));
+  for (const option of /** @type {HTMLOptionElement[]} */ (
+    Array.from($("knowledge-base-kind").options)
+  ))
+    option.textContent = api.loc("note-kind-" + option.value);
   $("knowledge-base-parent-label").textContent = api.loc("parent");
   $("knowledge-base-parent-search").placeholder = api.loc("parent-search");
   $("knowledge-base-parent-root").setAttribute("label", api.loc("root"));
@@ -275,6 +283,7 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  $("knowledge-base-kind").addEventListener("change", setDirty);
   document
     .getElementById("knowledge-base-editor-save-copy")
     .addEventListener("command", () =>
@@ -296,6 +305,8 @@ function bindEvents() {
           editorMode = "source";
         }
         zettelId = null;
+        if ($("knowledge-base-kind").value === "literature")
+          $("knowledge-base-kind").value = "zettel";
         expectedUpdatedAt = null;
         window.knowledgeBaseCardId = null;
         document.getElementById("knowledge-base-editor-save-copy").hidden =
@@ -1163,6 +1174,9 @@ function insertSelectedHighlights() {
 
 function snapshot() {
   return {
+    kind: /** @type {import("../../src/modules/db").NoteKind} */ (
+      $("knowledge-base-kind").value
+    ),
     id: zettelId || undefined,
     title: $("knowledge-base-editor-title").value.trim(),
     body: $("knowledge-base-editor-body").value,
@@ -1188,7 +1202,11 @@ function reportSaveError(error) {
   setStatus(
     message.includes("CARD_CONFLICT")
       ? api.loc("editor-save-conflict")
-      : api.loc("editor-save-failed") + " " + message,
+      : message.includes("LITERATURE_SOURCE_REQUIRED")
+        ? api.loc("literature-source-required")
+        : message.includes("LITERATURE_EXISTS")
+          ? api.loc("literature-exists")
+          : api.loc("editor-save-failed") + " " + message,
   );
   $("knowledge-base-editor-status").classList.add("error");
   document.getElementById("knowledge-base-editor-save-copy").hidden =

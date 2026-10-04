@@ -11,18 +11,18 @@ section-sidenav =
     .tooltiptext = Cards
 section-count =
     { $count ->
-        [one] { $count } card
-       *[other] { $count } cards
+        [one] { $count } note
+       *[other] { $count } notes
     }
-section-no-item = Select an item to see its cards
+section-no-item = Select an item to see its notes
 section-loading = Loading…
 section-new = ＋ New card
 
 manager-title = Knowledge Base
-manager-new = New Card
+manager-new = New Note
 manager-search-placeholder = Search title, body or ID…
-manager-empty-detail = Select a card on the left; double-click to edit
-manager-outgoing = Linked cards
+manager-empty-detail = Select a note; double-click to edit
+manager-outgoing = Linked notes
 manager-backlinks = Backlinks
 manager-preview = Preview
 manager-edit = Edit
@@ -35,15 +35,15 @@ manager-source-open = Open this item in Zotero
 manager-source-missing = Source item deleted or unavailable
 manager-count =
     { $count ->
-        [one] { $count } card
-       *[other] { $count } cards
+        [one] { $count } note
+       *[other] { $count } notes
     }
 manager-updated = Updated
-manager-confirm-delete = Delete "{ $title }"? Links to this card will remain but will no longer open it.
+manager-confirm-delete = Delete "{ $title }"? Links to this note will remain but will no longer open it.
 
-editor-title-new = New Card
-editor-title-edit = Edit Card
-editor-title-placeholder = Card title
+editor-title-new = New Note
+editor-title-edit = Edit Note
+editor-title-placeholder = Note title
 editor-source-label = Source:
 editor-src-none = No source item linked
 editor-src-pick = Choose source
@@ -120,9 +120,9 @@ editor-src-selected = Use selected item
 editor-src-no-selection = Select a reference in Zotero first
 editor-src-insert = Insert source link
 editor-reference-insert = Insert item or note reference
-editor-link-pick = Insert card link
-editor-link-placeholder = Search card title, body or ID…
-editor-link-empty = No matching cards. You can also write [[New concept]].
+editor-link-pick = Insert note link
+editor-link-placeholder = Search note title, body or ID…
+editor-link-empty = No matching notes. You can also write [[New concept]].
 editor-reading = Reading view
 editor-mode = Editor mode
 editor-body-placeholder = Write in Markdown. Type [[ID]] to reference a card.
@@ -136,8 +136,8 @@ editor-url-prompt = Link URL (https://, mailto: or zotero://)
 editor-image = Insert image
 editor-relations-empty = No connections yet
 
-graph-title = Card graph
-graph-all = All cards
+graph-title = Note graph
+graph-all = All notes
 graph-local-one = Show in graph
 graph-local-two = Extended connections
 graph-unresolved = Missing cards
@@ -147,21 +147,21 @@ graph-focus = Focus this node
 graph-open = Open
 graph-create = Create card
 graph-connections = Links & backlinks
-graph-search = Search cards…
+graph-search = Search notes…
 graph-hint = Click to inspect; double-click to open. Solid lines show parent → child; dashed lines show references.
 graph-empty = No nodes match this view. Create a card and insert card links in its body to connect ideas.
-graph-stats = { $cards } cards · { $links } connections
-graph-kind-card = Card
+graph-stats = { $cards } notes · { $links } connections
+graph-kind-card = Note
 graph-kind-source = Source item
 graph-kind-unresolved = Missing card
-graph-legend-cards = ● Cards · solid: parent–child · dashed: card links
+graph-legend-cards = ● Notes · solid: parent–child · dashed: card links
 graph-legend-sources = ◈ Sources
 graph-legend-unresolved = ○ Missing cards
 
-section-load-error = Could not load cards. Select the item again to retry.
+section-load-error = Could not load notes. Select the item again to retry.
 
 
-editor-relations = Card connections
+editor-relations = Note connections
 
 editor-visual = Visual editing
 
@@ -199,11 +199,11 @@ graph-outgoing = Outgoing links
 
 graph-backlinks = Backlinks
 
-graph-open-card = Edit card
+graph-open-card = Edit note
 
 graph-open-source = Open source item
 
-column-card-count = Cards
+column-card-count = Notes
 
 preferences-graph = Graph display
 pref-outline =
@@ -236,3 +236,12 @@ editor-note-missing = The linked Zotero note is missing or in the trash. Restore
 
 editor-browse = Browse
 editor-edit = Edit
+
+note-kind = Note type
+note-kind-all = All notes
+note-kind-literature = Literature Note
+note-kind-zettel = Zettel
+note-kind-thinking = Thinking Note
+literature-source-required = Choose a literature item as the source.
+literature-exists = This item already has a Literature Note. Open it from the item pane.
+manager-confirm-remove = Remove “{ $title }” from Knowledge Base? The original Zotero note will be kept.

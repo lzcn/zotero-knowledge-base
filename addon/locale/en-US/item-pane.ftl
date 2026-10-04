@@ -1,4 +1,4 @@
 pane-header =
-    .label = Cards
+    .label = Knowledge Base
 pane-sidenav =
-    .tooltiptext = Cards
+    .tooltiptext = Knowledge Base

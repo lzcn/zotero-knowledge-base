@@ -100,6 +100,15 @@ export function cardRefFromURL(href: string): string | null {
   }
 }
 
+/** Zotero note URLs remain ordinary links when rendering or converting HTML. */
+export function nativeNoteRefFromURL(href: string): string | null {
+  return /^zotero:\/\/(?:note\/(?:u|\d+)\/[A-Z0-9]{8}|select\/(?:items|library\/items|groups\/\d+\/items)\/[A-Z0-9]{8})(?:[/?#].*)?$/i.test(
+    href,
+  )
+    ? href
+    : null;
+}
+
 /** Both wiki links and ordinary Markdown links participate in backlinks.
  * Code blocks, inline code and escaped brackets stay literal text. */
 export function parseCardLinks(body: string): CardLink[] {
@@ -109,7 +118,7 @@ export function parseCardLinks(body: string): CardLink[] {
       token.type === "wikilink"
         ? token.ref
         : token.type === "link"
-          ? cardRefFromURL(token.href)
+          ? cardRefFromURL(token.href) || nativeNoteRefFromURL(token.href)
           : null;
     if (ref && !links.has(ref)) {
       links.set(ref, {
