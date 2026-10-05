@@ -251,6 +251,7 @@ function render() {
       "aria-label": node.title,
       "data-node-id": node.id,
     });
+    if (node.color) group.style.setProperty("--node-color", node.color);
     group.appendChild(svgElement("circle", { r: node.radius }));
     const label = svgElement("text", {
       x: 0,
@@ -262,7 +263,7 @@ function render() {
       titleChars.slice(0, 24).join("") + (titleChars.length > 24 ? "…" : "");
     group.appendChild(label);
     const title = svgElement("title");
-    title.textContent = `${node.title}\n${node.snippet}`;
+    title.textContent = `${node.title}\n${(node.tags || []).map((tag) => `#${tag}`).join(" ")}\n${node.snippet}`;
     group.appendChild(title);
     group.addEventListener("pointerenter", () => {
       hoveredId = node.id;

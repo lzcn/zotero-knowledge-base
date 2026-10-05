@@ -27,7 +27,7 @@ await writeFile(
     )
     .join("\n") +
     `\nexport * as graph_layout from ${JSON.stringify(path.join(ROOT, "src/ui/graph-layout.ts"))};` +
-    `\nexport * as native_markdown_menu from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-menu.ts"))};`,
+    `\nexport * as native_markdown_toolbar from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-toolbar.ts"))};`,
 );
 const bundle = path.join(workspace, "bundle.mjs");
 await build({
@@ -50,7 +50,7 @@ const {
   assets,
   references,
   native_notes,
-  native_markdown_menu,
+  native_markdown_toolbar,
   preferences,
   graph_layout,
 } = await import(pathToFileURL(bundle).href);
@@ -62,11 +62,11 @@ function check(label, fn) {
 }
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 const menuDOM = new JSDOM(
-  '<div class="toolbar"><div class="end"><div class="dropdown"><button class="toolbar-button">…</button></div></div></div>',
+  '<div class="toolbar"><div class="start"></div><div class="end"><div class="dropdown"><button class="toolbar-button">…</button></div></div></div>',
 );
 const dropdown = menuDOM.window.document.querySelector(".dropdown");
 let toggles = 0;
-const removeMenu = native_markdown_menu.attachMarkdownMenu(
+const removeMenu = native_markdown_toolbar.attachMarkdownToggle(
   menuDOM.window,
   "Markdown",
   () => toggles++,
@@ -76,34 +76,36 @@ dropdown.insertAdjacentHTML(
   '<div class="popup"><button class="option">Show in Library</button></div>',
 );
 await wait();
-check(
-  "Markdown joins the native menu without replacing its existing actions",
-  () => {
-    assert.equal(dropdown.querySelectorAll("button.option").length, 2);
-    dropdown.querySelector(".knowledge-base-markdown-option").click();
-    assert.equal(toggles, 1);
-  },
-);
-dropdown.querySelector(".popup").remove();
-dropdown.insertAdjacentHTML("beforeend", '<div class="popup"></div>');
+check("Markdown is directly available in the native toolbar", () => {
+  const toggle = menuDOM.window.document.querySelector(
+    ".toolbar .start > .knowledge-base-markdown-toggle",
+  );
+  assert.ok(toggle);
+  assert.equal(dropdown.querySelectorAll("button.option").length, 1);
+  assert.ok(toggle.querySelector("svg"));
+  assert.equal(toggle.textContent, "");
+  toggle.click();
+  assert.equal(toggles, 1);
+  removeMenu.setMode(true);
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  removeMenu.setMode(false);
+  assert.equal(toggle.getAttribute("aria-pressed"), "false");
+});
+const toolbar = menuDOM.window.document.querySelector(".toolbar .start");
+toolbar.replaceChildren();
 await wait();
-check(
-  "Recreated native menus get one Markdown action and cleanup removes its observer",
-  () => {
-    assert.equal(
-      dropdown.querySelectorAll(".knowledge-base-markdown-option").length,
-      1,
-    );
-    removeMenu();
-    assert.equal(
-      dropdown.querySelector(".knowledge-base-markdown-option"),
-      null,
-    );
-  },
-);
-dropdown.querySelector(".popup").replaceChildren();
+check("Rebuilt toolbars retain one Markdown switch", () => {
+  assert.equal(
+    toolbar.querySelectorAll(".knowledge-base-markdown-toggle").length,
+    1,
+  );
+});
+removeMenu();
+toolbar.replaceChildren();
 await wait();
-assert.equal(dropdown.querySelector(".knowledge-base-markdown-option"), null);
+check("Toolbar cleanup removes the switch and its observer", () => {
+  assert.equal(toolbar.querySelector(".knowledge-base-markdown-toggle"), null);
+});
 menuDOM.window.close();
 const equations = String.raw`Inline $E = mc^2$.
 
@@ -148,6 +150,13 @@ $\href{javascript:alert(1)}{test}$ <img src=x onerror=alert(1)>`.replace(
 
 const sample =
   "# Idea\n\n**Strong** and *emphasis* and ~~removed~~\n\n- [x] Task\n\n> Quote\n\n```js\nconst x = 1;\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n[[中文概念|别名]] [stable](knowledge-base://card/20261001000000)\n\n![image](knowledge-base-asset:abc.png)\n\n[source](zotero://select/library/items/ABCD1234)\n\n<script>bad()</script><img src=x onerror=bad()><a href=javascript:bad()>bad</a>";
+assert.deepEqual(
+  markdown.parseTags(
+    "#tag-a #tag-b #中文 #area/topic #123 `#code` \\#escaped [url](https://example.com/#anchor)\n```\n#block\n```",
+  ),
+  ["tag-a", "tag-b", "中文", "area/topic"],
+);
+
 const rendered = markdown.renderMarkdown(
   sample,
   htmlWindow,
@@ -517,6 +526,13 @@ await build({
   bundle: true,
   outfile: formattingBundle,
 });
+const sourceBundle = path.join(workspace, "markdown-source.js");
+await build({
+  entryPoints: [path.join(ROOT, "src/ui/markdown-source.ts")],
+  bundle: true,
+  outfile: sourceBundle,
+});
+const sourceScript = await readFile(sourceBundle, "utf8");
 const formattingScript = await readFile(formattingBundle, "utf8");
 const editorScript = await readFile(
   path.join(ROOT, "addon/content/editor.js"),
@@ -624,6 +640,33 @@ async function editor(args = {}, overrides = {}) {
   const dom = new JSDOM(editorXML, {
     contentType: "application/xhtml+xml",
     runScripts: "outside-only",
+    pretendToBeVisual: true,
+  });
+
+  Object.defineProperty(dom.window.document.documentElement, "style", {
+    value: dom.window.document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    ).style,
+  });
+  dom.window.document.createElement = (tag) =>
+    dom.window.document.createElementNS("http://www.w3.org/1999/xhtml", tag);
+  dom.window.document.execCommand = () => false;
+  // JSDOM has no layout engine for chrome XML and ShadowRoot ancestry.
+  dom.window.getComputedStyle = () => {
+    const style = dom.window.document.createElement("div").style;
+    style.cssText =
+      "font-size:14px; line-height:25px; white-space:pre-wrap; direction:ltr; padding:0; position:relative;";
+    return style;
+  };
+  dom.window.Range.prototype.getClientRects = () => [];
+  dom.window.Range.prototype.getBoundingClientRect = () => ({
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
   });
   windows.push(dom.window);
   await new Promise((resolve) =>
@@ -652,6 +695,13 @@ async function editor(args = {}, overrides = {}) {
       return { title, body: rich_text.richTextToMarkdown(root) };
     },
     getMarkdownSource: (html) => api.projectNativeNote(html),
+    getMarkdownDocument: (html) => {
+      const content = api.projectNativeNote(html);
+      const doc = new htmlWindow.DOMParser().parseFromString(html, "text/html");
+      return doc.querySelector("h1")
+        ? `# ${content.title}\n\n${content.body}`
+        : content.body;
+    },
     markdownNoteHTML: async (title, body) => api.nativeNoteHTML(title, body),
     acquireNativeNote: async (input) => {
       nativeHTML = await api.nativeNoteHTML(input.title, input.body);
@@ -709,6 +759,24 @@ async function editor(args = {}, overrides = {}) {
   dom.window.arguments = [args];
   dom.window.eval(previewScript);
   dom.window.eval(formattingScript);
+  // JSDOM cannot load chrome URLs; supply the HTML frame used by the real host.
+  dom.window.KnowledgeBaseMarkdownSource = {
+    async create(textarea, labels) {
+      const root = dom.window.document.createElement("div");
+      root.id = textarea.id;
+      root.hidden = textarea.hidden;
+      textarea.replaceWith(root);
+      const frame = dom.window.document.createElement("iframe");
+      root.append(frame);
+      frame.contentWindow.focus = () => {};
+      frame.contentWindow.eval(sourceScript);
+      return frame.contentWindow.KnowledgeBaseMarkdownSource.mount(
+        root,
+        textarea,
+        labels,
+      );
+    },
+  };
   dom.window.KnowledgeBaseNativeEditor = {
     create: async (options) => {
       let html = nativeHTML;
@@ -718,6 +786,9 @@ async function editor(args = {}, overrides = {}) {
         flush: async () => {},
         reload: async () => {
           html = nativeHTML;
+        },
+        setSourceMode: (value) => {
+          options.element.setAttribute("data-source-mode", String(value));
         },
         setReadOnly: async (value) => {
           options.element.mode = value ? "view" : "edit";
@@ -843,7 +914,7 @@ check(
     assert.equal(closeCalls, 0);
     assert.equal(
       closeEditor.$("knowledge-base-editor-body").value,
-      "Keep this text",
+      "# Unsaved idea\n\nKeep this text",
     );
   },
 );
@@ -902,7 +973,7 @@ check("A failed close-time save keeps the editor and draft recoverable", () => {
   assert.equal(failedClose.win.__editorEval("allowClose"), false);
   assert.equal(
     failedClose.$("knowledge-base-editor-body").value,
-    "Preserve on failure",
+    "# Unsaved\n\nPreserve on failure",
   );
 });
 failedClose.win.close = originalFailedClose;
@@ -1029,22 +1100,85 @@ async function chooseMode(fixture, mode) {
   await wait();
 }
 check(
-  "Editor labels the note type without a selector, metadata or Browse control",
+  "Editor offers only Zettel and Thinking types and keeps an automatic Zettel key",
   () => {
     assert.equal(ed.$("knowledge-base-editor-mode"), null);
     assert.equal(ed.$("knowledge-base-kind"), null);
     assert.equal(ed.$("knowledge-base-metadata"), null);
-    assert.equal(
-      ed.$("knowledge-base-note-kind").textContent,
-      "note-kind-zettel",
-    );
+    assert.equal(ed.$("knowledge-base-note-kind").value, "zettel");
   },
 );
+const typeDraft = await editor();
+check("New notes can switch type and only Thinking Notes can edit keys", () => {
+  const type = typeDraft.$("knowledge-base-note-kind");
+  assert.deepEqual(
+    [...type.options].map((option) => option.value),
+    ["zettel", "thinking"],
+  );
+  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, true);
+  type.value = "thinking";
+  type.dispatchEvent(new typeDraft.win.Event("change"));
+  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
+  typeDraft.$("knowledge-base-editor-key").value = "MyProject";
+  typeDraft
+    .$("knowledge-base-editor-key")
+    .dispatchEvent(new typeDraft.win.Event("input"));
+  assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, "MyProject");
+  type.value = "zettel";
+  type.dispatchEvent(new typeDraft.win.Event("change"));
+  assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, null);
+  assert.equal(ed.$("knowledge-base-parent-root"), null);
+  assert.equal(
+    ed.$("knowledge-base-src-pick").getAttribute("aria-label"),
+    "editor-change-source",
+  );
+  assert.equal(
+    ed.$("knowledge-base-parent-change").getAttribute("aria-label"),
+    "editor-change-parent",
+  );
+  assert.equal(
+    ed.$("knowledge-base-editor-family").querySelector("section"),
+    null,
+  );
+});
+ed.$("knowledge-base-parent-change").click();
+await new Promise((resolve) => setTimeout(resolve, 230));
+check("The Parent picker uses references and a single No parent action", () => {
+  assert.equal(ed.$("knowledge-base-parent-picker").hidden, false);
+  assert.equal(
+    ed.$("knowledge-base-parent-results").querySelector(".metadata-clear")
+      .textContent,
+    "editor-parent-none",
+  );
+  ed.$("knowledge-base-parent-results")
+    .querySelector(".metadata-clear")
+    .click();
+  assert.equal(ed.$("knowledge-base-parent-picker").hidden, true);
+  assert.equal(ed.win.__editorEval("snapshot()").parentId, null);
+});
 ed.$("knowledge-base-editor-body").value = sample;
 ed.$("knowledge-base-editor-body").dispatchEvent(
   new ed.win.Event("input", { bubbles: true }),
 );
 await chooseMode(ed, "visual");
+check(
+  "The editor has a clickable source and Change without obsolete source actions",
+  () => {
+    assert.equal(ed.$("knowledge-base-src-display").localName, "button");
+    assert.equal(
+      ed.win.document.getElementById("knowledge-base-src-clear"),
+      null,
+    );
+    assert.equal(
+      ed.win.document.getElementById("knowledge-base-src-anno"),
+      null,
+    );
+    assert.equal(
+      ed.win.document.getElementById("knowledge-base-src-jump"),
+      null,
+    );
+  },
+);
 check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.initialMode, "visual");
   assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
@@ -1057,11 +1191,16 @@ ed.$("knowledge-base-editor-format").dispatchEvent(
 await wait();
 await wait();
 check(
-  "Markdown button exposes one source surface and keeps the hidden native editor read-only",
+  "Markdown keeps the same native toolbar with its body writer paused",
   () => {
     assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "source");
     assert.equal(ed.$("knowledge-base-editor-body").hidden, false);
-    assert.equal(ed.$("knowledge-base-rich-frame").mode, "view");
+    assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
+    assert.equal(ed.$("knowledge-base-rich-frame").hidden, false);
+    assert.equal(
+      ed.$("knowledge-base-rich-frame").getAttribute("data-source-mode"),
+      "true",
+    );
     assert.equal(
       ed.$("knowledge-base-editor-format").getAttribute("label"),
       "editor-format-native",
@@ -1073,6 +1212,18 @@ ed.$("knowledge-base-editor-format").dispatchEvent(
 );
 await wait();
 await wait();
+check(
+  "Markdown uses CodeMirror and keeps the title inside the document",
+  () => {
+    assert.ok(
+      ed
+        .$("knowledge-base-editor-body")
+        .querySelector("iframe")
+        .contentDocument.querySelector(".cm-editor"),
+    );
+    assert.equal(ed.$("knowledge-base-editor-title").hidden, true);
+  },
+);
 check(
   "Returning from Markdown restores native editing without a split preview",
   () => {
@@ -1223,13 +1374,28 @@ check(
 globalThis.addon = { data: {} };
 const protectedProjection = native_notes.getMarkdownSource(structuredHTML);
 check(
-  "Markdown source exposes readable protected links while retaining complete native fragments",
+  "Markdown retains native citations and images as HTML with their metadata",
   () => {
-    assert.ok(protectedProjection.body.includes("[Author 2026, p. 23](zkb:0)"));
-    assert.ok(protectedProjection.body.includes("zkb:1"));
+    assert.ok(protectedProjection.body.includes("data-citation="));
+    assert.ok(protectedProjection.body.includes("data-attachment-key="));
     assert.equal(protectedProjection.fragments.length, 2);
     assert.ok(protectedProjection.fragments[0].includes("locator%22%3A%2223"));
     assert.ok(protectedProjection.fragments[1].includes("IMAG1234"));
+  },
+);
+const payloadSurface = ed.$("knowledge-base-editor-body");
+payloadSurface.value = protectedProjection.body;
+await wait();
+check(
+  "Native citation metadata stays in the document while the editor shows a chip",
+  () => {
+    const chip = payloadSurface
+      .querySelector("iframe")
+      .contentDocument.querySelector(".knowledge-base-md-node-citation");
+    assert.ok(chip);
+    assert.ok(chip.textContent.includes("Author 2026"));
+    assert.ok(!chip.textContent.includes("locator%22"));
+    assert.ok(payloadSurface.value.includes("locator%22%3A%2223"));
   },
 );
 const copiedParagraph =
@@ -1398,7 +1564,7 @@ check(
   () => {
     assert.equal(
       referenceEditor.$("knowledge-base-editor-body").value,
-      "[@Author2026]",
+      "# References\n\n[@Author2026]",
     );
     assert.equal(referenceEditor.win.__editorEval("source.key"), "ABCD1234");
   },
@@ -1450,7 +1616,7 @@ check(
   () => {
     assert.equal(
       literaturePickerRow.querySelector(".relation-id").textContent,
-      "[[@Author2026]]",
+      "@Author2026",
     );
     literaturePickerRow.click();
     assert.equal(
@@ -1500,12 +1666,16 @@ check(
     const row = ed.$("knowledge-base-link-results").firstElementChild;
     assert.equal(ed.win.document.activeElement, row);
     assert.equal(
+      row.querySelector(".note-reference-text").textContent,
+      "20261001000000 · Target card",
+    );
+    assert.equal(
       row.querySelector(".relation-title").textContent,
       "Target card",
     );
     assert.equal(
       row.querySelector(".relation-id").textContent,
-      "[[20261001000000]]",
+      "20261001000000",
     );
   },
 );
@@ -1533,6 +1703,11 @@ ed.win.ZoteroKnowledgeBaseMarkdown.renderFamily(
   { parent: null, children: manyChildren },
   ed.win.Zotero.ZoteroKnowledgeBase.api,
 );
+check("Relationship IDs and tooltips display without wiki brackets", () => {
+  const child = familyBox.querySelector(".family-link");
+  assert.equal(child.querySelector(".relation-id").textContent, "0");
+  assert.equal(child.title, "0 · Child 0");
+});
 check("Relationship refresh preserves an explicitly expanded child group", () =>
   assert.equal(familyBox.querySelector("details").open, true),
 );
@@ -1558,7 +1733,7 @@ await ed.win.__editorEval("save(false)");
 check(
   "Saved content stays Markdown and preserves the source association",
   () => {
-    assert.equal(ed.saved().body, "- [x] done\n- [ ] ");
+    assert.equal(ed.saved().sourceDocument, "- [x] done\n- [ ] ");
     assert.equal(ed.saved().itemKey, "ABCD1234");
     assert.equal(ed.saved().libraryID, 1);
   },
@@ -2252,7 +2427,7 @@ check(
       ),
       managerCards.map(
         (card) =>
-          `note-kind-${card.kind || "zettel"} · [[${card.reference || card.id}]]`,
+          `note-kind-${card.kind || "zettel"} · ${card.reference || card.id}`,
       ),
     );
     const actions = [
@@ -2335,10 +2510,11 @@ check("Edit, graph and new-child actions target the selected card", () => {
   assert.equal(managerCalls.edits[1].prefillParentId, managerCards[0].id);
 });
 check(
-  "Note references expose a copyable wiki link without selecting its ID",
+  "Note IDs display without brackets while copying a wiki reference",
   () => {
     const button = managerDoc.getElementById("knowledge-base-detail-reference");
-    assert.equal(button.textContent, `[[${managerCards[0].id}]]`);
+    assert.equal(button.textContent, managerCards[0].id);
+    assert.ok(!managerDoc.querySelector(".zid").textContent.includes("[["));
     button.click();
     assert.equal(managerCalls.reference, `[[${managerCards[0].id}]]`);
     assert.equal(button.title, "note-reference-copy");

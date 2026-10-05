@@ -2,7 +2,7 @@ import { exec, getAll, getOne, transaction, type NoteKind } from "./db";
 import { notifyDataChange } from "./events";
 import { getFamily } from "./hierarchy";
 import { richTextToMarkdown } from "./rich-text";
-import { renderMarkdown } from "./markdown";
+import { renderMarkdown, parseTags } from "./markdown";
 import { getCitation, prepareCitations, resolveCitation } from "./references";
 import { resolveAssetURL } from "./assets";
 import { getCitationKey } from "./zotero";
@@ -25,6 +25,7 @@ export interface NativeCardInput extends SaveCardInput {
   nativeHTML?: string;
   expectedNoteHTML?: string;
   sourceMode?: boolean;
+  sourceDocument?: string;
   restoreDraft?: boolean;
 }
 
@@ -217,6 +218,8 @@ export function getMarkdownSource(
   const doc = parse(html);
   const root = doc.querySelector("div[data-schema-version]") || doc.body;
   const fragments: string[] = [];
+  let tokenPrefix = "knowledge-base-native-fragment-";
+  while (html.includes(tokenPrefix)) tokenPrefix += "x";
   replaceSimpleCitations(doc, root);
   // Copied page defaults should not turn ordinary paragraphs into opaque objects.
   for (const node of Array.from(
@@ -260,9 +263,21 @@ export function getMarkdownSource(
       node.getAttribute("alt") ||
       node.textContent?.trim() ||
       getString("editor-image");
-    node.replaceWith(marker);
+    if (!legacyFragments) {
+      const placeholder = doc.createElement("span");
+      placeholder.textContent = `${tokenPrefix}${index}-end`;
+      node.replaceWith(placeholder);
+    } else node.replaceWith(marker);
   }
-  return { ...projectNativeNote(root.outerHTML), fragments };
+  const projected = projectNativeNote(root.outerHTML);
+  if (!legacyFragments)
+    fragments.forEach((fragment, index) => {
+      projected.body = projected.body.replaceAll(
+        `${tokenPrefix}${index}-end`,
+        fragment,
+      );
+    });
+  return { ...projected, fragments };
 }
 
 function restoreMarkdownFragments(
@@ -327,12 +342,23 @@ function restoreMarkdownFragments(
   return root?.outerHTML || doc.body.innerHTML;
 }
 
+/** Restore unchanged native payloads after sanitizing the editable Markdown. */
+function protectNativePayloads(source: string, original: string): string {
+  getMarkdownSource(original).fragments.forEach((fragment, index) => {
+    source = source.replaceAll(fragment, `[native](zkb:${index})`);
+  });
+  return source;
+}
+
 export async function markdownNoteHTML(
   title: string,
   body: string,
   original: string,
 ): Promise<string> {
-  return restoreMarkdownFragments(await nativeNoteHTML(title, body), original);
+  return restoreMarkdownFragments(
+    await nativeNoteHTML(title, protectNativePayloads(body, original)),
+    original,
+  );
 }
 
 /** One complete Markdown document for ordinary Zotero notes, without a separate title. */
@@ -351,7 +377,7 @@ export async function markdownDocumentHTML(
   original: string,
 ): Promise<string> {
   return restoreMarkdownFragments(
-    await nativeNoteHTML(null, source),
+    await nativeNoteHTML(null, protectNativePayloads(source, original)),
     original,
     true,
   );
@@ -464,24 +490,6 @@ async function mappedNote(id: string): Promise<Zotero.Item | null> {
   return note;
 }
 
-async function markPersonalParent(item: Zotero.Item): Promise<void> {
-  if (!item.hasTag("Personal Knowledge")) {
-    item.addTag("Personal Knowledge");
-    await item.saveTx({ skipSelect: true });
-  }
-  const colors = Zotero.Tags.getColors(item.libraryID);
-  if (
-    !colors.has("Personal Knowledge") &&
-    colors.size < Zotero.Tags.MAX_COLORED_TAGS
-  )
-    await Zotero.Tags.setColor(
-      item.libraryID,
-      "Personal Knowledge",
-      "#4c8bf5",
-      colors.size,
-    );
-}
-
 async function organizeNativeNote(
   note: Zotero.Item,
   input: SaveCardInput,
@@ -528,14 +536,12 @@ async function organizeNativeNote(
         personal = new Zotero.Item("document");
         personal.libraryID = note.libraryID;
         personal.setField("title", getString("personal-knowledge-title"));
-        personal.addTag("Personal Knowledge");
         await personal.save({ skipSelect: true });
         Zotero.Prefs.set(pref, personal.key, true);
       } else if (personal.deleted) {
         personal.deleted = false;
         await personal.save({ skipSelect: true });
       }
-      await markPersonalParent(personal);
       destination = personal.id;
     }
     if (note.parentItemID === destination) return;
@@ -661,15 +667,23 @@ export async function saveNativeCard(
   const preparedHTML = input.sourceMode
     ? input.restoreDraft && input.nativeHTML
       ? input.nativeHTML
-      : input.expectedNoteHTML &&
-          getMarkdownSource(input.expectedNoteHTML).title === input.title &&
-          getMarkdownSource(input.expectedNoteHTML).body === input.body
-        ? input.expectedNoteHTML
-        : await markdownNoteHTML(
-            input.title,
-            input.body,
-            input.expectedNoteHTML || "",
-          )
+      : input.sourceDocument !== undefined
+        ? input.expectedNoteHTML &&
+          getMarkdownDocument(input.expectedNoteHTML) === input.sourceDocument
+          ? input.expectedNoteHTML
+          : await markdownDocumentHTML(
+              input.sourceDocument,
+              input.expectedNoteHTML || "",
+            )
+        : input.expectedNoteHTML &&
+            getMarkdownSource(input.expectedNoteHTML).title === input.title &&
+            getMarkdownSource(input.expectedNoteHTML).body === input.body
+          ? input.expectedNoteHTML
+          : await markdownNoteHTML(
+              input.title,
+              input.body,
+              input.expectedNoteHTML || "",
+            )
     : null;
   const projection = projectNativeNote(preparedHTML ?? note.getNote());
   const result = await saveEditorCard(
@@ -678,10 +692,14 @@ export async function saveNativeCard(
       await Zotero.DB.executeTransaction(async () => {
         if (preparedHTML !== null && input.expectedNoteHTML !== note.getNote())
           throw new Error("CARD_CONFLICT: note changed");
-        if (preparedHTML !== null) {
-          note.setNote(preparedHTML);
-          await note.save();
-        }
+        await Zotero.Items.loadDataTypes([note], ["tags"]);
+        let changed = preparedHTML !== null && note.setNote(preparedHTML);
+        for (const tag of parseTags(`${projection.title}\n${projection.body}`))
+          if (!note.hasTag(tag)) {
+            note.addTag(tag);
+            changed = true;
+          }
+        if (changed) await note.save();
       });
       await organizeNativeNote(
         note,
@@ -718,6 +736,14 @@ async function refreshNote(note: Zotero.Item): Promise<void> {
   if (!card) return;
   await prepareCitations(card.body);
   const projection = projectNativeNote(note.getNote());
+  await Zotero.Items.loadDataTypes([note], ["tags"]);
+  let tagsChanged = false;
+  for (const tag of parseTags(`${projection.title}\n${projection.body}`))
+    if (!note.hasTag(tag)) {
+      note.addTag(tag);
+      tagsChanged = true;
+    }
+  if (tagsChanged) await note.saveTx();
   if (card.title === projection.title && card.body === projection.body) return;
   await saveEditorCard({
     id: card.id,
@@ -757,20 +783,6 @@ export function releaseNativeNote(noteID: number): Promise<void> {
 export async function initNativeNotes(): Promise<void> {
   if (observerID) return;
   stopping = false;
-  for (const library of Zotero.Libraries.getAll()) {
-    const key = Zotero.Prefs.get(
-      `extensions.zotero.knowledge-base.notes.parent.${library.libraryID}`,
-      true,
-    );
-    if (!library.editable || typeof key !== "string") continue;
-    const item = await Zotero.Items.getByLibraryAndKeyAsync(
-      library.libraryID,
-      key,
-    );
-    if (stopping) return;
-    if (item && item.isRegularItem() && !item.isInTrash())
-      await markPersonalParent(item);
-  }
   observerID = Zotero.Notifier.registerObserver(
     {
       notify(event: string, _type: string, ids: number[] | string[]) {
@@ -781,6 +793,7 @@ export async function initNativeNotes(): Promise<void> {
           return;
         previewImages.clear();
         notifyDataChange();
+        if (_type === "setting") return;
         const eligibleIDs = ids.filter((id) => !activeNotes.has(Number(id)));
         if (!eligibleIDs.length) return;
         pending = pending
@@ -796,7 +809,7 @@ export async function initNativeNotes(): Promise<void> {
         // Do not await another Zotero transaction from within its notifier.
       },
     },
-    ["item"],
+    ["item", "setting"],
     "knowledge-base-notes",
   );
   for (const row of await getAll<NoteMapping>("SELECT * FROM card_notes")) {

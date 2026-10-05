@@ -108,6 +108,11 @@ const executedStatements = [];
 
 const zoteroStub = {
   DataDirectory: { dir: "" },
+  Items: {
+    getByLibraryAndKeyAsync: async () => false,
+    loadDataTypes: async () => {},
+  },
+  Tags: { getColors: () => new Map() },
   debug: () => {},
   logError: (e) => console.log(`   [zotero.logError] ${e?.message ?? e}`),
 };
@@ -268,6 +273,7 @@ const REQUIRED = [
   "library_id",
   "annotation_key",
   "kind",
+  "custom_key",
   "created_at",
   "updated_at",
 ];
@@ -289,7 +295,7 @@ async function initialize(label, dataDir, prepare) {
   }
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
-  check("schemaVersion is 7", schema.version === "7", `got ${schema.version}`);
+  check("schemaVersion is 8", schema.version === "8", `got ${schema.version}`);
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
     "all required columns present",
@@ -420,7 +426,97 @@ if (currentSchema) {
     ),
   );
 
-  const betaId = await zettel.saveZettel({ title: "Beta", body: "plain" });
+  let releaseCleanup;
+  let cleanupStarted;
+  const cleanupGate = new Promise((resolve) => {
+    releaseCleanup = resolve;
+  });
+  const started = new Promise((resolve) => {
+    cleanupStarted = resolve;
+  });
+  const previousExists = IOUtils.exists;
+  IOUtils.exists = () => {
+    cleanupStarted();
+    return cleanupGate;
+  };
+  const savingWithSlowCleanup = zettel.saveZettel({
+    title: "Beta",
+    body: "plain",
+  });
+  await started;
+  let saveTimeout;
+  const betaId = await Promise.race([
+    savingWithSlowCleanup,
+    new Promise((resolve) => {
+      saveTimeout = setTimeout(() => resolve(null), 500);
+    }),
+  ]);
+  clearTimeout(saveTimeout);
+  releaseCleanup(false);
+  IOUtils.exists = previousExists;
+  check(
+    "Committed saves finish while image housekeeping is still blocked",
+    typeof betaId === "string",
+  );
+  await savingWithSlowCleanup;
+  const thinkingKeyId = await zettel.saveZettel({
+    kind: "thinking",
+    title: "Project",
+    body: "Ideas",
+    customKey: "ProjectPlan",
+  });
+  check(
+    "Thinking notes store editable keys separately from automatic IDs",
+    (await zettel.getZettel(thinkingKeyId)).custom_key === "ProjectPlan" &&
+      thinkingKeyId !== "ProjectPlan",
+  );
+  check(
+    "Thinking keys resolve as ordinary card links",
+    (await zettel.resolveRefs(["ProjectPlan"])).get("ProjectPlan") ===
+      thinkingKeyId,
+  );
+  await zettel.saveZettel({
+    id: thinkingKeyId,
+    kind: "thinking",
+    title: "Project",
+    body: "Ideas",
+    customKey: "RevisedPlan",
+  });
+  check(
+    "Changing a Thinking key preserves the ID and old links",
+    (await zettel.resolveRefs(["ProjectPlan", "RevisedPlan"])).get(
+      "ProjectPlan",
+    ) === thinkingKeyId &&
+      (await zettel.getZettel(thinkingKeyId)).custom_key === "RevisedPlan",
+  );
+  for (const key of ["RevisedPlan", betaId, "invalid key", "@Citation"]) {
+    let rejected = false;
+    try {
+      await zettel.saveZettel({
+        kind: "thinking",
+        title: "Invalid",
+        body: "",
+        customKey: key,
+      });
+    } catch (error) {
+      rejected = /NOTE_KEY_/.test(String(error));
+    }
+    check("Invalid or occupied Thinking key is rejected: " + key, rejected);
+  }
+  await zettel.saveZettel({
+    id: thinkingKeyId,
+    title: "Project renamed",
+    body: "Ideas",
+  });
+  check(
+    "Native content refresh preserves a Thinking key",
+    (await zettel.getZettel(thinkingKeyId)).custom_key === "RevisedPlan",
+  );
+  await zettel.deleteZettel(thinkingKeyId);
+  check(
+    "Deleting a note releases its Thinking aliases",
+    !(await zettel.resolveRefs(["RevisedPlan"])).has("RevisedPlan"),
+  );
   const alphaId = await zettel.saveZettel({
     title: "Alpha",
     body: "links to [[Beta]]",
@@ -825,6 +921,28 @@ if (currentSchema) {
         (node) => node.kind === "unresolved" && node.title === "Future concept",
       ),
   );
+  const taggedID = await zettel.saveZettel({
+    title: "Tags",
+    body: "#tag-a #中文 `#ignored`",
+  });
+  const taggedNode = (await graph.getGraphData()).nodes.find(
+    (node) => node.id === taggedID,
+  );
+  check(
+    "Inline tags are indexed and graph colors are stable",
+    taggedNode.tags.join(",") === "tag-a,中文" &&
+      /^#[0-9a-f]{6}$/i.test(taggedNode.color) &&
+      (await db.getAll("SELECT tag FROM tags WHERE zettel_id = ?", [taggedID]))
+        .length === 2,
+  );
+  await zettel.saveZettel({ id: taggedID, title: "Tags", body: "#tag-b" });
+  check(
+    "Editing hashtags replaces the tag index",
+    (await db.getAll("SELECT tag FROM tags WHERE zettel_id = ?", [taggedID]))
+      .map((row) => row.tag)
+      .join() === "tag-b",
+  );
+  await zettel.deleteZettel(taggedID);
   const original = await zettel.getZettel(leafId);
   const draft = {
     id: leafId,

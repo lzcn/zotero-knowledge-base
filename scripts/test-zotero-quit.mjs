@@ -88,12 +88,14 @@ function runQuitTest() {
         const cards = await kb.api.listZettels();
         const card = cards.find(row => row.id === first.cardID);
         if (cards.length !== 4 || card?.body !== "Recovered draft body" || (await kb.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
+        const keyedThinking = await kb.api.getZettel(first.keyedThinkingID);
+        if (keyedThinking?.kind !== "thinking" || keyedThinking.custom_key !== "HostProjectRevised" || keyedThinking.reference !== "HostProjectRevised" || (await kb.api.resolveCardLink("knowledge-base://card/HostProject")).targetId !== first.keyedThinkingID) throw new Error("Restart lost Thinking keys or old links");
         const organizedNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.noteKey);
         const organizedLoose = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.looseNoteKey);
         const organizedParent = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.personalParentKey);
         await Zotero.Items.loadDataTypes([organizedLoose], ["collections"]);
         if (!organizedNote.parentItemID || organizedLoose.parentItemID !== organizedParent.id || organizedLoose.getCollections().length) throw new Error("Startup did not organize existing linked notes");
-        if (!organizedParent.hasTag("Personal Knowledge") || Zotero.Tags.getColors(organizedParent.libraryID).get("Personal Knowledge")?.color !== "#805ad5") throw new Error("Restart lost or reset the personal marker");
+        if (organizedParent.hasTag("Personal Knowledge") || !organizedParent.hasTag("User marker") || Zotero.Tags.getColors(organizedParent.libraryID).get("Personal Knowledge")?.color !== "#805ad5") throw new Error("Restart added an automatic tag or changed user tags/colors");
         const unmanaged = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.unmanagedKey);
         if (!unmanaged || unmanaged.getNote() !== "<p>Unmanaged library note</p>" || unmanaged.parentItemID !== organizedNote.parentItemID || cards.some(row => row.title === "Unmanaged library note")) throw new Error("Startup imported or moved an unmanaged library note");
         const projectCard = await kb.api.getZettel(first.thinkingID);
@@ -111,7 +113,7 @@ function runQuitTest() {
         const resumedInstance = await Zotero.Notes.open(nativeMarkdownNote.id, null, {openInWindow:true});
         const resumedWin = resumedInstance._iframeWindow.browsingContext.embedderElement.ownerDocument.defaultView;
         for (let n = 0; n < 100 && !resumedWin.document.querySelector('.knowledge-base-native-markdown'); n++) await new Promise(resolve => setTimeout(resolve, 50));
-        resumedWin.document.querySelector('.knowledge-base-native-markdown button').dispatchEvent(new resumedWin.Event('command'));
+        await openMarkdownToolbar(resumedInstance._iframeWindow);
         const resumedSource = resumedWin.document.querySelector('.knowledge-base-native-source');
         for (let n = 0; n < 100 && resumedSource.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
         if (!resumedSource.value.includes('Conflicting native draft')) throw new Error("Restart lost native Markdown recovery draft");
@@ -131,23 +133,23 @@ function runQuitTest() {
         return;
       }
       if ((await kb.api.listZettels()).length) throw new Error("Fresh install contains preloaded user cards");
-      async function openMarkdownMenu(frameWindow) {
-        const settings = frameWindow.document.querySelector(".toolbar .end .dropdown .toolbar-button");
-        if (!settings) throw new Error("Native editor menu button is missing");
-        settings.click();
+      async function openMarkdownToolbar(frameWindow) {
         let entry;
         for (let n = 0; n < 80 && !entry; n++) {
-          entry = frameWindow.document.querySelector(".knowledge-base-markdown-option");
+          entry = frameWindow.document.querySelector(".knowledge-base-markdown-toggle");
           if (!entry) await new Promise(resolve => setTimeout(resolve, 25));
         }
-        if (!entry || entry.textContent !== kb.api.loc("editor-format-markdown")) throw new Error("Markdown entry is missing from the native menu");
+        if (!entry || entry.getAttribute("aria-label") !== kb.api.loc("editor-format-markdown")) throw new Error("Markdown switch is missing from the native toolbar");
+        if (!entry.closest(".toolbar .start") || entry.closest(".popup")) throw new Error("Markdown switch is hidden inside a menu");
         entry.click();
       }
-      const item = new Zotero.Item("book");
+      const item = new Zotero.Item("journalArticle");
       item.libraryID = Zotero.Libraries.userLibraryID;
       item.setField("title", "Isolated test source");
       item.setField("date", "2026");
       item.setCreators([{ firstName: "A", lastName: "Smith", creatorType: "author" }]);
+      item.setField("publicationTitle", "Journal of Test Studies");
+      item.setField("DOI", "10.1000/host-test");
       item.setField("extra", "Citation Key: Host2026");
       if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "Host2026");
       await item.saveTx();
@@ -179,25 +181,26 @@ function runQuitTest() {
         for (let n = 0; n < 100 && !nativeWindow.document.querySelector('.knowledge-base-native-markdown'); n++) await new Promise(resolve => setTimeout(resolve, 50));
         const source = nativeWindow.document.querySelector('.knowledge-base-native-source');
         if (!source) throw new Error("Native note Markdown switch was not attached");
-        const toggle = nativeWindow.document.querySelector('.knowledge-base-native-markdown button');
         if (!nativeWindow.document.querySelector('.knowledge-base-native-markdown').hidden) throw new Error('Markdown adds a redundant toolbar in native mode');
-        await openMarkdownMenu(nativeInstance._iframeWindow);
+        await openMarkdownToolbar(nativeInstance._iframeWindow);
+        const toggle = nativeInstance._iframeWindow.document.querySelector('.knowledge-base-markdown-toggle');
         for (let n = 0; n < 100 && source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
-        if (source.hidden || !nativeInstance._disableSaving) throw new Error("Native Markdown did not disable the hidden host writer");
+        if (source.hidden || !nativeInstance._disableSaving || nativeInstance._iframeWindow.browsingContext.embedderElement.hidden || toggle.getAttribute("aria-pressed") !== "true") throw new Error("Native Markdown did not disable the hidden host writer");
         return {nativeInstance, nativeWindow, source, toggle};
       }
       let nativeMD = await openNativeMarkdown();
       if (!nativeMD.source.value.startsWith('# Native Markdown') || !nativeMD.source.value.includes('Ordinary **text**') || !nativeMD.source.value.includes('e=mc^2') || nativeMD.source.value.includes('style=')) throw new Error("Native Markdown remains opaque for ordinary content");
       const beforeNativeSwitch = nativeMarkdownNote.getNote();
-      nativeMD.toggle.dispatchEvent(new nativeMD.nativeWindow.Event('command'));
+      nativeMD.toggle.click();
       for (let n = 0; n < 100 && !nativeMD.source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!nativeMD.source.hidden || nativeMarkdownNote.getNote() !== beforeNativeSwitch) throw new Error("Unchanged native Markdown switch rewrote the note: " + JSON.stringify({hidden:nativeMD.source.hidden, before:beforeNativeSwitch, after:nativeMarkdownNote.getNote(), status:nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status').textContent}));
-      nativeMD.toggle.dispatchEvent(new nativeMD.nativeWindow.Event('command'));
+      nativeMD.toggle.click();
       for (let n = 0; n < 100 && nativeMD.source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
       nativeMD.source.value += "\\n\\nNative Markdown saved **in place**";
       nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.Event('input'));
       for (let n = 0; n < 100 && !nativeMarkdownNote.getNote().includes('in place'); n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!nativeMarkdownNote.getNote().includes('<strong>in place</strong>') || nativeMarkdownNote.parentItemID !== item.id || !nativeMarkdownNote.hasTag('Native Markdown test') || (nativeMarkdownNote.getNote().match(/<h1/g) || []).length !== 1 || (await kb.api.listZettels()).length) throw new Error("Native Markdown changed identity/placement or silently imported a note");
+      for (let n = 0; n < 100 && nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status').textContent !== kb.api.loc('editor-saved'); n++) await new Promise(resolve => setTimeout(resolve, 50));
       nativeMarkdownNote.setNote(nativeMarkdownNote.getNote().replace('in place', 'External edit preserved'));
       await nativeMarkdownNote.saveTx();
       nativeMD.source.value += "\\n\\nConflicting native draft";
@@ -265,9 +268,9 @@ function runQuitTest() {
       if (literatureEditors.length !== 1 || (await kb.api.listZettels("", false, "literature")).length !== 1) throw new Error("Repeated literature requests opened duplicate notes or windows: " + literatureEditors.length + "/" + (await kb.api.listZettels("", false, "literature")).length);
       const literatureEditor = literatureEditors[0];
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (literatureEditor.document.getElementById("knowledge-base-note-kind").textContent !== kb.api.loc("note-kind-literature") || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
+      if (literatureEditor.document.getElementById("knowledge-base-note-kind").value !== "literature" || !literatureEditor.document.getElementById("knowledge-base-note-kind").disabled || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
       const literatureReference = literatureEditor.document.getElementById("knowledge-base-editor-reference");
-      if (literatureReference.textContent !== "[[@Host2026]]" || (await kb.api.getZettel(literatureID)).reference !== "@Host2026") throw new Error("Literature Note reference is missing");
+      if (literatureReference.textContent !== "@Host2026" || (await kb.api.getZettel(literatureID)).reference !== "@Host2026") throw new Error("Literature Note reference is missing");
       literatureReference.click();
       if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[@Host2026]]") throw new Error("Reference copy did not write a usable wiki link: " + JSON.stringify({plain: Zotero.Utilities.Internal.getClipboard("text/plain"), unicode: Zotero.Utilities.Internal.getClipboard("text/unicode")}));
       if ((await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Literature citation-key navigation failed");
@@ -276,7 +279,7 @@ function runQuitTest() {
       if (!kb.api.getMarkdownSource(noteLinkHTML).body.includes(noteLink) || (await kb.api.getDraftLinks(noteLink + " [@Host2026]")).length !== 1) throw new Error("Native Markdown roundtrip confused note links with item citations");
       await kb.api.saveZettel({id: thinkingID, kind: "thinking", title: "Existing project", body: noteLink});
       if ((await kb.api.getOutgoing(thinkingID))[0]?.targetId !== literatureID || !(await kb.api.getBacklinks(literatureID)).some(link => link.sourceId === thinkingID)) throw new Error("Literature reference was not indexed into backlinks");
-      await openMarkdownMenu(literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
+      await openMarkdownToolbar(literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "source"; n++) await new Promise(resolve => setTimeout(resolve, 50));
       const literatureBody = literatureEditor.document.getElementById("knowledge-base-editor-body");
       literatureBody.value += "\\n\\nLiterature synthesis";
@@ -291,7 +294,7 @@ function runQuitTest() {
       await otherParent.saveTx({skipSelect:true});
       note.parentItemID = otherParent.id; await note.saveTx({skipSelect:true});
       const beforeSourceReselect = {id:note.id, key:note.key, html:note.getNote()};
-      literatureEditor.document.getElementById("knowledge-base-src-pick").dispatchEvent(new literatureEditor.Event("command", {bubbles:true}));
+      literatureEditor.document.getElementById("knowledge-base-src-pick").click();
       const reselectSearch = literatureEditor.document.getElementById("knowledge-base-src-search");
       reselectSearch.value = "Isolated test source";
       reselectSearch.dispatchEvent(new literatureEditor.Event("input", {bubbles:true}));
@@ -309,8 +312,10 @@ function runQuitTest() {
       item.setField("extra", "Citation Key: HostRenamed2026");
       if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "HostRenamed2026");
       await item.saveTx();
-      for (let n = 0; n < 100 && literatureReference.textContent !== "[[@HostRenamed2026]]"; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (literatureReference.textContent !== "[[@HostRenamed2026]]" || (await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Citation-key change lost the stable note reference or left its display stale");
+      for (let n = 0; n < 100 && literatureReference.textContent !== "@HostRenamed2026"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (literatureReference.textContent !== "@HostRenamed2026" || (await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Citation-key change lost the stable note reference or left its display stale");
+      item.setField("publicationTitle", "Journal of Test Studies");
+      item.setField("DOI", "10.1000/host-test");
       item.setField("extra", "Citation Key: Host2026");
       if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "Host2026");
       await item.saveTx();
@@ -319,8 +324,8 @@ function runQuitTest() {
       item.setField("publisher", "Live metadata publisher");
       await item.saveTx();
       const parentDisplay = literatureEditor.document.getElementById("knowledge-base-src-display");
-      for (let n = 0; n < 100 && parentDisplay.textContent !== "Updated parent item title"; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (parentDisplay.textContent !== "Updated parent item title" || note.getNote() !== originalLiteratureHTML) throw new Error("Parent item title did not refresh without rewriting note content");
+      for (let n = 0; n < 100 && !parentDisplay.textContent.includes("Updated parent item title"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (!parentDisplay.textContent.includes("Updated parent item title") || note.getNote() !== originalLiteratureHTML) throw new Error("Parent item title did not refresh without rewriting note content");
       const metadataShots = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
       if (metadataShots) {
         await IOUtils.makeDirectory(metadataShots, {ignoreExisting: true});
@@ -434,17 +439,21 @@ function runQuitTest() {
         if (editor.document.getElementById("knowledge-base-editor-mode")) throw new Error("Browse mode is still exposed");
         async function switchMode(mode) {
           if (rootElement.dataset.mode !== mode) {
-            if (mode === "source") await openMarkdownMenu(editor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
-            else editor.document.getElementById("knowledge-base-editor-format").dispatchEvent(new editor.Event("command", {bubbles: true}));
+            await openMarkdownToolbar(editor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
           }
           for (let n = 0; n < 80 && rootElement.dataset.mode !== mode; n++) await new Promise(resolve => setTimeout(resolve, 100));
-          const surfaces = [body, editor.document.getElementById("knowledge-base-editor-preview"), editor.document.getElementById("knowledge-base-rich-frame")];
-          if (rootElement.dataset.mode !== mode || surfaces.filter(surface => !surface.hidden).length !== 1) throw new Error("Editor mode is not a single surface: " + mode);
+          const nativeElement = editor.document.getElementById("knowledge-base-rich-frame");
+          const nativeFrame = nativeElement.getCurrentInstance()._iframeWindow;
+          const toggle = nativeFrame.document.querySelector(".toolbar .start .knowledge-base-markdown-toggle");
+          const sourceMode = mode === "source";
+          if (rootElement.dataset.mode !== mode || body.hidden === sourceMode || nativeElement.hidden || !editor.document.getElementById("knowledge-base-editor-preview").hidden || toggle?.getAttribute("aria-pressed") !== String(sourceMode)) throw new Error("Editor did not retain its toolbar and single body: " + mode);
+          if (sourceMode && (!nativeElement.getCurrentInstance()._disableSaving || nativeFrame.getComputedStyle(nativeFrame.document.querySelector(".primary-editor")).visibility !== "hidden")) throw new Error("The hidden rich-text writer remained active");
         }
         const migratedNote = editor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item;
         if (migratedNote.parentItemID !== item.id) throw new Error("Sourced note was not filed under its source");
         if (Zotero.getActiveZoteroPane().getSelectedItems().some(selected => selected.id === migratedNote.id)) throw new Error("Native note creation changed the library selection");
-        editor.document.getElementById("knowledge-base-src-clear").dispatchEvent(new editor.Event("command", { bubbles: true }));
+        editor.document.getElementById("knowledge-base-src-pick").click();
+        editor.document.getElementById("knowledge-base-src-none").click();
         let personal;
         for (let n = 0; n < 160; n++) {
           personal = await Zotero.Items.getByLibraryAndKeyAsync(item.libraryID, Zotero.Prefs.get("extensions.zotero.knowledge-base.notes.parent." + item.libraryID, true));
@@ -452,7 +461,7 @@ function runQuitTest() {
           await new Promise(resolve => setTimeout(resolve, 50));
         }
         if (!personal || migratedNote.parentItemID !== personal.id || migratedNote.getCollections().length) throw new Error("The clear-source control did not organize the note");
-        editor.document.getElementById("knowledge-base-src-pick").dispatchEvent(new editor.Event("command", { bubbles: true }));
+        editor.document.getElementById("knowledge-base-src-pick").click();
         const sourceSearch = editor.document.getElementById("knowledge-base-src-search");
         sourceSearch.value = "Isolated test source";
         sourceSearch.dispatchEvent(new editor.Event("input", { bubbles: true }));
@@ -468,10 +477,51 @@ function runQuitTest() {
         if (migratedNote.parentItemID !== item.id || item.getCollections().length) throw new Error("The source picker did not reparent the existing note cleanly");
 
         const unsourced = (await kb.api.listZettels()).find(card => card.id !== rows[0].id);
+        await kb.api.saveEditorCard({id: unsourced.id, title:unsourced.title, body:unsourced.body, kind:"thinking"});
         const loose = await kb.api.acquireNativeNote({ id: unsourced.id, title: unsourced.title, body: unsourced.body });
         const looseNote = await Zotero.Items.getAsync(loose.noteID);
+        kb.api.openEditor({zettelId: unsourced.id});
+        let keyEditor;
+        for (let n=0; n<100; n++) {
+          keyEditor = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => win.knowledgeBaseCardId === unsourced.id);
+          if (keyEditor?.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
+          await new Promise(resolve => setTimeout(resolve,50));
+        }
+        const typePicker = keyEditor.document.getElementById("knowledge-base-note-kind");
+        const keyInput = keyEditor.document.getElementById("knowledge-base-editor-key");
+        if (!typePicker.hidden || !typePicker.disabled || keyInput.hidden || keyEditor.document.getElementById("knowledge-base-note-kind-text").textContent !== kb.api.loc("note-kind-thinking")) throw new Error("Saved Thinking type is not static text");
+        keyInput.value = "HostProject"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
+        if (!(await keyEditor.save(false))) throw new Error("Thinking key save failed");
+        keyInput.value = "HostProjectRevised"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
+        if (!(await keyEditor.save(false))) throw new Error("Thinking key rename failed");
+        const keyed = await kb.api.getZettel(unsourced.id);
+        if (keyed.kind !== "thinking" || keyed.reference !== "HostProjectRevised" || keyed.custom_key !== "HostProjectRevised" || (await kb.api.resolveCardLink("knowledge-base://card/HostProject")).targetId !== unsourced.id || keyEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== looseNote.id) throw new Error("Thinking key changed identity or broke old links");
+        keyEditor.document.getElementById("knowledge-base-parent-change").click();
+        const parentSearch = keyEditor.document.getElementById("knowledge-base-parent-search");
+        parentSearch.value = rows[0].title; parentSearch.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
+        let parentChoice;
+        for (let n=0; n<50; n++) {
+          parentChoice = [...keyEditor.document.querySelectorAll("#knowledge-base-parent-results .relation-link")].find(button => button.textContent.includes(rows[0].title));
+          if (parentChoice) break;
+          await new Promise(resolve => setTimeout(resolve,50));
+        }
+        if (!parentChoice) throw new Error("Parent reference picker did not find a note");
+        parentChoice.click(); if (!(await keyEditor.save(false)) || (await kb.api.getFamily(unsourced.id)).parent?.id !== rows[0].id) throw new Error("Parent picker did not save its note");
+        keyEditor.document.getElementById("knowledge-base-parent-change").click();
+        for(let n=0; n<50 && !keyEditor.document.querySelector("#knowledge-base-parent-results .metadata-clear"); n++) await new Promise(resolve=>setTimeout(resolve,50));
+        keyEditor.document.querySelector("#knowledge-base-parent-results .metadata-clear").click();
+        if (!(await keyEditor.save(false)) || (await kb.api.getFamily(unsourced.id)).parent) throw new Error("No parent did not detach the note");
+        keyEditor.close();
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const taggedCard = await kb.api.getZettel(unsourced.id);
+        looseNote.addTag("Manual tag"); await looseNote.saveTx();
+        await kb.api.saveEditorCard({id: taggedCard.id, noteID:looseNote.id, title:"A long child note title about understanding relationships between ideas and navigating a knowledge base without squeezing text into a narrow sidebar", body:"#tag-a #tag-b #中文 \`#ignored\`", sourceMode:true, expectedNoteHTML:looseNote.getNote(), expectedUpdatedAt:taggedCard.updated_at, parentId:null});
+        await Zotero.Tags.setColor(item.libraryID, "tag-a", "#3478f6", 0);
+        const taggedGraphNode = (await kb.api.getGraph()).nodes.find(node => node.id === unsourced.id);
+        if (!looseNote.hasTag("tag-a") || !looseNote.hasTag("tag-b") || !looseNote.hasTag("中文") || !looseNote.hasTag("Manual tag") || looseNote.hasTag("ignored") || taggedGraphNode.tags.slice(0,3).join(",") !== "tag-a,tag-b,中文" || !taggedGraphNode.tags.includes("Manual tag") || taggedGraphNode.color !== "#3478f6") throw new Error("Inline tags or Zotero graph colors did not persist");
         const personalParent = await Zotero.Items.getByLibraryAndKeyAsync(item.libraryID, Zotero.Prefs.get("extensions.zotero.knowledge-base.notes.parent." + item.libraryID, true));
-        if (!personalParent.hasTag("Personal Knowledge") || Zotero.Tags.getColors(item.libraryID).get("Personal Knowledge")?.color !== "#4c8bf5") throw new Error("Personal parent has no native colored marker");
+        if (personalParent.getTags().length || Zotero.Tags.getColors(item.libraryID).has("Personal Knowledge")) throw new Error("Personal parent was automatically tagged");
+        personalParent.addTag("User marker"); await personalParent.saveTx();
         await Zotero.Tags.setColor(item.libraryID, "Personal Knowledge", "#805ad5", 0);
         if (!personalParent || looseNote.parentItemID !== personalParent.id || looseNote.getCollections().length) throw new Error("Unsourced note was not attached to the personal parent");
         const updatePlacement = async (source) => {
@@ -508,8 +558,7 @@ function runQuitTest() {
         const migratedImage = Zotero.Items.get(migratedNote.getAttachments()[0]);
         if (!migratedImage || !(await migratedImage.fileExists())) throw new Error("Legacy image was not imported into Zotero note attachments");
         if (migratedNote.getAttachments().length !== 1) throw new Error("Two native editors imported duplicate migration images");
-        const clearIcon = editor.document.querySelector("#knowledge-base-src-clear .toolbarbutton-icon");
-        if (clearIcon?.getBoundingClientRect().width !== 16 || clearIcon.getBoundingClientRect().height !== 16) throw new Error("Native remove-source icon is missing");
+        if (editor.document.getElementById("knowledge-base-src-clear") || editor.document.getElementById("knowledge-base-src-anno")) throw new Error("Obsolete source actions remain in the editor");
         await switchMode("source");
         body.value = "A saved idea with [[" + (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id + "]] and $E = mc^2$. [@Host2026] [My note](zotero://select/library/items/" + note.key + ").\\n\\n$$\\nx^2+y^2\\n$$\\n\\n## From reading to an idea\\n\\n- Keep the source close to the idea.\\n- Connect it to a related card.\\n\\n> One clear thought per card makes it easier to revisit.\\n\\n| Connection | Purpose |\\n| --- | --- |\\n| Parent | Outline |\\n| Card link | Related idea |";
         const complexCitation = { citationItems: [{ uris: [Zotero.URI.getItemURI(item)], itemData: Zotero.Utilities.Item.itemToCSLJSON(item), locator: "23", label: "page" }], properties: {} };
@@ -578,8 +627,44 @@ function runQuitTest() {
         if (!(await kb.api.getZettel(rows[0].id)).body.includes("Native autosave probe")) throw new Error("Native note changes did not refresh the card cache");
         await switchMode("source");
         if (!body.value.includes("[@Host2026]") || !body.value.includes("[My note](zotero://")) throw new Error("Source projection lost references");
+        if (!editor.document.getElementById("knowledge-base-editor-title").hidden || !body.querySelector("iframe")?.contentDocument.querySelector(".cm-editor")) throw new Error("Markdown still exposes a separate title or plain textarea");
+        const sourceDoc = body.querySelector("iframe").contentDocument;
+        const cmContent = sourceDoc.querySelector(".cm-content");
+        if (cmContent.namespaceURI !== "http://www.w3.org/1999/xhtml") throw new Error("Markdown content is not HTML: " + cmContent.namespaceURI);
+        const typingBefore = body.value;
+        const typingAt = typingBefore.indexOf("Native autosave probe");
+        editor.focus(); body.focus(); body.setSelectionRange(typingAt, typingAt);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (!sourceDoc.execCommand("insertText", false, "Cursor probe ")) throw new Error("Markdown typing failed");
+        await new Promise(resolve => setTimeout(resolve, 100));
+        if (body.value !== typingBefore.slice(0, typingAt) + "Cursor probe " + typingBefore.slice(typingAt)) throw new Error("Markdown typed at the wrong cursor: " + JSON.stringify({at: typingAt, value: body.value, selection: body.selectionStart, editable: cmContent.isContentEditable, active: editor.document.activeElement?.outerHTML?.slice(0,300), dom: cmContent.innerHTML.slice(0,250), anchor: editor.getSelection()?.anchorNode?.parentElement?.outerHTML?.slice(0,200)}));
+        const saveStarted = Date.now();
+        const replaceBefore = body.value;
+        body.setSelectionRange(typingAt, typingAt + "Cursor probe ".length);
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (!sourceDoc.execCommand("insertText", false, "中文编辑 ")) throw new Error("Markdown replacement failed");
+        await new Promise(resolve => setTimeout(resolve, 50));
+        if (body.value !== replaceBefore.slice(0, typingAt) + "中文编辑 " + replaceBefore.slice(typingAt + "Cursor probe ".length)) throw new Error("Markdown replaced text at the wrong position");
+        for (let n = 0; n < 30 && !nativeNote.getNote().includes("中文编辑 Native autosave probe"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+        const markdownSaveMs = Date.now() - saveStarted;
+        if (!nativeNote.getNote().includes("中文编辑 Native autosave probe") || markdownSaveMs > 1600) throw new Error("Markdown autosave was not prompt: " + markdownSaveMs + " ms");
+        const citationChip = sourceDoc.querySelector(".knowledge-base-md-node-citation");
+        if (!citationChip || citationChip.textContent.includes("data-citation")) throw new Error("Native citation is not displayed as a compact chip");
+        const changeButton = editor.document.getElementById("knowledge-base-src-pick");
+        const changeBounds = changeButton.getBoundingClientRect();
+        if (!changeButton.querySelector("svg") || !changeButton.getAttribute("aria-label") || changeBounds.width < 24 || changeBounds.height < 10 || changeBounds.right > editor.innerWidth) throw new Error("Source Change button is not visibly laid out: " + JSON.stringify({text:changeButton.textContent, bounds:changeBounds.toJSON(), style:editor.getComputedStyle(changeButton).cssText, display:editor.getComputedStyle(changeButton).display}));
+        const chipShots = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
+        if (chipShots) {
+          await IOUtils.makeDirectory(chipShots, {ignoreExisting: true});
+          const image = await editor.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
+          const canvas = editor.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+          canvas.width = image.width; canvas.height = image.height;
+          canvas.getContext("2d").drawImage(image, 0, 0); image.close();
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+          await IOUtils.write(PathUtils.join(chipShots, "markdown-editor.png"), new Uint8Array(await blob.arrayBuffer()));
+        }
         const protectedSource = kb.api.getMarkdownSource(nativeNote.getNote());
-        if (!body.value.includes("zkb:") || !protectedSource.fragments.some(fragment => fragment.includes(migratedImage.key)) || !protectedSource.fragments.some(fragment => fragment.includes("locator%22%3A%2223"))) throw new Error("Source projection lost protected image/citation metadata");
+        if (!body.value.includes("data-attachment-key=") || !protectedSource.fragments.some(fragment => fragment.includes(migratedImage.key)) || !protectedSource.fragments.some(fragment => fragment.includes("locator%22%3A%2223"))) throw new Error("Source projection lost protected image/citation metadata");
         await switchMode("visual");
         await switchMode("source");
                 body.value += "\\n\\nProtected fragment round trip";
@@ -594,7 +679,7 @@ function runQuitTest() {
         body.dispatchEvent(new editor.Event("input", {bubbles: true}));
         if (await editor.save(false)) throw new Error("Markdown editor overwrote an external edit");
         if (!nativeNote.getNote().includes("Better Notes external change") || nativeNote.getNote().includes("Unsaved Markdown conflict") || !editor.document.getElementById("knowledge-base-editor-status").textContent.includes(kb.api.loc("editor-save-conflict"))) throw new Error("Markdown conflict was not visible or retained");
-        if (!noteElement.getCurrentInstance()._readOnly) throw new Error("Hidden native editor can still write during Markdown editing");
+        if (!noteElement.getCurrentInstance()._disableSaving) throw new Error("Hidden native editor can still write during Markdown editing");
         nativeNote.setNote(fragmentCheck); await nativeNote.saveTx();
         body.value = sourceBeforeConflict;
         if (!(await editor.save(false))) throw new Error("Conflict did not resolve after restoring the original baseline");
@@ -631,16 +716,23 @@ function runQuitTest() {
         graph.document.getElementById("graph-splitter").dispatchEvent(new graph.KeyboardEvent("keydown", {key: "ArrowLeft", bubbles: true}));
         if (kb.api.getPanelWidth("graph") !== 29 || transformBeforeResize !== graph.document.querySelector("#graph-svg > g")?.getAttribute("transform")) throw new Error("Graph resizing changed its viewport or failed to persist");
         const editorRelations = editor.document.getElementById("knowledge-base-editor-relations");
+        if (editorRelations.open || editorRelations.contains(editor.document.getElementById("knowledge-base-parent-display"))) throw new Error("Connections are expanded by default or duplicate Parent");
         editorRelations.open = true;
-        const compactConnections = editorRelations.getBoundingClientRect().height <= 141;
+        const compactConnections = editorRelations.getBoundingClientRect().width >= 200 && editor.getComputedStyle(editor.document.getElementById("knowledge-base-editor-content")).flexDirection === "column" && editor.getComputedStyle(editorRelations.querySelector(".editor-connections")).flexDirection === "column" && !editorRelations.querySelector("section");
+        const sourceReference = editor.document.getElementById("knowledge-base-src-display").textContent;
+        if (!sourceReference.includes("Smith 2026") || !sourceReference.includes("Journal of Test Studies") || sourceReference.includes("10.1000/host-test") || editor.document.getElementById("knowledge-base-parent-root")) throw new Error("Source/Parent metadata is not a concise reference");
         const systemDark = editor.matchMedia("(prefers-color-scheme: dark)").matches;
         const nativeFrame = noteElement.getCurrentInstance()._iframeWindow;
-        const whiteSurfaces = nativeFrame.getComputedStyle(nativeFrame.document.body).backgroundColor === "rgb(255, 255, 255)";
-        const rgb = nativeFrame.getComputedStyle(nativeFrame.document.querySelector(".primary-editor")).color.match(/[0-9.]+/g).slice(0, 3).map(value => {
-          const channel = Number(value) / 255;
-          return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
-        });
-        const readableText = 1.05 / (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] + 0.05) >= 4.5;
+        let noteLinkTool;
+        for (let n = 0; n < 50; n++) {
+          noteLinkTool = nativeFrame.document.querySelector(".knowledge-base-note-link");
+          if (noteLinkTool) break;
+          await new Promise(resolve => setTimeout(resolve, 20));
+        }
+        const modeTool = nativeFrame.document.querySelector(".knowledge-base-markdown-toggle");
+        if (!noteLinkTool || noteLinkTool.getBoundingClientRect().width < 28 || noteLinkTool.getBoundingClientRect().left - modeTool.getBoundingClientRect().right < 6) throw new Error("Note-link toolbar entry disappeared or has crowded hit areas after returning to rich text");
+        const nativeStyleUntouched = !nativeFrame.document.querySelector("style[data-knowledge-base]");
+        if (!nativeStyleUntouched) throw new Error("Plugin overrides the native note editor style");
         const screenshotDirectory = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
         async function snapshot(name, win) {
           const image = await win.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
@@ -650,11 +742,32 @@ function runQuitTest() {
           const blob = await new Promise(resolve => canvas.toBlob(resolve));
           await IOUtils.write(PathUtils.join(screenshotDirectory, name + ".png"), new Uint8Array(await blob.arrayBuffer()));
         }
+        if (!editor.document.getElementById("knowledge-base-note-kind").hidden || editor.document.getElementById("knowledge-base-note-kind-text").textContent !== kb.api.loc("note-kind-zettel")) throw new Error("Saved Zettel still shows a dropdown");
+        editor.openCardPicker();
+        for (let n=0; n<100 && !editor.document.querySelector("#knowledge-base-link-results .note-reference-text"); n++) await new Promise(resolve=>setTimeout(resolve,20));
+        const pickerReference = editor.document.querySelector("#knowledge-base-link-results .note-reference-text");
+        if (!pickerReference) throw new Error("Insert Note references are missing");
+        const checkReferences = win => {
+          for (const text of win.document.querySelectorAll(".note-reference-text")) {
+            const key = text.querySelector(".relation-id");
+            const title = text.querySelector(".relation-title");
+            if (!key || key.hidden || !title || !text.getBoundingClientRect().height) continue;
+            const range=win.document.createRange(); range.selectNodeContents(title);
+            const firstLine=range.getClientRects()[0];
+            if (win.getComputedStyle(key).display !== "inline" || win.getComputedStyle(title).display !== "inline" || (text.getBoundingClientRect().width > 350 && firstLine && Math.abs(key.getBoundingClientRect().top-firstLine.top)>4)) throw new Error("A note reference still splits key and title: " + JSON.stringify({url:win.location.href, text:text.textContent, keyDisplay:win.getComputedStyle(key).display, titleDisplay:win.getComputedStyle(title).display, keyTop:key.getBoundingClientRect().top, titleTop:firstLine?.top, width:text.getBoundingClientRect().width}));
+          }
+        };
+        if (screenshotDirectory) await snapshot("insert-note-picker", editor);
+        checkReferences(editor); checkReferences(manager); checkReferences(graph);
+        editor.document.getElementById("knowledge-base-link-drop").hidden = true;
         if (screenshotDirectory) {
           await IOUtils.makeDirectory(screenshotDirectory, { ignoreExisting: true });
           await snapshot("manager", manager);
           await snapshot("graph", graph);
           await snapshot("native-editor", editor);
+          editorRelations.open = false;
+          await snapshot("native-editor-writing", editor);
+          editorRelations.open = true;
 
         }
         const priorSources = kb.api.getGraphOptions().sources;
@@ -818,7 +931,7 @@ function runQuitTest() {
           missingEditor.document.getElementById("knowledge-base-editor-save-copy").dispatchEvent(new missingEditor.Event("command", {bubbles: true}));
           for (let n = 0; n < 100 && !missingEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
           const recovered = (await kb.api.listZettels()).find(card => card.id !== caseID && card.title === caseCached.title && card.kind === "zettel" && card.item_key === caseSource.key);
-          if (!recovered || recovered.body !== caseCached.body || !(await kb.api.getZettel(caseID))) throw new Error("Saving cached content failed to preserve both records");
+          if (!recovered || recovered.body !== caseCached.body || !(await kb.api.getZettel(caseID))) throw new Error("Saving cached content failed to preserve both records: " + JSON.stringify({ cached: caseCached, recovered, current: await kb.api.listZettels() }));
           for (const win of Services.wm.getEnumerator("knowledge-base:editor")) if (win.knowledgeBaseCardId === recovered.id) win.close();
           await kb.api.deleteZettel(recovered.id);
           await kb.api.deleteZettel(caseID);
@@ -877,9 +990,27 @@ function runQuitTest() {
         const persistedThinkingID = await seedMappedNote({noteID: thinking.id, kind: "thinking"});
         const persistedLiteratureID = await seedMappedNote({noteID: note.id, kind: "literature", itemKey: item.key, libraryID: item.libraryID});
         if (thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id) throw new Error("Opening changed the original project before restart");
+        const mainDoc = Zotero.getMainWindow().document;
+        await Zotero.getActiveZoteroPane().selectItem(item.id);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const sidebar = mainDoc.getElementById("zotero-item-pane");
+        const nativeView = mainDoc.getElementById("zotero-view-item");
+        const cardSection = [...mainDoc.querySelectorAll("item-pane-custom-section")].find(el => el.dataset.pane?.includes("knowledge-base"));
+        if (!cardSection) throw new Error("Native card sidebar section is missing");
+        cardSection.querySelector("collapsible-section").open = true;
+        const sectionBody = cardSection.querySelector('[data-type="body"]');
+        sectionBody.classList.add("knowledge-base-section");
+        sectionBody.innerHTML = '<ul class="knowledge-base-section-list"><li>' + "A long card title with many words ".repeat(60) + '</li></ul>';
+        for (const width of [280, 400]) {
+          sidebar.setAttribute("width", String(width));
+          await new Promise(resolve => setTimeout(resolve, 100));
+          const bounds = nativeView.getBoundingClientRect();
+          if (bounds.width > sidebar.getBoundingClientRect().width || nativeView.scrollWidth > nativeView.clientWidth + 1)
+            throw new Error("Long card titles stretch Zotero's native info and abstract pane");
+        }
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, panelWidths: { manager: kb.api.getPanelWidth("manager"), graph: kb.api.getPanelWidth("graph") }, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, whiteSurfaces, readableText, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 4, keyedThinkingID: unsourced.id, panelWidths: { manager: kb.api.getPanelWidth("manager"), graph: kb.api.getPanelWidth("graph") }, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, markdownSaveMs, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, nativeStyleUntouched, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -936,8 +1067,7 @@ try {
     !state.mathVisible ||
     !state.sourcesHidden ||
     !state.graphControlsVisible ||
-    !state.whiteSurfaces ||
-    !state.readableText ||
+    !state.nativeStyleUntouched ||
     !state.compactConnections ||
     state.nativeDialogs?.join(",") !== "cancel,accept,extra1"
   )
@@ -999,7 +1129,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; colored personal parent with retained user color; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with protected images, citations and external-edit conflicts; compact type labels, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown menus, force graph with connection-sized hubs, hover neighborhoods, full-title labels, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, Source/Parent reference rows and pencil pickers, vertical connections, Source item markers, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, full-title labels, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

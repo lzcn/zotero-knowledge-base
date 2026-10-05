@@ -349,7 +349,7 @@ const refresh = wrap(async function () {
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
     id.className = "zid muted";
-    id.textContent = `${api.loc("note-kind-" + (z.kind || "zettel"))} · [[${z.reference || z.id}]]`;
+    id.textContent = `${api.loc("note-kind-" + (z.kind || "zettel"))} · ${z.reference || z.id}`;
     id.title = z.id;
     li.appendChild(id);
 
@@ -620,9 +620,7 @@ function openEditor(id) {
 
 function newZettel(title = "") {
   api.openEditor({
-    kind: /** @type {import("../../src/modules/db").NoteKind} */ (
-      $("knowledge-base-kind").value || "zettel"
-    ),
+    kind: $("knowledge-base-kind").value === "thinking" ? "thinking" : "zettel",
     prefillTitle: title,
     onSaved: (id) =>
       safeCall(async () => {

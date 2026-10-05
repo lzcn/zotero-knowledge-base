@@ -2,6 +2,12 @@
 export function buildOptions(pkg, environment, outputDirectory = "dist/addon") {
   return [
     {
+      entryPoints: ["src/ui/markdown-source.ts"],
+      bundle: true,
+      target: "firefox115",
+      outfile: `${outputDirectory}/content/markdown-source.js`,
+    },
+    {
       entryPoints: ["src/ui/native-editor.ts"],
       bundle: true,
       target: "firefox115",

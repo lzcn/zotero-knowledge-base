@@ -1,10 +1,13 @@
 import { getAll, type ZettelRow, type LinkRow, type NoteKind } from "./db";
+import { parseTags } from "./markdown";
 import { getItemSummary } from "./zotero";
 
 export interface GraphNode {
   id: string;
   title: string;
   reference?: string;
+  tags?: string[];
+  color?: string;
   kind: "card" | "source" | "unresolved";
   snippet: string;
   noteKind?: NoteKind;
@@ -45,15 +48,76 @@ export async function getGraphData(): Promise<GraphData> {
     "SELECT card_id, parent_id FROM card_parents",
   );
   const parentMap = new Map(parents.map((row) => [row.card_id, row.parent_id]));
+  const mappings = await getAll<{
+    card_id: string;
+    library_id: number;
+    note_key: string;
+  }>("SELECT card_id, library_id, note_key FROM card_notes");
+  const libraries = new Map(
+    mappings.map((row) => [row.card_id, row.library_id]),
+  );
+  const nativeTags = new Map<string, string[]>();
+  const notes = await Promise.all(
+    mappings.map(async (row) => ({
+      row,
+      note: await Zotero.Items.getByLibraryAndKeyAsync(
+        row.library_id,
+        row.note_key,
+      ),
+    })),
+  );
+  const available = notes.filter(
+    (entry): entry is typeof entry & { note: Zotero.Item } =>
+      !!entry.note && entry.note.isNote() && !entry.note.isInTrash(),
+  );
+  await Zotero.Items.loadDataTypes(
+    available.map(({ note }) => note!),
+    ["tags"],
+  );
+  for (const { row, note } of available)
+    nativeTags.set(
+      row.card_id,
+      note!.getTags().map((tag) => tag.tag),
+    );
+  const palette = [
+    "#3478f6",
+    "#30a46c",
+    "#af52de",
+    "#f59e0b",
+    "#0891b2",
+    "#ec4899",
+    "#e5484d",
+  ];
+  const colorFor = (tag: string, libraryID: number | null) => {
+    const configured = libraryID
+      ? (
+          Zotero.Tags?.getColors(libraryID) as unknown as
+            | Map<string, { color: string }>
+            | undefined
+        )?.get(tag)?.color
+      : undefined;
+    let hash = 0;
+    for (const char of tag) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+    return configured || palette[hash % palette.length];
+  };
   const nodes = new Map<string, GraphNode>();
   const bodies = new Map<string, string>();
   const edges: GraphEdge[] = [];
   for (const row of rows) {
+    const tags = [
+      ...new Set([
+        ...parseTags(`${row.title}\n${row.body}`),
+        ...(nativeTags.get(row.id) || []),
+      ]),
+    ];
+    const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
     nodes.set(row.id, {
       id: row.id,
       title: row.title || row.id,
       kind: "card",
       noteKind: row.kind,
+      tags,
+      color: tags.length ? colorFor(tags[0], libraryID) : undefined,
       parentId: parentMap.get(row.id) ?? null,
       snippet: row.body,
     });

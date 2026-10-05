@@ -1,6 +1,9 @@
 /* Styles for the Zettel item pane section (injected into the main window) */
 
+/* Long card titles must not set the native sidebar's minimum width. */
 .knowledge-base-section {
+  contain: inline-size;
+  min-width: 0;
   font-size: 12px;
 }
 

@@ -13,6 +13,7 @@ export const requiredFiles = [
   "content/icons/ui/link.svg",
   "content/icons/ui/image.svg",
   "content/icons/ui/note.svg",
+  "content/icons/ui/graph.svg",
 
   "content/katex/katex.min.css",
   "content/katex/fonts/KaTeX_Main-Regular.woff2",
@@ -24,6 +25,8 @@ export const requiredFiles = [
   "content/editor.js",
   "content/editor-formatting.js",
   "content/native-editor.js",
+  "content/markdown-source.js",
+  "content/markdown-source.html",
   "content/manager.js",
   "content/annotations.js",
   "content/image-viewer.js",

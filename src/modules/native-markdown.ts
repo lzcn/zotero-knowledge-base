@@ -1,4 +1,4 @@
-import { attachMarkdownMenu } from "../ui/native-markdown-menu";
+import { attachMarkdownToggle } from "../ui/native-markdown-toolbar";
 import { getString } from "../utils/locale";
 import { getMarkdownDocument, markdownDocumentHTML } from "./native-notes";
 import {
@@ -35,6 +35,7 @@ interface NativeNotes {
   unregisterEditorInstance(instance: EditorInstance): Promise<void>;
 }
 const notes = () => Zotero.Notes as unknown as NativeNotes;
+const sourceWindows = new WeakSet<Window>();
 const controllers = new Map<EditorInstance, Controller>();
 const attaching = new Set<EditorInstance>();
 const writes = new Set<Promise<unknown>>();
@@ -87,10 +88,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     bar.hidden = true;
     bar.setAttribute("align", "center");
     bar.style.cssText = "padding: 3px 6px; gap: 6px;";
-    const toggle = doc.createXULElement("button") as HTMLElement & {
-      disabled: boolean;
-    };
-    toggle.setAttribute("label", "Markdown");
     const status = doc.createXULElement("label");
     status.classList.add("knowledge-base-native-status");
     status.setAttribute("flex", "1");
@@ -99,19 +96,66 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     };
     reload.setAttribute("label", getString("native-markdown-reload"));
     reload.hidden = true;
-    bar.append(toggle, status, reload);
-    const source = doc.createElementNS(
+    bar.append(status, reload);
+    const sourceTextarea = doc.createElementNS(
       "http://www.w3.org/1999/xhtml",
       "textarea",
     ) as HTMLTextAreaElement;
-    source.className = "knowledge-base-native-source";
-    source.setAttribute("aria-label", getString("native-markdown-label"));
-    source.spellcheck = false;
-    source.style.cssText =
+    sourceTextarea.className = "knowledge-base-native-source";
+    sourceTextarea.setAttribute(
+      "aria-label",
+      getString("native-markdown-label"),
+    );
+    sourceTextarea.spellcheck = false;
+    sourceTextarea.style.cssText =
       "flex: 1; min-height: 100px; box-sizing: border-box; width: 100%; resize: none; border: 0; outline: none; padding: 24px; color: var(--fill-primary, #252a34); background: var(--material-background, #fff); font: 14px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4;";
-    source.hidden = true;
+    sourceTextarea.hidden = true;
+    const previousPosition = container.style.position;
+    container.style.position = "relative";
+    const toolbarHeight =
+      instance._iframeWindow.document
+        .querySelector(".toolbar")
+        ?.getBoundingClientRect().height || 40;
+    sourceTextarea.style.position = "absolute";
+    sourceTextarea.style.inset = `${toolbarHeight}px 0 0`;
+    sourceTextarea.style.height = "auto";
+    sourceTextarea.style.zIndex = "1";
+    bar.style.cssText += `position: absolute; top: ${toolbarHeight}px; left: 0; right: 0; z-index: 2;`;
     container.insertBefore(bar, frame);
-    container.insertBefore(source, frame.nextSibling);
+    container.insertBefore(sourceTextarea, frame.nextSibling);
+    if (!sourceWindows.has(win)) {
+      Services.scriptloader.loadSubScript(
+        "chrome://knowledge-base/content/markdown-source.js",
+        win,
+      );
+      sourceWindows.add(win);
+    }
+    const source = await (
+      win as Window & {
+        KnowledgeBaseMarkdownSource: {
+          create(
+            input: HTMLTextAreaElement,
+            labels?: Record<string, string>,
+          ): Promise<import("../ui/markdown-source").MarkdownSource>;
+        };
+      }
+    ).KnowledgeBaseMarkdownSource.create(sourceTextarea, {
+      citation: getString("markdown-node-citation"),
+      annotation: getString("markdown-node-annotation"),
+      notelink: getString("markdown-node-note-link"),
+      image: getString("markdown-node-image"),
+    });
+    if (
+      stopped ||
+      token !== generation ||
+      !notes()._editorInstances.includes(instance)
+    ) {
+      source.destroy();
+      source.remove();
+      bar.remove();
+      container.style.position = previousPosition;
+      return;
+    }
     let sourceMode = false;
     let closed = false;
     let baseline = "";
@@ -138,6 +182,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     const draftID = () => `native-document:${item.libraryID}:${item.key}`;
     const dirty = () => sourceMode && source.value !== baseline;
     const show = (key: string, conflict = false) => {
+      bar.hidden = !sourceMode;
       status.textContent = getString(key);
       reload.hidden = !conflict;
     };
@@ -225,14 +270,16 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         )
           timer = win.setTimeout(() => {
             void track(save());
-          }, 700);
+          }, 500);
       });
       return operation;
     };
+    let changingMode = false;
     const changeMode = async () => {
-      if (closed || stopped) return;
+      if (closed || stopped || changingMode) return;
       if (operation && !(await operation)) return;
-      toggle.disabled = true;
+      changingMode = true;
+      removeMarkdownToggle.setDisabled(true);
       try {
         if (sourceMode) {
           if (!(await save()) || dirty()) return;
@@ -246,7 +293,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           source.hidden = true;
           frame.hidden = false;
           bar.hidden = true;
-          toggle.setAttribute("label", "Markdown");
+          removeMarkdownToggle.setMode(false);
           status.textContent = "";
           reload.hidden = true;
           element.focus();
@@ -263,10 +310,11 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           if (draft?.expectedNoteHTML) original = draft.expectedNoteHTML;
           instance._disableSaving = true;
           sourceMode = true;
-          bar.hidden = false;
-          frame.hidden = true;
+          bar.hidden = true;
+          frame.hidden = false;
+          removeMarkdownToggle.setMode(true);
           source.hidden = false;
-          toggle.setAttribute("label", getString("editor-format-native"));
+
           if (draft)
             show(
               original === item.getNote()
@@ -281,7 +329,8 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         report(error);
         show("native-markdown-failed", true);
       } finally {
-        toggle.disabled = false;
+        changingMode = false;
+        removeMarkdownToggle.setDisabled(false);
       }
     };
     const changed = () => {
@@ -289,7 +338,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       show("editor-unsaved");
       timer = win.setTimeout(() => {
         void track(save());
-      }, 700);
+      }, 500);
       void persist().catch(report);
     };
     const reloadSource = async () => {
@@ -375,7 +424,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       controller.dispose();
       controllers.delete(instance);
     };
-    const removeMarkdownMenu = attachMarkdownMenu(
+    const removeMarkdownToggle = attachMarkdownToggle(
       instance._iframeWindow,
       getString("editor-format-markdown"),
       () => {
@@ -410,17 +459,17 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           instance.applyIncrementalUpdate = nativeUpdate;
         instance._disableSaving = previousDisableSaving;
         frame.hidden = false;
-        removeMarkdownMenu();
+        container.style.position = previousPosition;
+        removeMarkdownToggle();
         bar.remove();
+        source.destroy();
         source.remove();
         win.removeEventListener("keydown", keydown, true);
         win.removeEventListener("close", onClose, true);
         win.removeEventListener("unload", unload);
       },
     };
-    toggle.addEventListener("command", () => {
-      void changeMode();
-    });
+
     reload.addEventListener("command", () => {
       void reloadSource().catch(report);
     });

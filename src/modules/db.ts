@@ -10,12 +10,13 @@
  */
 
 const DB_FILENAME = "knowledge-base.sqlite";
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 export type NoteKind = "literature" | "zettel" | "thinking";
 
 export interface ZettelRow {
   kind: NoteKind;
+  custom_key: string | null;
   id: string;
   title: string;
   body: string;
@@ -34,6 +35,7 @@ export interface LinkRow {
 }
 
 const SCHEMA_TABLES: string[] = [
+  `CREATE TABLE IF NOT EXISTS note_keys (key TEXT PRIMARY KEY, card_id TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, UNIQUE(note_key, library_id))`,
   `CREATE TABLE IF NOT EXISTS editor_drafts (id TEXT PRIMARY KEY, body TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_parents (card_id TEXT PRIMARY KEY, parent_id TEXT, CHECK(card_id <> parent_id))`,
@@ -48,6 +50,7 @@ const SCHEMA_TABLES: string[] = [
     item_key TEXT,
     library_id INTEGER,
     annotation_key TEXT,
+    custom_key TEXT,
     kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -175,6 +178,8 @@ async function ensureSchema(): Promise<void> {
     await exec(
       "ALTER TABLE zettels ADD COLUMN kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL)))",
     );
+  if (!columns.some((column) => column.name === "custom_key"))
+    await exec("ALTER TABLE zettels ADD COLUMN custom_key TEXT");
   const mappings = await getAll<{ name: string }>(
     "PRAGMA table_info(card_notes)",
   );
@@ -208,6 +213,7 @@ const REQUIRED_COLUMNS = [
   "library_id",
   "annotation_key",
   "kind",
+  "custom_key",
   "created_at",
   "updated_at",
 ];

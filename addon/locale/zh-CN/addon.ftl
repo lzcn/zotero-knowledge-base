@@ -40,10 +40,10 @@ manager-confirm-delete = 确定删除「{ $title }」吗？指向此笔记的链
 editor-title-new = 新建笔记
 editor-title-edit = 编辑笔记
 editor-title-placeholder = 笔记标题
-editor-source-label = 来源 · Zotero：
-editor-src-none = 尚未关联来源条目
+editor-source-label = 来源：
+editor-src-none = 未关联来源
 editor-src-pick = 选择来源
-editor-src-change = 更换来源
+editor-src-change = 更换
 editor-src-jump = 打开条目
 editor-src-anno = 插入高亮
 editor-src-placeholder = 搜索标题或作者…
@@ -223,7 +223,7 @@ health-source-missing = 来源不可用，可选择其他来源重新关联。
 health-restore = 恢复原记录
 health-open-cache = 打开缓存笔记
 health-read-only = 此文献库为只读。
-editor-format-native = 原生编辑器
+editor-format-native = 富文本
 editor-format-markdown = Markdown
 graph-outline = 层级
 graph-references = 引用
@@ -238,8 +238,27 @@ native-markdown-failed = 保存失败，草稿已保留。
 native-markdown-draft = 已恢复草稿
 native-markdown-close = 关闭前保存修改吗？
 
-editor-outline-parent = 上级笔记
+editor-outline-parent = 上级
 
 manager-source-item = 来源 · Zotero
 
 note-reference-copy = 复制笔记引用
+
+markdown-node-citation = 引用
+markdown-node-annotation = 标注
+markdown-node-note-link = 笔记链接
+markdown-node-image = 图片
+
+editor-key = Key
+
+editor-key-auto = 自动生成
+
+editor-parent-none = 无上级
+
+editor-change-source = 修改来源
+
+editor-change-parent = 修改上级
+
+editor-key-invalid = Key 不能含空格、方括号、|，或以 @ 开头。
+
+editor-key-exists = 此 Key 已被另一篇笔记使用。

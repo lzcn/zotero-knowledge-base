@@ -12,6 +12,7 @@ import {
 import {
   acquireNativeNote,
   projectNativeNote,
+  getMarkdownDocument,
   nativeNoteHTML,
   saveNativeCard,
   releaseNativeNote,
@@ -25,6 +26,7 @@ import {
   restoreNote,
   getMarkdownSource,
   markdownNoteHTML,
+  markdownDocumentHTML,
 } from "./native-notes";
 import { richTextToMarkdown } from "./rich-text";
 import { getNoteReferences, withNoteReferences } from "./note-references";
@@ -127,6 +129,7 @@ export const api = {
   restoreNote,
   getMarkdownSource,
   markdownNoteHTML,
+  markdownDocumentHTML,
   isExternalNote,
   async openLiteratureNote(key: string, libraryID: number): Promise<void> {
     const id = await ensureLiteratureNote(key, libraryID);
@@ -162,6 +165,7 @@ export const api = {
   getEditorDraft,
   listEditorDrafts,
   saveEditorCard: saveNativeCard,
+  getMarkdownDocument,
   acquireNativeNote,
   duplicateNativeNote,
   projectNativeNote,
@@ -436,7 +440,7 @@ export const api = {
     }
     const opened = mainWindow().openDialog(
       EDITOR_URL,
-      "knowledge-base:editor",
+      "_blank",
       "chrome,centerscreen,resizable=yes,width=1000,height=720",
       args,
     ) as Window & {

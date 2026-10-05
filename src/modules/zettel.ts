@@ -11,7 +11,7 @@ import {
   type ZettelRow,
 } from "./db";
 import { saveParent, removeParent } from "./hierarchy";
-import { parseCardLinks } from "./markdown";
+import { parseCardLinks, parseTags } from "./markdown";
 import { notifyDataChange } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
 import { getNoteReferences } from "./note-references";
@@ -108,6 +108,12 @@ export async function resolveRefs(
   );
   if (shouldStop()) return map;
   for (const r of byId) map.set(r.id, r.id);
+  const aliases = await getAll<{ key: string; card_id: string }>(
+    `SELECT key, card_id FROM note_keys WHERE key IN (${placeholders})`,
+    refs,
+  );
+  for (const alias of aliases)
+    if (!map.has(alias.key)) map.set(alias.key, alias.card_id);
   if (refs.some((ref) => ref.startsWith("@"))) {
     const { byAlias } = await getNoteReferences();
     if (shouldStop()) return map;
@@ -164,6 +170,7 @@ export async function resolveRefs(
 function rowToZettel(row: ZettelRow, outgoing = 0, incoming = 0): Zettel {
   return {
     kind: row.kind,
+    custom_key: row.custom_key,
     id: row.id,
     title: row.title,
     body: row.body,
@@ -373,6 +380,7 @@ async function refreshAnnotationCount(
  */
 export interface SaveCardInput {
   kind?: NoteKind;
+  customKey?: string | null;
   id?: string;
   title: string;
   body: string;
@@ -409,6 +417,30 @@ export async function saveEditorCard(
       throw new Error("CARD_CONFLICT");
     }
     const kind = input.kind ?? previous?.kind ?? "zettel";
+    const customKey =
+      kind === "thinking"
+        ? (input.customKey === undefined
+            ? previous?.custom_key
+            : input.customKey
+          )?.trim() || null
+        : null;
+    if (customKey && (/[\s[\]|]/.test(customKey) || customKey.startsWith("@")))
+      throw new Error("NOTE_KEY_INVALID");
+    if (customKey) {
+      const reserved = await getOne<{ card_id: string }>(
+        "SELECT card_id FROM note_keys WHERE key = ?",
+        [customKey],
+      );
+      const identity = await getOne<{ id: string }>(
+        "SELECT id FROM zettels WHERE id = ?",
+        [customKey],
+      );
+      if (
+        (reserved && reserved.card_id !== input.id) ||
+        (identity && identity.id !== input.id)
+      )
+        throw new Error("NOTE_KEY_EXISTS");
+    }
     if (!["literature", "zettel", "thinking"].includes(kind))
       throw new Error("Invalid note type");
     if (kind === "literature") {
@@ -436,7 +468,7 @@ export async function saveEditorCard(
       await exec(
         `UPDATE zettels
          SET title = ?, body = ?, item_key = ?, library_id = ?,
-             annotation_key = ?, kind = ?, updated_at = ?
+             annotation_key = ?, kind = ?, custom_key = ?, updated_at = ?
          WHERE id = ?`,
         [
           title,
@@ -445,19 +477,22 @@ export async function saveEditorCard(
           input.libraryID ?? null,
           effectiveAnnotationKey,
           kind,
+          customKey,
           now,
           id,
         ],
       );
     } else {
-      const allIds = await getAll<{ id: string }>(`SELECT id FROM zettels`);
+      const allIds = await getAll<{ id: string }>(
+        `SELECT id FROM zettels UNION SELECT key AS id FROM note_keys`,
+      );
       id =
         input.id && !allIds.some((r) => r.id === input.id)
           ? input.id
           : newZettelID(new Set(allIds.map((r) => r.id)));
       await exec(
-        `INSERT INTO zettels (id, title, body, item_key, library_id, annotation_key, kind, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO zettels (id, title, body, item_key, library_id, annotation_key, kind, custom_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           title,
@@ -466,12 +501,24 @@ export async function saveEditorCard(
           input.libraryID ?? null,
           effectiveAnnotationKey,
           kind,
+          customKey,
           now,
           now,
         ],
       );
     }
+    if (customKey && customKey !== id)
+      await exec(
+        "INSERT OR IGNORE INTO note_keys (key, card_id) VALUES (?, ?)",
+        [customKey, id],
+      );
     await saveParent(id, input.parentId);
+    await exec("DELETE FROM tags WHERE zettel_id = ?", [id]);
+    for (const tag of parseTags(`${title}\n${body}`))
+      await exec("INSERT OR IGNORE INTO tags (zettel_id, tag) VALUES (?, ?)", [
+        id,
+        tag,
+      ]);
     await reindexLinks(id, body);
     await resolveUnresolvedLinks();
     await beforeCommit?.();
@@ -489,7 +536,8 @@ export async function saveEditorCard(
   }
   await refreshAnnotationCount(result.effectiveAnnotationKey);
   notifyDataChange();
-  await cleanupImagesAfterChange();
+  // The note is committed; housekeeping must not hold up save feedback.
+  void cleanupImagesAfterChange();
   return { id: result.id, updatedAt: now };
 }
 
@@ -499,6 +547,7 @@ export async function deleteZettel(id: string): Promise<void> {
     annotation_key: string | null;
   }>(`SELECT item_key, annotation_key FROM zettels WHERE id = ?`, [id]);
   await transaction(async () => {
+    await exec("DELETE FROM note_keys WHERE card_id = ?", [id]);
     await removeParent(id);
     await exec(`DELETE FROM links WHERE source_id = ?`, [id]);
     await exec(`UPDATE links SET target_id = NULL WHERE target_id = ?`, [id]);

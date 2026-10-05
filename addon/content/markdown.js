@@ -14,24 +14,36 @@ window.ZoteroKnowledgeBaseMarkdown = {
     name.textContent = title || id;
     const index = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
-      "small",
+      "span",
     );
     index.className = "relation-id";
-    index.textContent = `[[${reference}]]`;
-    index.hidden = title === id || title === `[[${id}]]`;
-    container.append(name, index);
+    index.textContent = reference;
+    index.hidden =
+      !title ||
+      title === id ||
+      title === reference ||
+      title === `[[${id}]]` ||
+      title === `[[${reference}]]`;
+    if (index.hidden) name.textContent = reference || id;
+    const text = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    text.className = "note-reference-text";
+    text.append(index);
+    if (!index.hidden && reference) text.append(document.createTextNode(" · "));
+    text.append(name);
+    container.append(text);
     container.setAttribute(
       "title",
-      title && title !== id
-        ? `[[${reference}]] · ${title}`
-        : `[[${reference}]]`,
+      index.hidden ? reference || id : `${reference} · ${title}`,
     );
     container.setAttribute("aria-label", container.getAttribute("title"));
   },
   /** @param {HTMLButtonElement} button @param {string} reference @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
   reference(button, reference, api) {
     button.hidden = !reference;
-    button.textContent = reference ? `[[${reference}]]` : "";
+    button.textContent = reference;
     button.title = api.loc("note-reference-copy");
     button.onclick = () => api.copyNoteReference(reference);
   },

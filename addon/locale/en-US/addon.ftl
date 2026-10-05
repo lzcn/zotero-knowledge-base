@@ -46,10 +46,10 @@ manager-confirm-delete = Delete "{ $title }"? Links to this note will remain but
 editor-title-new = New Note
 editor-title-edit = Edit Note
 editor-title-placeholder = Note title
-editor-source-label = Source · Zotero:
-editor-src-none = No source item linked
+editor-source-label = Source:
+editor-src-none = No source
 editor-src-pick = Choose source
-editor-src-change = Change source
+editor-src-change = Change
 editor-src-jump = Open item
 editor-src-anno = Insert highlights
 editor-src-placeholder = Search title or author…
@@ -163,7 +163,7 @@ graph-legend-unresolved = ○ Missing cards
 section-load-error = Could not load notes. Select the item again to retry.
 
 
-editor-relations = Note connections
+editor-relations = Connections
 
 editor-visual = Visual editing
 
@@ -249,7 +249,7 @@ health-source-missing = The source is unavailable. Choose another source to reli
 health-restore = Restore original
 health-open-cache = Open cached note
 health-read-only = This library is read-only.
-editor-format-native = Native editor
+editor-format-native = Rich text
 editor-format-markdown = Markdown
 graph-outline = Hierarchy
 graph-references = References
@@ -264,8 +264,27 @@ native-markdown-failed = Could not save. Your draft is kept.
 native-markdown-draft = Draft restored
 native-markdown-close = Save changes before closing?
 
-editor-outline-parent = Parent note
+editor-outline-parent = Parent
 
 manager-source-item = Source · Zotero
 
 note-reference-copy = Copy note reference
+
+markdown-node-citation = Citation
+markdown-node-annotation = Annotation
+markdown-node-note-link = Note link
+markdown-node-image = Image
+
+editor-key = Key
+
+editor-key-auto = Automatic
+
+editor-parent-none = No parent
+
+editor-change-source = Change source
+
+editor-change-parent = Change parent
+
+editor-key-invalid = Use a key without spaces, brackets, | or a leading @.
+
+editor-key-exists = This key belongs to another note.

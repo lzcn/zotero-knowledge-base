@@ -25,7 +25,15 @@ export async function getNoteReferences() {
         : null;
     }),
   );
-  const byAlias = new Map<string, string | null>();
+  const aliases = await getAll<{ key: string; card_id: string }>(
+    "SELECT key, card_id FROM note_keys",
+  );
+  const current = await getAll<{ id: string; custom_key: string }>(
+    "SELECT id, custom_key FROM zettels WHERE kind = 'thinking' AND custom_key IS NOT NULL",
+  );
+  const byAlias = new Map<string, string | null>(
+    aliases.map((row) => [row.key, row.card_id]),
+  );
   for (const candidate of candidates) {
     if (!candidate) continue;
     byAlias.set(
@@ -33,8 +41,11 @@ export async function getNoteReferences() {
       byAlias.has(candidate.alias) ? null : candidate.id,
     );
   }
-  const byID = new Map<string, string>();
-  for (const [alias, id] of byAlias) if (id) byID.set(id, alias);
+  const byID = new Map<string, string>(
+    current.map((row) => [row.id, row.custom_key]),
+  );
+  for (const [alias, id] of byAlias)
+    if (id && alias.startsWith("@")) byID.set(id, alias);
   return { byID, byAlias };
 }
 

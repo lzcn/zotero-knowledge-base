@@ -9,6 +9,17 @@ declare global {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
   }
   interface Window {
+    KnowledgeBaseMarkdownSource: {
+      create(
+        textarea: HTMLTextAreaElement,
+        labels?: Record<string, string>,
+      ): Promise<import("../src/ui/markdown-source").MarkdownSource>;
+      mount(
+        root: import("../src/ui/markdown-source").MarkdownSource,
+        textarea: HTMLTextAreaElement,
+        labels: Record<string, string>,
+      ): import("../src/ui/markdown-source").MarkdownSource;
+    };
     knowledgeBaseCardId?: string | null;
     knowledgeBaseDraftId?: string;
     knowledgeBaseStopping?: boolean;
@@ -62,7 +73,6 @@ export interface EditorElements {
   "knowledge-base-editor-restore": HTMLButtonElement;
   "knowledge-base-editor-format": HTMLButtonElement;
   "knowledge-base-editor-reference": HTMLButtonElement;
-  "knowledge-base-note-kind": HTMLSpanElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;
   "knowledge-base-command-menu": HTMLDivElement;
@@ -72,19 +82,27 @@ export interface EditorElements {
   "knowledge-base-parent-display": HTMLButtonElement;
   "knowledge-base-parent-search": HTMLInputElement;
   "knowledge-base-parent-results": HTMLUListElement;
-  "knowledge-base-parent-root": HTMLButtonElement;
+  "knowledge-base-note-kind": HTMLSelectElement;
+  "knowledge-base-note-kind-text": HTMLSpanElement;
+  "knowledge-base-kind-label": HTMLLabelElement;
+  "knowledge-base-key-label": HTMLLabelElement;
+  "knowledge-base-editor-key": HTMLInputElement;
+  "knowledge-base-parent-change": HTMLButtonElement;
+  "knowledge-base-parent-picker": HTMLDivElement;
+  "knowledge-base-editor-children-label": HTMLElement;
   "knowledge-base-editor-family": HTMLDivElement;
   "knowledge-base-editor": Element;
   "knowledge-base-editor-root": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-toolbar": HTMLElementTagNameMap["div"];
   "knowledge-base-src-label": HTMLElementTagNameMap["span"];
-  "knowledge-base-src-display": HTMLElementTagNameMap["span"];
+  "knowledge-base-src-display": HTMLElementTagNameMap["button"];
   "knowledge-base-src-pick": HTMLElementTagNameMap["button"];
   "knowledge-base-src-jump": HTMLElementTagNameMap["button"];
   "knowledge-base-src-anno": HTMLElementTagNameMap["button"];
   "knowledge-base-src-clear": HTMLElementTagNameMap["button"];
   "knowledge-base-src-drop": HTMLElementTagNameMap["div"];
   "knowledge-base-src-search": HTMLElementTagNameMap["input"];
+  "knowledge-base-src-none": HTMLElementTagNameMap["button"];
   "knowledge-base-src-selected": HTMLElementTagNameMap["button"];
   "knowledge-base-src-status": HTMLElementTagNameMap["div"];
   "knowledge-base-src-results": HTMLElementTagNameMap["ul"];
@@ -100,7 +118,7 @@ export interface EditorElements {
   "knowledge-base-link-results": HTMLElementTagNameMap["ul"];
   "knowledge-base-editor-content": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-workspace": HTMLElementTagNameMap["div"];
-  "knowledge-base-editor-body": HTMLElementTagNameMap["textarea"];
+  "knowledge-base-editor-body": import("../src/ui/markdown-source").MarkdownSource;
   "knowledge-base-editor-preview": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-relations-summary": HTMLElementTagNameMap["summary"];
   "knowledge-base-editor-relations": HTMLElementTagNameMap["aside"];

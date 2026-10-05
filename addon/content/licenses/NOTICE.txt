@@ -8,6 +8,11 @@ Changes include the independent card database, Markdown editor, source
 integration, images, relationship graph, plugin identifiers and tests.
 Modified by Zhi Lu and contributors, 2026.
 
+Native toolbar mode switching and preservation of structured note HTML follow
+Better Notes by windingwind and contributors (AGPL-3.0-or-later), reviewed at
+commit 4215a882e9f3528ddd4820c20b2c29e732c14e7e:
+https://github.com/windingwind/zotero-better-notes
+
 Bundled libraries retain their own licenses, included in this directory:
 - zotero-plugin-toolkit: MIT
 - marked: MIT
@@ -30,3 +35,10 @@ d3-timer: ISC
 d3-transition: ISC
 d3-zoom: ISC
 KaTeX: MIT
+
+Markdown node chips in src/ui/markdown-nodes.ts are adapted from Better Notes
+src/extras/mdEditor/zNodes.ts at commit 4215a882e9f3528ddd4820c20b2c29e732c14e7e.
+Copyright windingwind and contributors. AGPL-3.0-or-later.
+Modified by Zhi Lu, 2026: native inline images and local CSS classes.
+CodeMirror, Lezer and their support libraries retain their MIT licenses,
+included in this directory.

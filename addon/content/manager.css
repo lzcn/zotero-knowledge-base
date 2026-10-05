@@ -298,7 +298,7 @@ html|button.danger {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 14px 0;
+  padding: 16px 24px 8px;
 }
 
 #knowledge-base-editor-toolbar .lbl {
@@ -1026,8 +1026,8 @@ html|button[disabled] {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 14px 10px;
+  gap: 12px;
+  margin: 0 24px 16px;
 }
 .parent-control label {
   font-size: 12px;
@@ -1063,10 +1063,9 @@ html|button[disabled] {
   text-align: left;
 }
 #knowledge-base-editor-family {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  display: block;
 }
+
 .family-link {
   display: block;
   text-align: left;
@@ -1175,7 +1174,7 @@ html|button.icon-button[aria-pressed="true"] {
 }
 .relation-title,
 .relation-id {
-  display: block;
+  display: inline;
 }
 .relation-title {
   line-height: 1.4;
@@ -1315,12 +1314,6 @@ summary {
   width: min(320px, calc(100% - 44px));
   margin: 0;
   box-shadow: 0 4px 16px #0002;
-}
-
-#knowledge-base-parent-display::after {
-  content: "⌄";
-  margin-left: 8px;
-  color: var(--muted);
 }
 
 /* White reading surfaces and a quiet navigation pane. */
@@ -1599,7 +1592,7 @@ summary {
 #knowledge-base-btn-graph,
 #knowledge-base-btn-local-graph,
 #knowledge-base-editor-graph {
-  list-style-image: url("chrome://zotero/skin/16/universal/related.svg");
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
 }
 #graph-fit {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/fit.svg");
@@ -1648,7 +1641,7 @@ summary {
 }
 
 .kb-inline-icon[data-kb-icon="related"] {
-  background-image: url("chrome://zotero/skin/16/universal/related.svg");
+  background-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
 }
 
 /* Graph controls and inspector. */
@@ -1894,10 +1887,6 @@ summary {
   padding: 0;
   gap: 16px;
 }
-.card-connections .relation-id,
-.editor-connections .relation-id {
-  display: none;
-}
 #knowledge-base-family.relation-columns {
   gap: 16px;
 }
@@ -2003,12 +1992,6 @@ summary {
   border-bottom: 1px solid var(--border);
   font-size: 12px;
 }
-#knowledge-base-note-kind {
-  font-size: 11px;
-  padding-right: 12px;
-  border-right: 1px solid var(--border);
-  white-space: nowrap;
-}
 #knowledge-base-src-display {
   min-width: 0;
   overflow: hidden;
@@ -2057,4 +2040,345 @@ summary {
 .note-reference:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Keep the native toolbar in place while the Markdown surface covers its body. */
+#knowledge-base-editor-workspace {
+  position: relative;
+}
+#knowledge-base-editor-root[data-mode="source"] #knowledge-base-editor-body {
+  position: absolute;
+  inset: var(--knowledge-base-toolbar-height, 40px) 0 0;
+  width: 100%;
+  height: auto;
+  z-index: 1;
+  box-sizing: border-box;
+  padding: 28px max(24px, calc((100% - 820px) / 2));
+  background: var(--bg);
+}
+
+#knowledge-base-markdown-toolbar {
+  display: none;
+}
+#knowledge-base-editor-toolbar > #knowledge-base-src-display {
+  flex: 1 1 0;
+  width: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-width: 0;
+  color: var(--accent);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+#knowledge-base-editor-toolbar .source-link:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.knowledge-base-markdown-source {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+/* Metadata follows the same compact reference layout for source and parent. */
+#knowledge-base-editor-toolbar,
+.metadata-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px;
+  margin: 0;
+  min-height: 28px;
+}
+.metadata-row > label {
+  font-weight: 600;
+  color: var(--fg);
+  font-size: 13px;
+}
+#knowledge-base-parent-display,
+#knowledge-base-editor-toolbar > #knowledge-base-src-display {
+  flex: 1;
+  max-width: none;
+  min-width: 0;
+  width: auto;
+  font-size: 13px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  white-space: normal;
+}
+.metadata-value .relation-title {
+  display: inline;
+}
+.metadata-value .relation-id {
+  margin-left: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.metadata-value.placeholder {
+  color: var(--muted);
+}
+#knowledge-base-src-pick,
+.metadata-change {
+  flex: none;
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.metadata-change:hover {
+  background: var(--surface);
+  color: var(--fg);
+}
+.metadata-change svg {
+  display: block;
+}
+.note-identity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px;
+  color: var(--muted);
+  font-size: 12px;
+}
+#knowledge-base-note-kind {
+  max-width: 160px;
+  margin-right: 12px;
+  font: inherit;
+}
+#knowledge-base-editor-key {
+  flex: 1;
+  max-width: 260px;
+  min-width: 100px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+#knowledge-base-parent-picker {
+  position: absolute;
+  top: 100%;
+  left: 24px;
+  right: 24px;
+  z-index: 4;
+  padding: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  box-shadow: 0 4px 12px #0001;
+}
+#knowledge-base-parent-search {
+  width: 100%;
+  box-sizing: border-box;
+}
+#knowledge-base-parent-results {
+  position: static;
+  margin: 6px 0 0;
+  width: 100%;
+  max-height: 220px;
+}
+#knowledge-base-editor-relations .editor-connections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#knowledge-base-editor-relations .relation-link {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+#knowledge-base-editor-relations .relation-title {
+  display: inline;
+  font-size: inherit;
+}
+#knowledge-base-editor-relations .relation-id {
+  display: inline;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Keep writing separate from its navigable context. */
+#knowledge-base-kind-label,
+#knowledge-base-key-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.graph-node.card circle {
+  fill: var(--node-color, #8e969f);
+}
+.graph-node.source circle {
+  fill: #a5afbd;
+}
+.graph-node text {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.graph-edge,
+.graph-edge.parent,
+.graph-edge.link,
+.graph-edge.source {
+  stroke: var(--border);
+  stroke-width: 0.8px;
+  opacity: 0.65;
+}
+.graph-edge.source {
+  stroke-dasharray: none;
+}
+.graph-node.selected text,
+.graph-node.hovered text {
+  fill: var(--fg);
+}
+
+#graph-legend-cards,
+#graph-legend-sources {
+  color: var(--muted);
+}
+
+/* A full-width document with connections available when needed. */
+#knowledge-base-editor-content {
+  flex-direction: column;
+}
+#knowledge-base-editor-content #knowledge-base-editor-workspace {
+  flex: 1 1 0;
+  min-height: 0;
+  margin-right: 0;
+}
+#knowledge-base-editor-relations {
+  flex: 0 0 auto;
+  margin: 0 24px;
+  padding: 10px 0;
+  max-height: min(260px, 36vh);
+  overflow-y: auto;
+  border-left: 0;
+  border-top: 1px solid var(--border);
+}
+#knowledge-base-editor-relations:not([open]) {
+  flex: 0 0 auto;
+  max-height: none;
+}
+#knowledge-base-editor-relations > summary {
+  font-size: 12px;
+  padding: 2px 0;
+}
+#knowledge-base-editor-relations .editor-connections {
+  gap: 12px;
+  padding: 14px 0 4px;
+}
+#knowledge-base-editor-relations details > summary {
+  font-size: 11px;
+}
+#knowledge-base-editor-relations .relation-list,
+#knowledge-base-editor-relations .refs {
+  max-height: none;
+  overflow: visible;
+  margin: 6px 0 0;
+}
+#knowledge-base-editor-relations .relation-link {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 5px;
+  line-height: 1.6;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#knowledge-base-editor-relations .relation-link:hover {
+  background: var(--surface);
+}
+#knowledge-base-editor-relations .relation-id {
+  margin-left: 0;
+  font: inherit;
+}
+#knowledge-base-editor-root > .parent-control {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 24px;
+  padding: 0 0 10px;
+}
+#knowledge-base-parent-label {
+  color: var(--muted);
+  font-size: 12px;
+}
+#knowledge-base-parent-display {
+  min-width: 0;
+  max-width: none;
+  flex: 1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  font-size: 12px;
+}
+#knowledge-base-parent-display .relation-id,
+#knowledge-base-parent-display .relation-title {
+  display: inline;
+  margin: 0;
+  font: inherit;
+}
+#knowledge-base-parent-display .relation-id {
+  color: var(--muted);
+}
+#knowledge-base-parent-display.placeholder {
+  color: var(--muted);
+}
+#knowledge-base-parent-picker {
+  top: 100%;
+}
+#knowledge-base-editor-graph {
+  position: static;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+  padding: 4px;
+}
+#knowledge-base-btn-graph,
+#knowledge-base-btn-local-graph,
+#knowledge-base-editor-graph {
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
+}
+
+#knowledge-base-editor-relations .relation-title {
+  display: inline;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Every note reference shares one wrapping text flow, including pickers. */
+.note-reference-text {
+  display: block;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.6;
+}
+.note-reference-text > .relation-id {
+  display: inline;
+  white-space: nowrap;
+  margin: 0;
+  font: inherit;
+  color: var(--muted);
+}
+.note-reference-text > .relation-title {
+  display: inline;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  font: inherit;
+}
+#knowledge-base-note-kind-text {
+  font-size: 12px;
+  color: var(--muted);
 }

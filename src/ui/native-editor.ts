@@ -1,9 +1,10 @@
-import { attachMarkdownMenu } from "./native-markdown-menu";
+import { attachMarkdownToggle } from "./native-markdown-toolbar";
 
 /** Thin adapter around Zotero's editor; the host owns editing and note storage. */
 export interface NativeEditorInstance {
   instanceID: string;
   _initPromise: Promise<void>;
+  _disableSaving: boolean;
   _iframeWindow: Window & {
     wrappedJSObject: {
       getDataSync(force: boolean): { html: string; state?: unknown } | null;
@@ -31,12 +32,15 @@ export interface NativeEditorOptions {
   onShortcut(key: string): void;
   markdownLabel: string;
   onMarkdown(): void;
+  noteLinkLabel: string;
+  onNoteLink(): void;
 }
 export interface NativeEditorController {
   getHTML(): string;
   getSavedHTML(): string;
   flush(): Promise<void>;
   setReadOnly(value: boolean): Promise<void>;
+  setSourceMode(value: boolean): void;
   reload(): Promise<void>;
   insertHTML(html: string): void;
   focus(): void;
@@ -54,7 +58,10 @@ async function create(
   let readOnly = !!options.readOnly;
   let lastHTML = options.item.getNote();
   let destroyed = false;
-  let removeMarkdownMenu = () => {};
+  let removeMarkdownToggle: ReturnType<typeof attachMarkdownToggle> | undefined;
+  let removeNoteLink = () => {};
+  let sourceMode = false;
+  let previousDisableSaving = element.getCurrentInstance()._disableSaving;
   const ownedInstances = new Set<string>();
   const observerID = Zotero.Notifier.registerObserver(
     {
@@ -115,7 +122,8 @@ async function create(
     if (event.key === "Escape") event.stopPropagation();
   };
   const detach = () => {
-    removeMarkdownMenu();
+    removeMarkdownToggle?.();
+    removeNoteLink();
     if (!frame) return;
     frame.document.removeEventListener("input", input, true);
     frame.document.removeEventListener("keydown", keydown, true);
@@ -125,24 +133,43 @@ async function create(
   const attach = () => {
     ownedInstances.add(element.getCurrentInstance().instanceID);
     frame = element.getCurrentInstance()._iframeWindow;
-    const style = frame.document.createElement("style");
-    style.dataset.knowledgeBase = "paper";
-    style.textContent = `
-      :root { color-scheme: light; --color-background: #fff; --color-toolbar: #f7f8fa; --color-control: #fff; --color-button: #fff; --color-border: #dfe3e9; --fill-primary: #252a34; --fill-secondary: #717886; --fill-tertiary: #9aa2ad; --fill-quarternary: #e6e9ee; }
-      body { background: #fff; }
-      .primary-editor { color: #252a34; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; line-height: 1.65; max-width: 820px; margin: 0 auto; padding: 28px 36px 48px; box-sizing: border-box; }
-      .primary-editor h1 { font-size: 27px; line-height: 1.3; margin: 0 0 24px; }
-      .primary-editor h2 { font-size: 20px; line-height: 1.4; }
-      .primary-editor h3 { font-size: 17px; }
-    `;
-    frame.document.querySelector("style[data-knowledge-base]")?.remove();
-    frame.document.head.appendChild(style);
     if (!readOnly)
-      removeMarkdownMenu = attachMarkdownMenu(
+      removeMarkdownToggle = attachMarkdownToggle(
         frame,
         options.markdownLabel,
         options.onMarkdown,
       );
+    if (!readOnly) {
+      const link = frame.document.createElement("button");
+      link.className = "toolbar-button knowledge-base-note-link";
+      link.setAttribute("aria-label", options.noteLinkLabel);
+      link.title = options.noteLinkLabel;
+      link.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v6M8 7h5M8 11h5M8 15h3M18 15v6m-3-3h6"/></svg>';
+      link.addEventListener("mousedown", (event) => event.preventDefault());
+      link.addEventListener("click", options.onNoteLink);
+      const toolbar = frame.document.querySelector(".toolbar .start");
+      const insertLink = () => {
+        if (!toolbar || toolbar.contains(link)) return;
+        const toggle = toolbar.querySelector(".knowledge-base-markdown-toggle");
+        if (toggle) toggle.after(link);
+        else toolbar.append(link);
+      };
+      const Observer = (
+        frame as unknown as Window & {
+          MutationObserver: typeof MutationObserver;
+        }
+      ).MutationObserver;
+      const observer = new Observer(insertLink);
+      if (toolbar) observer.observe(toolbar, { childList: true });
+      insertLink();
+      removeNoteLink = () => {
+        observer.disconnect();
+        link.remove();
+      };
+    }
+    removeMarkdownToggle?.setMode(sourceMode);
+    if (sourceMode) element.getCurrentInstance()._disableSaving = true;
     frame.document.addEventListener("input", input, true);
     frame.document.addEventListener("keydown", keydown, true);
     frame.document.addEventListener("keydown", stopEscape);
@@ -162,6 +189,20 @@ async function create(
     getHTML: () => getData()?.html || lastHTML,
     getSavedHTML: () => options.item.getNote(),
     flush,
+    setSourceMode(value) {
+      const instance = element.getCurrentInstance();
+      if (value && !sourceMode) previousDisableSaving = instance._disableSaving;
+      instance._disableSaving = value || previousDisableSaving;
+      sourceMode = value;
+      removeMarkdownToggle?.setMode(value);
+      const height =
+        frame.document.querySelector(".toolbar")?.getBoundingClientRect()
+          .height || 40;
+      element.parentElement?.style.setProperty(
+        "--knowledge-base-toolbar-height",
+        `${height}px`,
+      );
+    },
     async setReadOnly(value) {
       if (readOnly === value) return;
       await flush();
@@ -194,6 +235,9 @@ async function create(
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
+      // A source-mode view must not flush its hidden rich-text document on teardown.
+      if (!sourceMode)
+        element.getCurrentInstance()._disableSaving = previousDisableSaving;
       detach();
       Zotero.Notifier.unregisterObserver(observerID);
       element.destroy();
