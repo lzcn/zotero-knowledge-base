@@ -264,9 +264,9 @@ editor-key-auto = 自动生成
 
 editor-parent-none = 无上级
 
-editor-change-source = 修改来源
+editor-change-source = 修改来源…
 
-editor-change-parent = 修改上级
+editor-change-parent = 修改上级…
 
 editor-key-invalid = Key 不能含空格、方括号、|，或以 @ 开头。
 

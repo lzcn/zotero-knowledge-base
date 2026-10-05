@@ -71,11 +71,9 @@ type="text/css"?>
           <html:button id="knowledge-base-src-pick" />
           <html:button id="knowledge-base-parent-change" />
           <html:button id="knowledge-base-kind-convert" />
+          <html:hr />
           <html:button id="knowledge-base-open-window" hidden="hidden" />
-          <toolbarbutton
-            id="knowledge-base-editor-graph"
-            class="kb-native-tool"
-          />
+          <html:button id="knowledge-base-editor-graph" />
         </html:div>
       </html:details>
     </html:div>
@@ -144,23 +142,28 @@ type="text/css"?>
         />
         <note-editor id="knowledge-base-rich-frame" flex="1" hidden="hidden" />
       </html:div>
-      <html:details id="knowledge-base-editor-relations">
-        <html:summary id="knowledge-base-editor-relations-summary" />
-        <html:div class="editor-connections">
-          <html:details open="open">
-            <html:summary id="knowledge-base-editor-children-label" />
-            <html:div id="knowledge-base-editor-family" class="relation-list" />
-          </html:details>
-          <html:details open="open">
-            <html:summary id="knowledge-base-editor-outgoing-label" />
-            <html:ul id="knowledge-base-editor-outgoing" class="refs" />
-          </html:details>
-          <html:details open="open">
-            <html:summary id="knowledge-base-editor-backlinks-label" />
-            <html:ul id="knowledge-base-editor-backlinks" class="refs" />
-          </html:details>
-        </html:div>
-      </html:details>
+      <html:section id="knowledge-base-editor-relations">
+        <html:nav class="connection-navigation">
+          <html:button id="knowledge-base-editor-children-label" />
+          <html:button id="knowledge-base-editor-outgoing-label" />
+          <html:button id="knowledge-base-editor-backlinks-label" />
+        </html:nav>
+        <html:div
+          id="knowledge-base-editor-family"
+          class="relation-list"
+          hidden="hidden"
+        />
+        <html:ul
+          id="knowledge-base-editor-outgoing"
+          class="refs"
+          hidden="hidden"
+        />
+        <html:ul
+          id="knowledge-base-editor-backlinks"
+          class="refs"
+          hidden="hidden"
+        />
+      </html:section>
     </html:div>
     <html:footer id="knowledge-base-editor-footer">
       <html:span

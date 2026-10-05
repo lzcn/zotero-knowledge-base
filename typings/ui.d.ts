@@ -131,8 +131,7 @@ export interface EditorElements {
   "knowledge-base-editor-workspace": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-body": import("../src/ui/markdown-source").MarkdownSource;
   "knowledge-base-editor-preview": HTMLElementTagNameMap["div"];
-  "knowledge-base-editor-relations-summary": HTMLElementTagNameMap["summary"];
-  "knowledge-base-editor-relations": HTMLElementTagNameMap["aside"];
+  "knowledge-base-editor-relations": HTMLElement;
   "knowledge-base-editor-graph": HTMLElementTagNameMap["button"];
   "knowledge-base-editor-outgoing-label": HTMLElementTagNameMap["html"];
   "knowledge-base-editor-outgoing": HTMLElementTagNameMap["ul"];

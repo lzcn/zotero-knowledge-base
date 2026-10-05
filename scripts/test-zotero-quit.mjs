@@ -578,6 +578,11 @@ function runQuitTest() {
           await new Promise(resolve => setTimeout(resolve,50));
         }
         if (inline.knowledgeBaseCardId === unsourced.id || inline.document.getElementById("knowledge-base-editor-title").value !== "Workbench typing fixture") throw new Error("New Note kept the old document: " + JSON.stringify({url:inline.location.href, args:inline.eval("args"), id:inline.knowledgeBaseCardId}));
+        const emptyConnections = inline.document.getElementById("knowledge-base-editor-relations");
+        const emptyButtons = [...emptyConnections.querySelectorAll("nav button")];
+        if (emptyConnections.hidden || emptyButtons.length !== 3 || emptyButtons.some(button => !button.disabled || !button.textContent.endsWith("0"))) throw new Error("Zero-count connections disappeared from the workbench");
+        const emptyBounds = emptyConnections.getBoundingClientRect();
+        if (emptyBounds.height < 20 || emptyBounds.top < 0 || emptyBounds.bottom > inline.innerHeight) throw new Error("Connection navigation is outside the workbench viewport");
         await inline.setEditorMode("source");
         const inlineBody = inline.document.getElementById("knowledge-base-editor-body");
         inlineBody.value = "# Workbench typing fixture\\n\\nTyped in the workbench.";
@@ -586,6 +591,39 @@ function runQuitTest() {
         const inlineID = inline.knowledgeBaseCardId;
         if (inlineID === unsourced.id) throw new Error("New Note reused an existing ID");
         if ((await kb.api.getZettel(inlineID)).body !== "Typed in the workbench.") throw new Error("Workbench saved the wrong content");
+        const connectionChildID = await kb.api.saveZettel({title:"A child note with a full title that remains readable across the available editor width", body:"[[" + inlineID + "]]", parentId:inlineID});
+        const childNav = inline.document.getElementById("knowledge-base-editor-children-label");
+        const backlinkNav = inline.document.getElementById("knowledge-base-editor-backlinks-label");
+        for (let n=0; n<100 && (childNav.disabled || backlinkNav.disabled); n++) await new Promise(resolve=>setTimeout(resolve,50));
+        if (childNav.disabled || backlinkNav.disabled || !childNav.textContent.endsWith("1") || !backlinkNav.textContent.endsWith("1")) throw new Error("Children and backlinks did not update in the workbench");
+        childNav.click();
+        const childList = inline.document.getElementById("knowledge-base-editor-family");
+        if (childList.hidden || !inline.document.getElementById("knowledge-base-editor-backlinks").hidden || childNav.getAttribute("aria-expanded") !== "true") throw new Error("Connection navigation did not select one list");
+        backlinkNav.click();
+        if (!childList.hidden || inline.document.getElementById("knowledge-base-editor-backlinks").hidden) throw new Error("Connection categories stacked their lists");
+        const inlineMore = inline.document.getElementById("knowledge-base-editor-more");
+        inlineMore.open = true;
+        const moreRows = [...inlineMore.querySelectorAll(".editor-more-menu > button:not([hidden])")];
+        for (const button of moreRows) {
+          const bounds = button.getBoundingClientRect();
+          if (bounds.width < 180 || bounds.height < 24 || bounds.height > 40 || inline.getComputedStyle(button).whiteSpace !== "nowrap") throw new Error("More menu has a squeezed or wrapped row: " + button.id + ": " + JSON.stringify({width:bounds.width,height:bounds.height}));
+        }
+        if (metadataShots) {
+          const image = await main.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,"white");
+          const canvas = main.document.createElementNS("http://www.w3.org/1999/xhtml","canvas");
+          canvas.width=image.width;canvas.height=image.height;canvas.getContext("2d").drawImage(image,0,0);image.close();
+          const blob = await new Promise(resolve=>canvas.toBlob(resolve));
+          await IOUtils.write(PathUtils.join(metadataShots,"connections-menu.png"),new Uint8Array(await blob.arrayBuffer()));
+        }
+        inlineMore.open = false;
+        childNav.click();
+        childList.querySelector("button").click();
+        for (let n=0; n<150; n++) {
+          const childEditor = workbench.document.getElementById("knowledge-base-workbench-editor").contentWindow;
+          if (childEditor.knowledgeBaseCardId === connectionChildID && childEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
+          await new Promise(resolve=>setTimeout(resolve,50));
+        }
+        if (workbench.document.getElementById("knowledge-base-workbench-editor").contentWindow.knowledgeBaseCardId !== connectionChildID) throw new Error("Clicking a child did not navigate within the Tab");
         workbench.ZoteroKnowledgeBase_selectZettel(unsourced.id);
         for (let n=0; n<150; n++) {
           inline = workbench.document.getElementById("knowledge-base-workbench-editor").contentWindow;
@@ -603,6 +641,7 @@ function runQuitTest() {
         main.Zotero_Tabs.close(main.Zotero_Tabs.selectedID);
         for (let n=0; n<100 && main.document.querySelector(".knowledge-base-workbench"); n++) await new Promise(resolve => setTimeout(resolve,25));
         if (main.document.querySelector(".knowledge-base-workbench")) throw new Error("Workbench did not close its embedded views");
+        await kb.api.deleteZettel(connectionChildID);
         await kb.api.deleteZettel(inlineID);
         const taggedCard = await kb.api.getZettel(unsourced.id);
         looseNote.addTag("Machine learning"); looseNote.addTag("中文 标签"); await looseNote.saveTx();
@@ -833,9 +872,7 @@ function runQuitTest() {
         graph.document.getElementById("graph-splitter").dispatchEvent(new graph.KeyboardEvent("keydown", {key: "ArrowLeft", bubbles: true}));
         if (kb.api.getPanelWidth("graph") !== 29 || transformBeforeResize !== graph.document.querySelector("#graph-svg > g")?.getAttribute("transform")) throw new Error("Graph resizing changed its viewport or failed to persist");
         const editorRelations = editor.document.getElementById("knowledge-base-editor-relations");
-        if (editorRelations.open || editorRelations.contains(editor.document.getElementById("knowledge-base-parent-display"))) throw new Error("Connections are expanded by default or duplicate Parent");
-        editorRelations.open = true;
-        const compactConnections = editorRelations.getBoundingClientRect().width >= 200 && editor.getComputedStyle(editor.document.getElementById("knowledge-base-editor-content")).flexDirection === "column" && editor.getComputedStyle(editorRelations.querySelector(".editor-connections")).flexDirection === "column" && !editorRelations.querySelector("section");
+        const compactConnections = editorRelations.getBoundingClientRect().width >= 200 && editor.getComputedStyle(editor.document.getElementById("knowledge-base-editor-content")).flexDirection === "column" && editorRelations.querySelectorAll("nav button").length === 3 && !editorRelations.querySelector("details") && !editorRelations.contains(editor.document.getElementById("knowledge-base-parent-display"));
         const sourceReference = editor.document.getElementById("knowledge-base-src-display").textContent;
         if (!sourceReference.includes("Smith") || !sourceReference.includes("2026") || !sourceReference.includes("Journal of Test Studies") || editor.document.getElementById("knowledge-base-parent-root")) throw new Error("Source/Parent metadata is not a concise reference");
         const systemDark = editor.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -1246,7 +1283,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; More menu pickers, vertical connections, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, full-title labels, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; single-row connection navigation with visible zero counts, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, full-title labels, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls; deleted-note recovery without replacement, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   passed = true;
 } finally {

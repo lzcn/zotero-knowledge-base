@@ -739,6 +739,7 @@ async function editor(args = {}, overrides = {}) {
       nativeHTML = await api.nativeNoteHTML(input.title, input.body);
       return { id: "20261001000001", updatedAt: 1, html: nativeHTML };
     },
+    openEditor: (options) => calls.open.push(options),
     openLink: async (href) => calls.open.push(href),
     openImage: (url) => calls.images.push(url),
     openGraph: (options) => calls.graphs.push(options),
@@ -824,6 +825,90 @@ async function editor(args = {}, overrides = {}) {
   };
 }
 const ed = await editor({ prefillTitle: "New concept" });
+check("Connection categories stay visible for a note with no links", () => {
+  assert.equal(ed.$("knowledge-base-editor-relations").hidden, false);
+  assert.equal(
+    ed.$("knowledge-base-editor-relations").querySelector("details"),
+    null,
+  );
+  const buttons = [
+    ...ed.$("knowledge-base-editor-relations").querySelectorAll("nav button"),
+  ];
+  assert.equal(buttons.length, 3);
+  assert.ok(
+    buttons.every(
+      (button) => button.disabled && button.textContent.endsWith("0"),
+    ),
+  );
+});
+const relationEditor = await editor(
+  { zettelId: "RELATION" },
+  {
+    getZettel: async (id) => ({
+      id,
+      title: id === "TARGET" ? "Linked idea" : "Relationship fixture",
+      body: "",
+      kind: "zettel",
+      updated_at: "2026-10-05",
+    }),
+    getFamily: async () => ({
+      parent: null,
+      children: [{ id: "CHILD", title: "Child idea" }],
+    }),
+    getBacklinks: async () => [
+      { sourceId: "INCOMING", sourceTitle: "Incoming idea", ref: "RELATION" },
+    ],
+    getDraftLinks: async () => [
+      { targetId: "TARGET", display: "Linked idea", ref: "TARGET" },
+    ],
+  },
+);
+check(
+  "One full-width connection list opens at a time and its entries navigate",
+  () => {
+    const children = relationEditor.$("knowledge-base-editor-children-label");
+    const backlinks = relationEditor.$("knowledge-base-editor-backlinks-label");
+    assert.equal(children.disabled, false);
+    assert.ok(children.textContent.endsWith("1"));
+    children.click();
+    assert.equal(children.getAttribute("aria-expanded"), "true");
+    assert.equal(
+      relationEditor.$("knowledge-base-editor-family").hidden,
+      false,
+    );
+    backlinks.click();
+    assert.equal(relationEditor.$("knowledge-base-editor-family").hidden, true);
+    assert.equal(
+      relationEditor.$("knowledge-base-editor-backlinks").hidden,
+      false,
+    );
+    relationEditor
+      .$("knowledge-base-editor-backlinks")
+      .querySelector("button")
+      .click();
+    assert.equal(relationEditor.calls.open.at(-1).zettelId, "INCOMING");
+    backlinks.click();
+    assert.equal(backlinks.getAttribute("aria-expanded"), "false");
+    assert.equal(
+      relationEditor.$("knowledge-base-editor-backlinks").hidden,
+      true,
+    );
+  },
+);
+check(
+  "More uses one consistent button style and closes after an action",
+  () => {
+    const more = relationEditor.win.document.getElementById(
+      "knowledge-base-editor-more",
+    );
+    more.open = true;
+    const graphButton = relationEditor.$("knowledge-base-editor-graph");
+    assert.equal(graphButton.namespaceURI, "http://www.w3.org/1999/xhtml");
+    graphButton.click();
+    assert.equal(more.open, false);
+    assert.equal(relationEditor.calls.graphs.at(-1).centerId, "RELATION");
+  },
+);
 check(
   "Native tags render as complete names, including spaces, without added hashes",
   () => {

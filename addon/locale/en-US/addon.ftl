@@ -290,9 +290,9 @@ editor-key-auto = Automatic
 
 editor-parent-none = No parent
 
-editor-change-source = Change source
+editor-change-source = Change Source…
 
-editor-change-parent = Change parent
+editor-change-parent = Change Parent…
 
 editor-key-invalid = Use a key without spaces, brackets, | or a leading @.
 

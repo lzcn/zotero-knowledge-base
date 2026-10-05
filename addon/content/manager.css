@@ -1613,8 +1613,7 @@ summary {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/trash.svg");
 }
 #knowledge-base-btn-graph,
-#knowledge-base-btn-local-graph,
-#knowledge-base-editor-graph {
+#knowledge-base-btn-local-graph {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
 }
 #graph-fit {
@@ -1807,10 +1806,6 @@ summary {
 }
 #knowledge-base-editor-toolbar {
   flex-wrap: wrap;
-}
-
-#knowledge-base-editor-relations:not([open]) {
-  overflow: hidden;
 }
 
 /* Connections stay compact so the writing surface keeps most of the window. */
@@ -2178,7 +2173,6 @@ summary {
 .metadata-value.placeholder {
   color: var(--muted);
 }
-#knowledge-base-src-pick,
 .metadata-change {
   flex: none;
   min-width: 28px;
@@ -2222,7 +2216,8 @@ summary {
   top: 100%;
   z-index: 40;
   padding: 5px;
-  min-width: 180px;
+  width: max-content;
+  min-width: 210px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -2232,26 +2227,32 @@ summary {
   gap: 2px;
 }
 .editor-more-menu > html|button,
+.editor-more-menu > #knowledge-base-src-pick,
 .editor-more-menu > #knowledge-base-editor-graph {
-  width: auto;
+  position: static;
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   height: auto;
-  padding: 6px 10px;
+  flex: none;
+  padding: 7px 10px;
   border: 0;
+  border-radius: 4px;
   background: transparent;
   text-align: left;
+  white-space: nowrap;
   font: inherit;
   color: var(--fg);
   cursor: pointer;
 }
-.editor-more-menu > :hover {
-  background: var(--surface);
+.editor-more-menu > html|button:hover,
+.editor-more-menu > html|button:focus-visible {
+  background: var(--hover);
 }
-.editor-more-menu .toolbarbutton-text {
-  display: block !important;
-}
-.editor-more-menu .toolbarbutton-icon {
-  display: none;
+.editor-more-menu > html|hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 4px 5px;
 }
 #knowledge-base-note-kind {
   max-width: 160px;
@@ -2375,31 +2376,39 @@ summary {
 #knowledge-base-editor-relations {
   flex: 0 0 auto;
   margin: 0 24px;
-  padding: 10px 0;
-  max-height: min(260px, 36vh);
-  overflow-y: auto;
+  padding: 8px 0;
+  max-height: none;
+  overflow: hidden;
   border-left: 0;
   border-top: 1px solid var(--border);
 }
-#knowledge-base-editor-relations:not([open]) {
-  flex: 0 0 auto;
-  max-height: none;
+.connection-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
 }
-#knowledge-base-editor-relations > summary {
+.connection-navigation > html|button {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 0;
   font-size: 12px;
-  padding: 2px 0;
+  color: var(--muted);
+  cursor: pointer;
 }
-#knowledge-base-editor-relations .editor-connections {
-  gap: 12px;
-  padding: 14px 0 4px;
+.connection-navigation > html|button.active,
+.connection-navigation > html|button:not([disabled]):hover {
+  color: var(--accent);
 }
-#knowledge-base-editor-relations details > summary {
-  font-size: 11px;
+.connection-navigation > html|button.active {
+  text-decoration: underline;
+  text-underline-offset: 5px;
 }
 #knowledge-base-editor-relations .relation-list,
 #knowledge-base-editor-relations .refs {
-  max-height: none;
-  overflow: visible;
+  max-height: min(220px, 30vh);
+  overflow-y: auto;
   margin: 6px 0 0;
 }
 #knowledge-base-editor-relations .relation-link {
@@ -2452,17 +2461,8 @@ summary {
 #knowledge-base-parent-picker {
   top: 100%;
 }
-#knowledge-base-editor-graph {
-  position: static;
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  flex-basis: 28px;
-  padding: 4px;
-}
 #knowledge-base-btn-graph,
-#knowledge-base-btn-local-graph,
-#knowledge-base-editor-graph {
+#knowledge-base-btn-local-graph {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/graph.svg");
 }
 

@@ -50,6 +50,13 @@ let linkRange = null;
 let previewTimer = null;
 let relationsTimer = null;
 let relationsVersion = 0;
+/** @type {string | null} */
+let activeRelation = null;
+const relationGroups = [
+  ["knowledge-base-editor-children-label", "knowledge-base-editor-family"],
+  ["knowledge-base-editor-outgoing-label", "knowledge-base-editor-outgoing"],
+  ["knowledge-base-editor-backlinks-label", "knowledge-base-editor-backlinks"],
+];
 let unsubscribe = null;
 let unsubscribeSourceStyle = null;
 let sourceRenderVersion = 0;
@@ -342,16 +349,7 @@ function applyLocale() {
     "label",
     api.loc("editor-image"),
   );
-  $("knowledge-base-editor-relations-summary").textContent =
-    api.loc("editor-relations");
-  $("knowledge-base-editor-graph").setAttribute(
-    "label",
-    api.loc("graph-local-one"),
-  );
-  $("knowledge-base-editor-graph").setAttribute(
-    "tooltiptext",
-    api.loc("graph-local-one"),
-  );
+  $("knowledge-base-editor-graph").textContent = api.loc("graph-local-one");
   $("knowledge-base-editor-outgoing-label").textContent =
     api.loc("manager-outgoing");
   $("knowledge-base-editor-backlinks-label").textContent =
@@ -373,6 +371,16 @@ function closeEditor() {
 }
 
 function bindEvents() {
+  for (const [buttonID, listID] of relationGroups) {
+    const button = document.getElementById(buttonID);
+    button.setAttribute("aria-controls", listID);
+    button.setAttribute("aria-expanded", "false");
+    button.addEventListener("click", () => {
+      activeRelation = activeRelation === listID ? null : listID;
+      updateRelationView();
+    });
+  }
+
   document
     .getElementById("knowledge-base-open-window")
     .addEventListener("click", () =>
@@ -706,7 +714,7 @@ function bindEvents() {
         insertText(`![${markdownLabel(image.name)}](${image.url})`, range);
     });
   });
-  $("knowledge-base-editor-graph").addEventListener("command", () =>
+  $("knowledge-base-editor-graph").addEventListener("click", () =>
     api.openGraph({ centerId: zettelId || undefined }),
   );
   $("knowledge-base-link-search").addEventListener("keydown", (ev) => {
@@ -1172,7 +1180,7 @@ async function refreshRelations() {
     $("knowledge-base-editor-family").append(button);
   }
   $("knowledge-base-editor-children-label").textContent =
-    `${api.loc("children")} · ${family.children.length}`;
+    `${api.loc("children")} ${family.children.length}`;
   updateNoteIdentity(note);
   const renderList = (id, links, inbound) => {
     const list = $(id);
@@ -1207,20 +1215,29 @@ async function refreshRelations() {
     }
   };
   $("knowledge-base-editor-outgoing-label").textContent =
-    `${api.loc("manager-outgoing")} · ${outgoing.length}`;
+    `${api.loc("manager-outgoing")} ${outgoing.length}`;
   $("knowledge-base-editor-backlinks-label").textContent =
-    `${api.loc("manager-backlinks")} · ${backlinks.length}`;
-  const relationCount =
-    family.children.length + outgoing.length + backlinks.length;
-  $("knowledge-base-editor-relations-summary").textContent =
-    `${api.loc("editor-relations")} · ${relationCount}`;
-  $("knowledge-base-editor-relations").hidden = !relationCount;
-  $("knowledge-base-editor-family").parentElement.hidden =
-    !family.children.length;
-  $("knowledge-base-editor-outgoing").parentElement.hidden = !outgoing.length;
-  $("knowledge-base-editor-backlinks").parentElement.hidden = !backlinks.length;
+    `${api.loc("manager-backlinks")} ${backlinks.length}`;
   renderList("knowledge-base-editor-outgoing", outgoing, false);
   renderList("knowledge-base-editor-backlinks", backlinks, true);
+  for (const [buttonID, listID] of relationGroups) {
+    const count = document.getElementById(listID).children.length;
+    /** @type {HTMLButtonElement} */ (
+      document.getElementById(buttonID)
+    ).disabled = !count;
+    if (!count && activeRelation === listID) activeRelation = null;
+  }
+  updateRelationView();
+}
+
+function updateRelationView() {
+  for (const [buttonID, listID] of relationGroups) {
+    const expanded = activeRelation === listID;
+    const button = document.getElementById(buttonID);
+    button.setAttribute("aria-expanded", String(expanded));
+    button.classList.toggle("active", expanded);
+    document.getElementById(listID).hidden = !expanded;
+  }
 }
 
 function insertText(text, range = null) {
