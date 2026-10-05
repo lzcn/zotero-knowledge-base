@@ -23,6 +23,8 @@ export const requiredFiles = [
   "content/scripts/knowledge-base.js",
   "content/graph.js",
   "content/editor.js",
+  "content/preferences.xhtml",
+  "content/preferences.js",
   "content/editor-formatting.js",
   "content/native-editor.js",
   "content/markdown-source.js",

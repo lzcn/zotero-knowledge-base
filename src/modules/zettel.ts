@@ -11,7 +11,7 @@ import {
   type ZettelRow,
 } from "./db";
 import { saveParent, removeParent } from "./hierarchy";
-import { parseCardLinks, parseTags } from "./markdown";
+import { parseCardLinks } from "./markdown";
 import { notifyDataChange } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
 import { getNoteReferences } from "./note-references";
@@ -513,12 +513,6 @@ export async function saveEditorCard(
         [customKey, id],
       );
     await saveParent(id, input.parentId);
-    await exec("DELETE FROM tags WHERE zettel_id = ?", [id]);
-    for (const tag of parseTags(`${title}\n${body}`))
-      await exec("INSERT OR IGNORE INTO tags (zettel_id, tag) VALUES (?, ?)", [
-        id,
-        tag,
-      ]);
     await reindexLinks(id, body);
     await resolveUnresolvedLinks();
     await beforeCommit?.();

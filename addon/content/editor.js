@@ -1,4 +1,4 @@
-/* global Zotero */
+/* global Zotero, URLSearchParams */
 "use strict";
 
 const api = /** @type {import("../../src/modules/api").KnowledgeBaseAPI} */ (
@@ -6,7 +6,10 @@ const api = /** @type {import("../../src/modules/api").KnowledgeBaseAPI} */ (
 );
 
 const args = /** @type {import("../../src/modules/api").EditorArgs} */ (
-  window.arguments[0] || {}
+  window.arguments?.[0] ||
+    api.getViewArguments(
+      new URLSearchParams(window.location.search).get("context"),
+    )
 );
 const imageDraftId =
   args.imageDraftId || `editor-${Date.now()}-${Math.random()}`;
@@ -48,6 +51,8 @@ let previewTimer = null;
 let relationsTimer = null;
 let relationsVersion = 0;
 let unsubscribe = null;
+let unsubscribeSourceStyle = null;
+let sourceRenderVersion = 0;
 /** @type {"visual" | "source"} */
 let editorMode = "source";
 let modeVersion = 0;
@@ -195,11 +200,16 @@ async function load() {
   await refreshHealth();
   await setEditorMode("visual", false);
   await refreshParentItem();
+  await refreshNoteTags();
   unsubscribe = api.onDataChange(() => {
     if (editorMode !== "visual") updatePreview();
     run(refreshRelations);
     run(refreshHealth);
+    run(refreshNoteTags);
   });
+  unsubscribeSourceStyle = api.onSourceStyleChange(() =>
+    run(refreshSourceDisplay),
+  );
 }
 
 function updateNoteIdentity(note = null) {
@@ -237,6 +247,16 @@ function updateNoteIdentity(note = null) {
   reference.title = api.loc("note-reference-copy");
   reference.disabled = !zettelId;
   reference.onclick = () => api.copyNoteReference(note?.reference || zettelId);
+  const convert = /** @type {HTMLButtonElement} */ (
+    document.getElementById("knowledge-base-kind-convert")
+  );
+  convert.hidden = noteKind === "literature" || !zettelId;
+  convert.disabled = recoveryPending || libraryReadOnly;
+  convert.textContent = api.loc(
+    noteKind === "thinking"
+      ? "editor-convert-zettel"
+      : "editor-convert-thinking",
+  );
 }
 
 function closeParentPicker() {
@@ -263,20 +283,25 @@ function applyLocale() {
   $("knowledge-base-kind-label").textContent = api.loc("note-kind");
   $("knowledge-base-key-label").textContent = api.loc("editor-key");
   $("knowledge-base-editor-key").placeholder = api.loc("editor-key-auto");
-  const editIcon =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3a2.1 2.1 0 0 1 3 3L7 18l-4 1 1-4Z"/></svg>';
   for (const [id, key] of [
     ["knowledge-base-src-pick", "editor-change-source"],
     ["knowledge-base-parent-change", "editor-change-parent"],
   ]) {
     const button = document.getElementById(id);
-    button.innerHTML = editIcon;
+    button.textContent = api.loc(key);
     button.title = api.loc(key);
     button.setAttribute("aria-label", api.loc(key));
   }
+  document
+    .getElementById("knowledge-base-editor-more-label")
+    .setAttribute("aria-label", api.loc("editor-more"));
   document.title = zettelId
     ? api.loc("editor-title-edit")
     : api.loc("editor-title-new");
+  const openWindow = document.getElementById("knowledge-base-open-window");
+  openWindow.hidden = !args.embedded;
+  openWindow.textContent = api.loc("editor-open-window");
+  if (args.embedded) $("knowledge-base-editor-cancel").hidden = true;
   $("knowledge-base-src-label").textContent = api.loc("editor-source-label");
   $("knowledge-base-src-none").textContent = api.loc("editor-src-none");
 
@@ -337,7 +362,50 @@ function applyLocale() {
   );
 }
 
+function navigateNote(id) {
+  if (args.embedded) api.openManager({ selectId: id });
+  else api.openEditor({ zettelId: id, window: true });
+}
+
+function closeEditor() {
+  if (args.embedded) args.onClose?.();
+  else window.close();
+}
+
 function bindEvents() {
+  document
+    .getElementById("knowledge-base-open-window")
+    .addEventListener("click", () =>
+      run(async () => {
+        if (await save(false)) api.openEditor({ zettelId, window: true });
+      }),
+    );
+  const more = /** @type {HTMLDetailsElement} */ (
+    document.getElementById("knowledge-base-editor-more")
+  );
+  more.addEventListener("click", (event) => {
+    if (/** @type {Element} */ (event.target).closest("button, toolbarbutton"))
+      more.open = false;
+  });
+  document.addEventListener("click", (event) => {
+    if (!more.contains(/** @type {Node} */ (event.target))) more.open = false;
+  });
+  more.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      more.open = false;
+      document.getElementById("knowledge-base-editor-more-label").focus();
+    }
+  });
+  document
+    .getElementById("knowledge-base-kind-convert")
+    .addEventListener("click", () => {
+      if (noteKind === "literature" || recoveryPending || libraryReadOnly)
+        return;
+      noteKind = noteKind === "thinking" ? "zettel" : "thinking";
+      if (noteKind !== "thinking") customKey = null;
+      updateNoteIdentity();
+      setDirty();
+    });
   document
     .getElementById("knowledge-base-editor-format")
     .addEventListener("command", () =>
@@ -408,8 +476,8 @@ function bindEvents() {
           true;
         if (await save(false)) {
           allowClose = true;
-          window.close();
-          api.openEditor({ zettelId });
+          closeEditor();
+          api.openEditor({ zettelId, window: !args.embedded });
         }
       }),
     );
@@ -426,7 +494,10 @@ function bindEvents() {
   $("knowledge-base-command-menu").addEventListener("keydown", commandKeydown);
   document.addEventListener("click", (ev) => {
     const target = /** @type {Element} */ (ev.target);
-    if (!target.closest(".parent-control")) {
+    if (
+      !target.closest(".parent-control") &&
+      !$("knowledge-base-parent-change").contains(target)
+    ) {
       closeParentPicker();
     }
     if (
@@ -462,7 +533,7 @@ function bindEvents() {
     }
   });
   $("knowledge-base-parent-display").addEventListener("click", () => {
-    if (parentId) api.openEditor({ zettelId: parentId });
+    if (parentId) navigateNote(parentId);
     else toggleParentPicker();
   });
   $("knowledge-base-parent-change").addEventListener(
@@ -540,10 +611,6 @@ function bindEvents() {
   $("knowledge-base-src-pick").addEventListener("click", () =>
     toggleSourceDrop(),
   );
-  $("knowledge-base-src-display").addEventListener("click", () => {
-    if (source && !source.missing)
-      run(() => api.selectItem(source.key, source.libraryID));
-  });
   $("knowledge-base-src-none").addEventListener("click", () => {
     setSource(null, true);
     $("knowledge-base-src-drop").hidden = true;
@@ -811,22 +878,40 @@ async function useSelectedSource() {
 
 function setSource(s, markDirty = false) {
   source = s;
-  const display = $("knowledge-base-src-display");
-  if (s) {
-    display.textContent = [s.creatorYear, s.title, s.publication]
-      .filter(Boolean)
-      .join(". ");
-    display.classList.remove("placeholder");
-  } else {
-    display.textContent = api.loc("editor-src-none");
-    display.classList.add("placeholder");
-  }
+  $("knowledge-base-src-display")._sourceRender = null;
+  $("knowledge-base-src-display").textContent =
+    s?.title || api.loc("editor-src-none");
+  run(refreshSourceDisplay);
   $("knowledge-base-src-insert").disabled = !s || !!s.missing;
 
-  display.disabled = !s || !!s.missing;
-  display.title = display.textContent;
   if (markDirty) setDirty();
   if (loaded) run(refreshParentItem);
+}
+
+async function refreshSourceDisplay() {
+  const version = ++sourceRenderVersion;
+  const display = $("knowledge-base-src-display");
+  const current = source;
+  display._sourceRender = null;
+  display.onclick = null;
+  display.onkeydown = null;
+  display.classList.toggle("placeholder", !current || !!current.missing);
+  if (!current || current.missing) {
+    display.textContent = current?.title || api.loc("editor-src-none");
+    display.removeAttribute("role");
+    display.removeAttribute("tabindex");
+    display.title = "";
+    return;
+  }
+  try {
+    await window.ZoteroKnowledgeBaseMarkdown.source(display, current, api);
+  } catch (error) {
+    if (version !== sourceRenderVersion || disposed) return;
+    setStatus(
+      api.loc("editor-source-format-failed") + String(error.message || error),
+    );
+    Zotero.logError(error);
+  }
 }
 
 /* ---------------- Markdown editing and card links ---------------- */
@@ -1083,9 +1168,7 @@ async function refreshRelations() {
       child.title,
       child.reference,
     );
-    button.addEventListener("click", () =>
-      api.openEditor({ zettelId: child.id }),
-    );
+    button.addEventListener("click", () => navigateNote(child.id));
     $("knowledge-base-editor-family").append(button);
   }
   $("knowledge-base-editor-children-label").textContent =
@@ -1117,7 +1200,7 @@ async function refreshRelations() {
       row.classList.toggle("unresolved", !targetId);
       const open = () =>
         targetId
-          ? api.openEditor({ zettelId: targetId })
+          ? navigateNote(targetId)
           : api.openEditor({ prefillTitle: link.ref });
       button.addEventListener("click", open);
       list.appendChild(row);
@@ -1385,7 +1468,7 @@ async function save(closeAfter) {
   if (saving) {
     await saving;
     if (dirty) return save(closeAfter);
-    if (closeAfter) window.close();
+    if (closeAfter) closeEditor();
     return true;
   }
   if (editorMode === "visual" && richEditor) await richEditor.flush();
@@ -1399,7 +1482,7 @@ async function save(closeAfter) {
       dirty = false;
       $("knowledge-base-editor-save").classList.remove("dirty");
       setStatus("");
-      if (closeAfter) window.close();
+      if (closeAfter) closeEditor();
       return true;
     } catch (error) {
       reportSaveError(error);
@@ -1448,7 +1531,7 @@ async function save(closeAfter) {
   saving = null;
   if (success && closeAfter && !disposed) {
     if (dirty) return save(true);
-    window.close();
+    closeEditor();
   }
   return success;
 }
@@ -1488,7 +1571,7 @@ async function closeIfClean() {
       await persistDraft();
     }
     allowClose = true;
-    window.close();
+    closeEditor();
   } finally {
     closing = false;
   }
@@ -1525,6 +1608,7 @@ window.addEventListener("unload", () => {
     console.error(error);
   }
   unsubscribe?.();
+  unsubscribeSourceStyle?.();
   clearTimeout(previewTimer);
   clearTimeout(relationsTimer);
   clearTimeout(searchTimer);
@@ -1735,6 +1819,16 @@ function commandKeydown(ev) {
   return true;
 }
 
+async function refreshNoteTags() {
+  const noteID = nativeNoteID;
+  const tags = await api.getNoteTags(noteID);
+  if (disposed || noteID !== nativeNoteID) return;
+  window.ZoteroKnowledgeBaseMarkdown.tags(
+    document.getElementById("knowledge-base-note-tags"),
+    tags,
+  );
+}
+
 async function refreshParentItem() {
   const key = source?.key;
   const library = source?.libraryID;
@@ -1747,17 +1841,8 @@ async function refreshParentItem() {
     updateNoteIdentity(note);
   }
   if (summary) {
-    $("knowledge-base-src-display").disabled = false;
-    const display = $("knowledge-base-src-display");
-    display.textContent = [
-      summary.creatorYear,
-      summary.title,
-      summary.publication,
-    ]
-      .filter(Boolean)
-      .join(". ");
-    display.title = display.textContent;
-    display.classList.remove("placeholder");
+    source = summary;
+    await refreshSourceDisplay();
   }
 }
 

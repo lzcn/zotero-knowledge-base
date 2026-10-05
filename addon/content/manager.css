@@ -2,7 +2,7 @@
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --bg: #fff;
   --fg: #303035;
   --surface-subtle: #f7f7f8;
@@ -13,6 +13,20 @@
   --muted: #6e6e73;
   --source: #268572;
   --danger: #bc404b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202024;
+    --fg: #ececf0;
+    --surface-subtle: #25252a;
+    --border: #3a3a40;
+    --hover: #303036;
+    --active: #263956;
+    --accent: #6da6ff;
+    --muted: #b0b0b8;
+    --source: #66bdae;
+    --danger: #ed8f8f;
+  }
 }
 
 html {
@@ -124,6 +138,16 @@ html|button.danger {
   overflow-y: auto;
   padding: 14px 18px;
   box-sizing: border-box;
+}
+.workbench #knowledge-base-detail-pane {
+  padding: 0;
+}
+#knowledge-base-workbench-editor {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
 }
 
 /* ---------- list ---------- */
@@ -1349,10 +1373,12 @@ summary {
   margin: 2px 0;
   padding: 11px 12px;
   border: 0;
-  border-radius: 7px;
+  border-left: 2px solid transparent;
+  border-radius: 3px;
 }
 #knowledge-base-list .zettel-row.active {
-  background: var(--active);
+  background: var(--hover);
+  border-left-color: var(--accent);
 }
 #knowledge-base-list .zettel-row.active .title {
   color: var(--accent);
@@ -1425,14 +1451,13 @@ summary {
 }
 #knowledge-base-detail-source {
   margin-bottom: 10px;
-  padding: 9px 12px;
-  background: var(--surface-subtle);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
 }
 .source-item-label {
-  display: block;
-  margin-bottom: 5px;
+  flex: 0 0 52px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 500;
@@ -1448,9 +1473,7 @@ summary {
   fill: currentColor;
 }
 #knowledge-base-detail-source .source-link {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
+  display: block;
   background: transparent;
   padding: 0;
   border: 0;
@@ -2067,12 +2090,12 @@ summary {
   background: transparent;
   padding: 0;
   min-width: 0;
-  color: var(--accent);
+  color: var(--fg);
   text-align: left;
   font: inherit;
   cursor: pointer;
 }
-#knowledge-base-editor-toolbar .source-link:disabled {
+#knowledge-base-editor-toolbar > #knowledge-base-src-display.placeholder {
   color: var(--muted);
   cursor: default;
 }
@@ -2086,10 +2109,45 @@ summary {
 .metadata-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   padding: 6px 24px;
   margin: 0;
-  min-height: 28px;
+  min-height: 20px;
+}
+.bibliography-reference {
+  cursor: pointer;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.bibliography-reference .csl-bib-body,
+.bibliography-reference .csl-entry {
+  margin: 0;
+  padding: 0;
+}
+.bibliography-reference .csl-left-margin {
+  display: inline;
+  margin-right: 6px;
+}
+.bibliography-reference .csl-right-inline {
+  display: inline;
+}
+.bibliography-reference a {
+  color: var(--accent);
+}
+.bibliography-reference:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+#knowledge-base-src-label,
+#knowledge-base-parent-label {
+  flex: 0 0 52px;
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 12px;
 }
 .metadata-row > label {
   font-weight: 600;
@@ -2148,6 +2206,53 @@ summary {
   color: var(--muted);
   font-size: 12px;
 }
+.editor-more {
+  position: relative;
+}
+.editor-more > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  font-size: 20px;
+  line-height: 1;
+}
+.editor-more-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 40;
+  padding: 5px;
+  min-width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  box-shadow: 0 4px 12px #0001;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.editor-more-menu > html|button,
+.editor-more-menu > #knowledge-base-editor-graph {
+  width: auto;
+  min-width: 0;
+  height: auto;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  cursor: pointer;
+}
+.editor-more-menu > :hover {
+  background: var(--surface);
+}
+.editor-more-menu .toolbarbutton-text {
+  display: block !important;
+}
+.editor-more-menu .toolbarbutton-icon {
+  display: none;
+}
 #knowledge-base-note-kind {
   max-width: 160px;
   margin-right: 12px;
@@ -2157,8 +2262,20 @@ summary {
   flex: 1;
   max-width: 260px;
   min-width: 100px;
-  padding: 3px 6px;
+  padding: 3px 0;
   font-size: 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+}
+#knowledge-base-editor-key:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+#knowledge-base-editor-key:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 #knowledge-base-parent-picker {
   position: absolute;
@@ -2381,4 +2498,22 @@ summary {
 #knowledge-base-note-kind-text {
   font-size: 12px;
   color: var(--muted);
+}
+
+.note-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#knowledge-base-note-tags {
+  padding: 4px 24px 8px;
+}
+.note-tag {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }

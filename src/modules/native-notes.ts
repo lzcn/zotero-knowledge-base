@@ -2,7 +2,7 @@ import { exec, getAll, getOne, transaction, type NoteKind } from "./db";
 import { notifyDataChange } from "./events";
 import { getFamily } from "./hierarchy";
 import { richTextToMarkdown } from "./rich-text";
-import { renderMarkdown, parseTags } from "./markdown";
+import { renderMarkdown } from "./markdown";
 import { getCitation, prepareCitations, resolveCitation } from "./references";
 import { resolveAssetURL } from "./assets";
 import { getCitationKey } from "./zotero";
@@ -474,6 +474,14 @@ export async function restoreNote(id: string): Promise<void> {
   notifyDataChange();
 }
 
+export async function getNoteTags(noteID: number | null): Promise<string[]> {
+  if (!noteID) return [];
+  const note = await Zotero.Items.getAsync(noteID);
+  if (!note || !note.isNote() || note.isInTrash()) return [];
+  await Zotero.Items.loadDataTypes([note], ["tags"]);
+  return note.getTags().map(({ tag }) => tag);
+}
+
 async function mappedNote(id: string): Promise<Zotero.Item | null> {
   const row = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE card_id = ?",
@@ -692,13 +700,7 @@ export async function saveNativeCard(
       await Zotero.DB.executeTransaction(async () => {
         if (preparedHTML !== null && input.expectedNoteHTML !== note.getNote())
           throw new Error("CARD_CONFLICT: note changed");
-        await Zotero.Items.loadDataTypes([note], ["tags"]);
-        let changed = preparedHTML !== null && note.setNote(preparedHTML);
-        for (const tag of parseTags(`${projection.title}\n${projection.body}`))
-          if (!note.hasTag(tag)) {
-            note.addTag(tag);
-            changed = true;
-          }
+        const changed = preparedHTML !== null && note.setNote(preparedHTML);
         if (changed) await note.save();
       });
       await organizeNativeNote(
@@ -736,14 +738,6 @@ async function refreshNote(note: Zotero.Item): Promise<void> {
   if (!card) return;
   await prepareCitations(card.body);
   const projection = projectNativeNote(note.getNote());
-  await Zotero.Items.loadDataTypes([note], ["tags"]);
-  let tagsChanged = false;
-  for (const tag of parseTags(`${projection.title}\n${projection.body}`))
-    if (!note.hasTag(tag)) {
-      note.addTag(tag);
-      tagsChanged = true;
-    }
-  if (tagsChanged) await note.saveTx();
   if (card.title === projection.title && card.body === projection.body) return;
   await saveEditorCard({
     id: card.id,
@@ -788,12 +782,14 @@ export async function initNativeNotes(): Promise<void> {
       notify(event: string, _type: string, ids: number[] | string[]) {
         if (
           stopping ||
-          !["modify", "add", "delete", "trash", "restore"].includes(event)
+          !["modify", "add", "delete", "remove", "trash", "restore"].includes(
+            event,
+          )
         )
           return;
         previewImages.clear();
         notifyDataChange();
-        if (_type === "setting") return;
+        if (_type === "setting" || _type === "item-tag") return;
         const eligibleIDs = ids.filter((id) => !activeNotes.has(Number(id)));
         if (!eligibleIDs.length) return;
         pending = pending
@@ -809,7 +805,7 @@ export async function initNativeNotes(): Promise<void> {
         // Do not await another Zotero transaction from within its notifier.
       },
     },
-    ["item", "setting"],
+    ["item", "item-tag", "setting"],
     "knowledge-base-notes",
   );
   for (const row of await getAll<NoteMapping>("SELECT * FROM card_notes")) {

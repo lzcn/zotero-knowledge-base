@@ -150,11 +150,11 @@ $\href{javascript:alert(1)}{test}$ <img src=x onerror=alert(1)>`.replace(
 
 const sample =
   "# Idea\n\n**Strong** and *emphasis* and ~~removed~~\n\n- [x] Task\n\n> Quote\n\n```js\nconst x = 1;\n```\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\n[[中文概念|别名]] [stable](knowledge-base://card/20261001000000)\n\n![image](knowledge-base-asset:abc.png)\n\n[source](zotero://select/library/items/ABCD1234)\n\n<script>bad()</script><img src=x onerror=bad()><a href=javascript:bad()>bad</a>";
-assert.deepEqual(
-  markdown.parseTags(
-    "#tag-a #tag-b #中文 #area/topic #123 `#code` \\#escaped [url](https://example.com/#anchor)\n```\n#block\n```",
-  ),
-  ["tag-a", "tag-b", "中文", "area/topic"],
+assert.equal(
+  new JSDOM(
+    markdown.renderMarkdown("#tag-a #tag with spaces", htmlWindow),
+  ).window.document.body.textContent.trim(),
+  "#tag-a #tag with spaces",
 );
 
 const rendered = markdown.renderMarkdown(
@@ -678,6 +678,7 @@ async function editor(args = {}, overrides = {}) {
   const api = {
     getPanelWidth: () => 28,
     setPanelWidth: () => {},
+    getNoteTags: async () => [],
     getNoteHealth: async () => ({
       note: "available",
       source: "none",
@@ -724,6 +725,9 @@ async function editor(args = {}, overrides = {}) {
       })),
     getBacklinks: async () => [],
     onDataChange: () => () => {},
+    onSourceStyleChange: () => () => {},
+    getSourceBibliography: async () =>
+      '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
     searchItems: async () => sources,
     getSelectedSource: async () => sources[0],
     listZettels: async () => [{ id: "20261001000000", title: "Target card" }],
@@ -820,6 +824,28 @@ async function editor(args = {}, overrides = {}) {
   };
 }
 const ed = await editor({ prefillTitle: "New concept" });
+check(
+  "Native tags render as complete names, including spaces, without added hashes",
+  () => {
+    const container = ed.win.document.getElementById(
+      "knowledge-base-note-tags",
+    );
+    ed.win.ZoteroKnowledgeBaseMarkdown.tags(container, [
+      "Machine learning",
+      "中文 标签",
+      "#Existing tag",
+    ]);
+    assert.equal(container.hidden, false);
+    assert.deepEqual(
+      [...container.children].map((label) => label.textContent),
+      ["Machine learning", "中文 标签", "#Existing tag"],
+    );
+    ed.win.ZoteroKnowledgeBaseMarkdown.tags(container, []);
+    assert.equal(container.hidden, true);
+    assert.equal(container.children.length, 0);
+  },
+);
+
 check("Editor prefills concept titles in its real XML document", () =>
   assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
 );
@@ -833,6 +859,7 @@ const unavailableEditor = await editor(
       body: "Retained **content**",
       updated_at: 7,
     }),
+    getNoteTags: async () => [],
     getNoteHealth: async () => ({
       note: "missing",
       source: "none",
@@ -1164,7 +1191,7 @@ await chooseMode(ed, "visual");
 check(
   "The editor has a clickable source and Change without obsolete source actions",
   () => {
-    assert.equal(ed.$("knowledge-base-src-display").localName, "button");
+    assert.equal(ed.$("knowledge-base-src-display").localName, "div");
     assert.equal(
       ed.win.document.getElementById("knowledge-base-src-clear"),
       null,
@@ -1939,8 +1966,12 @@ let optionsChanged;
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
+      onSourceStyleChange: () => () => {},
+      getSourceBibliography: async () =>
+        '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
       getPanelWidth: () => 28,
       setPanelWidth: () => {},
+      getNoteTags: async () => [],
       getNoteHealth: async () => ({
         note: "available",
         source: "none",
@@ -2340,8 +2371,12 @@ managerWin.Zotero = {
   },
   ZoteroKnowledgeBase: {
     api: {
+      onSourceStyleChange: () => () => {},
+      getSourceBibliography: async () =>
+        '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
       getPanelWidth: () => 28,
       setPanelWidth: () => {},
+      getNoteTags: async () => [],
       getNoteHealth: async () => ({
         note: "available",
         source: "none",
@@ -2468,11 +2503,8 @@ check(
       box.querySelector(".source-item-label").textContent,
       "manager-source-item",
     );
-    assert.equal(
-      box.querySelector(".source-item-title").textContent,
-      "Linked Zotero item",
-    );
-    assert.ok(box.querySelector(".source-item-icon"));
+    assert.equal(box.querySelector("i").textContent, "Linked Zotero item");
+    assert.ok(box.querySelector(".csl-entry"));
     assert.deepEqual(managerCalls.sources, ["SRC00001", 1]);
   },
 );

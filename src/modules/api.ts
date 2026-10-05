@@ -23,6 +23,7 @@ import {
   isExternalNote,
   ensureLiteratureNote,
   getNoteHealth,
+  getNoteTags,
   restoreNote,
   getMarkdownSource,
   markdownNoteHTML,
@@ -31,6 +32,19 @@ import {
 import { richTextToMarkdown } from "./rich-text";
 import { getNoteReferences, withNoteReferences } from "./note-references";
 import { config } from "../../package.json";
+import {
+  openWorkbench,
+  mountEditor,
+  clearEditor,
+  getViewArguments,
+} from "./workbench";
+import {
+  getSourceBibliography,
+  getSourceStyle,
+  getSourceStyles,
+  setSourceStyle,
+  onSourceStyleChange,
+} from "./bibliography";
 import { getString } from "../utils/locale";
 import {
   cardRefFromURL,
@@ -94,6 +108,9 @@ const ANNOTATIONS_URL = `chrome://${config.addonRef}/content/annotations.xhtml`;
 export type HighlightWithCards = HighlightInfo & { cards: number };
 
 export interface EditorArgs {
+  window?: boolean;
+  embedded?: boolean;
+  onClose?: () => void;
   kind?: import("./db").NoteKind;
   zettelId?: string | null;
   draftId?: string;
@@ -107,6 +124,10 @@ export interface EditorArgs {
 }
 
 export interface ManagerArgs {
+  editor?: EditorArgs;
+  window?: boolean;
+  embedded?: boolean;
+  onClose?: () => void;
   /** card to select once the window is up */
   selectId?: string;
 }
@@ -126,6 +147,7 @@ const editorWindows = new Map<string, Window>();
 export const api = {
   ensureLiteratureNote,
   getNoteHealth,
+  getNoteTags,
   restoreNote,
   getMarkdownSource,
   markdownNoteHTML,
@@ -207,6 +229,14 @@ export const api = {
     Zotero.Utilities.Internal.copyTextToClipboard(`[[${reference}]]`);
   },
   onDataChange,
+  mountEditor,
+  clearEditor,
+  getViewArguments,
+  getSourceBibliography,
+  getSourceStyle,
+  getSourceStyles,
+  setSourceStyle,
+  onSourceStyleChange,
   getGraphOptions,
   setGraphOption,
   getPanelWidth,
@@ -395,6 +425,7 @@ export const api = {
   /* ---------------- windows ---------------- */
 
   openManager(args: ManagerArgs = {}): void {
+    if (!args.window) return openWorkbench(args);
     const existing = Services.wm.getMostRecentWindow(
       "knowledge-base:manager",
     ) as
@@ -415,6 +446,11 @@ export const api = {
   },
 
   openEditor(args: EditorArgs = {}): void {
+    if (!args.window)
+      return openWorkbench({
+        editor: args,
+        selectId: args.zettelId || undefined,
+      });
     const key = args.zettelId
       ? `note:${args.zettelId}`
       : args.draftId

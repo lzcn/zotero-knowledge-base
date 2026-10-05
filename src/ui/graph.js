@@ -263,7 +263,7 @@ function render() {
       titleChars.slice(0, 24).join("") + (titleChars.length > 24 ? "…" : "");
     group.appendChild(label);
     const title = svgElement("title");
-    title.textContent = `${node.title}\n${(node.tags || []).map((tag) => `#${tag}`).join(" ")}\n${node.snippet}`;
+    title.textContent = `${node.title}\n${(node.tags || []).join(" · ")}\n${node.snippet}`;
     group.appendChild(title);
     group.addEventListener("pointerenter", () => {
       hoveredId = node.id;
@@ -380,6 +380,10 @@ function select(id) {
   highlight();
   $("graph-selection").hidden = false;
   $("graph-node-title").textContent = node.title;
+  window.ZoteroKnowledgeBaseMarkdown.tags(
+    $("graph-node-tags"),
+    node.tags || [],
+  );
   $("graph-node-kind").textContent =
     node.kind === "card"
       ? api.loc("note-kind-" + (node.noteKind || "zettel"))
@@ -393,10 +397,23 @@ function select(id) {
     $("graph-node-snippet"),
     node.snippet,
   );
+  if (node.kind === "source" && node.itemKey) {
+    api
+      .getItemSummary(node.itemKey, node.libraryID)
+      .then((item) => {
+        if (item && selectedId === id && !window.closed)
+          return window.ZoteroKnowledgeBaseMarkdown.source(
+            $("graph-node-snippet"),
+            item,
+            api,
+          );
+      })
+      .catch((error) => window.Zotero.logError(error));
+  }
   api
     .prepareMarkdown(node.snippet)
     .then(() => {
-      if (!window.closed && selectedId === id)
+      if (!window.closed && selectedId === id && node.kind !== "source")
         window.ZoteroKnowledgeBaseMarkdown.render(
           $("graph-node-snippet"),
           node.snippet,

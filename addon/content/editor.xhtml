@@ -25,13 +25,11 @@ type="text/css"?>
   <script src="chrome://knowledge-base/content/editor.js" />
   <html:div id="knowledge-base-editor-root">
     <html:div id="knowledge-base-editor-toolbar">
-      <html:span class="source-item-icon" aria-hidden="true" />
       <html:span id="knowledge-base-src-label" class="lbl"></html:span>
-      <html:button
+      <html:div
         id="knowledge-base-src-display"
         class="source-link metadata-value"
-      ></html:button>
-      <html:button id="knowledge-base-src-pick" class="metadata-change" />
+      ></html:div>
     </html:div>
     <html:div id="knowledge-base-src-drop" hidden="hidden">
       <html:input id="knowledge-base-src-search" type="search" />
@@ -67,12 +65,23 @@ type="text/css"?>
       />
       <html:input id="knowledge-base-editor-key" type="text" hidden="hidden" />
       <html:div class="spacer" />
-      <toolbarbutton id="knowledge-base-editor-graph" class="kb-native-tool" />
+      <html:details id="knowledge-base-editor-more" class="editor-more">
+        <html:summary id="knowledge-base-editor-more-label">…</html:summary>
+        <html:div class="editor-more-menu">
+          <html:button id="knowledge-base-src-pick" />
+          <html:button id="knowledge-base-parent-change" />
+          <html:button id="knowledge-base-kind-convert" />
+          <html:button id="knowledge-base-open-window" hidden="hidden" />
+          <toolbarbutton
+            id="knowledge-base-editor-graph"
+            class="kb-native-tool"
+          />
+        </html:div>
+      </html:details>
     </html:div>
     <html:div class="parent-control metadata-row">
       <html:label id="knowledge-base-parent-label" />
       <html:button id="knowledge-base-parent-display" class="metadata-value" />
-      <html:button id="knowledge-base-parent-change" class="metadata-change" />
       <html:div id="knowledge-base-parent-picker" hidden="hidden">
         <html:input
           id="knowledge-base-parent-search"
@@ -87,6 +96,12 @@ type="text/css"?>
       </html:div>
     </html:div>
 
+    <html:div
+      id="knowledge-base-note-tags"
+      class="note-tags"
+      role="list"
+      hidden="hidden"
+    />
     <html:div id="knowledge-base-markdown-toolbar">
       <button
         id="knowledge-base-command-open"

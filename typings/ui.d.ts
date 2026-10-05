@@ -5,10 +5,14 @@ import type {
   AnnotationPickerArgs,
 } from "../src/modules/api";
 declare global {
+  interface HTMLElement {
+    _sourceRender?: object | null;
+  }
   namespace Zotero {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
   }
   interface Window {
+    KnowledgeBasePreferences: { start(doc: Document): Promise<void> };
     KnowledgeBaseMarkdownSource: {
       create(
         textarea: HTMLTextAreaElement,
@@ -46,6 +50,12 @@ declare global {
       ): void;
     };
     ZoteroKnowledgeBaseMarkdown: {
+      tags(container: HTMLElement, tags: string[]): void;
+      source(
+        container: HTMLElement,
+        item: import("../src/modules/zotero").ItemSummary,
+        api: KnowledgeBaseAPI,
+      ): Promise<void>;
       render(container: Element, body: string): void;
       identity(
         container: Element,
@@ -65,6 +75,7 @@ declare global {
       ): void;
     };
     ZoteroKnowledgeBase_selectZettel?: (id: string) => void;
+    ZoteroKnowledgeBase_editNote?: (args: EditorArgs) => void;
     ZoteroKnowledgeBase_showGraph?: (id?: string) => void;
   }
 }
@@ -95,7 +106,7 @@ export interface EditorElements {
   "knowledge-base-editor-root": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-toolbar": HTMLElementTagNameMap["div"];
   "knowledge-base-src-label": HTMLElementTagNameMap["span"];
-  "knowledge-base-src-display": HTMLElementTagNameMap["button"];
+  "knowledge-base-src-display": HTMLElementTagNameMap["div"];
   "knowledge-base-src-pick": HTMLElementTagNameMap["button"];
   "knowledge-base-src-jump": HTMLElementTagNameMap["button"];
   "knowledge-base-src-anno": HTMLElementTagNameMap["button"];
@@ -197,6 +208,7 @@ export interface AnnotationsElements {
 }
 
 export interface GraphElements {
+  "graph-node-tags": HTMLDivElement;
   "graph-display-menu": XULMenuPopupElement;
   "knowledge-base-graph": Element;
   "knowledge-base-graph-root": HTMLElementTagNameMap["div"];

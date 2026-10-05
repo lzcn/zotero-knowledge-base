@@ -3,6 +3,15 @@ startup-finish = 知识库已就绪
 startup-db-error = 知识库初始化失败，请通过 帮助→调试输出日志 查看详情
 
 menu-open-manager = 知识库
+pref-source-heading = 来源引用
+pref-source-style = 参考文献格式
+pref-source-help = 使用 Zotero 已安装的格式。可在设置 → 引用中添加或管理。
+source-style-missing = 参考文献格式不可用，请选择已安装的格式
+editor-source-format-failed = 来源格式生成失败：
+editor-more = 更多操作
+editor-open-window = 在独立窗口中打开
+editor-convert-zettel = 转为 Zettel
+editor-convert-thinking = 转为 Thinking
 personal-knowledge-title = 个人知识
 
 menu-new-zettel = 新建卡片

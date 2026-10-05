@@ -84,6 +84,7 @@ assert.deepEqual(
 for (const name of await readdir(join(addonDirectory, "content"))) {
   if (!name.endsWith(".xhtml")) continue;
   const text = await readFile(join(addonDirectory, "content", name), "utf8");
+  if (!/<window[\s>]/.test(text)) continue;
   assert.ok(
     text.includes(`manager.css?v=${styleVersion}`),
     `${name}: missing stylesheet cache key`,

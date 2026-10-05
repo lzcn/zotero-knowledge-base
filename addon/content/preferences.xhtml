@@ -1,0 +1,29 @@
+<vbox
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  onload="window.KnowledgeBasePreferences.start(document)"
+  onshowing="window.KnowledgeBasePreferences.start(document)"
+>
+  <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-pref-source-heading" />
+    <hbox align="center">
+      <label
+        control="knowledge-base-source-style"
+        data-l10n-id="knowledge-base-pref-source-style"
+      />
+      <menulist
+        native="true"
+        id="knowledge-base-source-style"
+        style="max-width: 32em; flex: 1"
+      >
+        <menupopup id="knowledge-base-source-styles" />
+      </menulist>
+    </hbox>
+    <description data-l10n-id="knowledge-base-pref-source-help" />
+    <description
+      id="knowledge-base-preferences-error"
+      hidden="true"
+      role="alert"
+    />
+  </vbox>
+</vbox>

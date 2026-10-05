@@ -135,20 +135,6 @@ export function parseCardLinks(body: string): CardLink[] {
   return [...links.values()];
 }
 
-/** Inline tags exclude code, escaped hashes and link destinations. */
-export function parseTags(body: string): string[] {
-  const tags = new Set<string>();
-  markdown.walkTokens(markdown.lexer(body), (token) => {
-    if (token.type !== "text" || token.tokens) return;
-    for (const match of token.raw.matchAll(
-      /(?:^|[\s(（])#([\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*)/gu,
-    )) {
-      if (/[\p{L}_-]/u.test(match[1])) tags.add(match[1]);
-    }
-  });
-  return [...tags];
-}
-
 export function parseCitationKeys(body: string): string[] {
   const keys = new Set<string>();
   markdown.walkTokens(markdown.lexer(body), (token) => {

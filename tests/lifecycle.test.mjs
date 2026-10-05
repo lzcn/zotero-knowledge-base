@@ -31,6 +31,8 @@ await build({
         if (state().fail === name) throw new Error(name + " failed");
         if (name === "initDB") await state().gate;
       };
+      export const stopWorkbenches = () => {};
+      export const closeWorkbenches = () => {};
       export const initLocale = () => {};
       export const getString = (key) => key;
       export const initDB = () => run("initDB");

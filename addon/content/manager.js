@@ -1,4 +1,4 @@
-/* global Zotero */
+/* global Zotero, URLSearchParams */
 "use strict";
 
 let zettels = [];
@@ -6,6 +6,8 @@ let selectedId = null;
 let searchTimer = null;
 let detailVersion = 0;
 let listVersion = 0;
+let navigationVersion = 0;
+let managerLoaded = false;
 const history = [];
 let historyIndex = -1;
 const scrollPositions = new Map();
@@ -18,7 +20,10 @@ const $ = (id) =>
   );
 
 const args = /** @type {import("../../src/modules/api").ManagerArgs} */ (
-  window.arguments[0] || {}
+  window.arguments?.[0] ||
+    window.Zotero.ZoteroKnowledgeBase.api.getViewArguments(
+      new URLSearchParams(window.location.search).get("context"),
+    )
 );
 
 /* resolved after include.js provides Zotero */
@@ -68,6 +73,10 @@ const load = wrap(async function () {
     )
   );
   applyLocale();
+  if (args.embedded) {
+    document.getElementById("knowledge-base-root").classList.add("workbench");
+    document.getElementById("knowledge-base-btn-edit").hidden = true;
+  }
   updateActions();
   bindEvents();
   window.KnowledgeBasePanels.attach(
@@ -84,15 +93,23 @@ const load = wrap(async function () {
     args.selectId && (await api.getZettel(args.selectId))
       ? args.selectId
       : null;
-  if (wanted) select(wanted);
+  managerLoaded = true;
+  if (args.embedded && args.editor) {
+    await showInlineEditor(args.editor);
+    if (args.editor.zettelId) select(args.editor.zettelId, true, true);
+  } else if (wanted) select(wanted);
   else if (zettels.length) select(zettels[0].id);
   const unsubscribe = api.onDataChange(() =>
     safeCall(async () => {
       await refresh();
-      if (selectedId) await renderDetail(selectedId);
+      if (selectedId && !args.embedded) await renderDetail(selectedId);
     }),
   );
   window.addEventListener("unload", unsubscribe, { once: true });
+  const unsubscribeStyle = api.onSourceStyleChange(() => {
+    if (selectedId && !args.embedded) safeCall(() => renderDetail(selectedId));
+  });
+  window.addEventListener("unload", unsubscribeStyle, { once: true });
 });
 
 /**
@@ -100,12 +117,34 @@ const load = wrap(async function () {
  * "open the card" does not raise a second manager window.
  */
 window.ZoteroKnowledgeBase_selectZettel = function (id) {
+  if (!managerLoaded) {
+    args.selectId = id;
+    return;
+  }
+  const version = ++navigationVersion;
   safeCall(async () => {
     $("knowledge-base-search").value = "";
     $("knowledge-base-entries").checked = false;
     $("knowledge-base-kind").value = "";
     await refresh();
-    if (await api.getZettel(id)) select(id);
+    const card = await api.getZettel(id);
+    if (version === navigationVersion && card) select(id);
+  });
+};
+window.ZoteroKnowledgeBase_editNote = function (options) {
+  navigationVersion++;
+  if (!managerLoaded) {
+    args.editor = options;
+    return;
+  }
+  safeCall(async () => {
+    if (await showInlineEditor(options)) {
+      if (options.zettelId) select(options.zettelId, true, true);
+      else {
+        selectedId = null;
+        updateActions();
+      }
+    }
   });
 };
 
@@ -160,7 +199,7 @@ function applyLocale() {
 
 function bindEvents() {
   $("knowledge-base-kind").addEventListener("change", () => {
-    selectedId = null;
+    if (!args.embedded) selectedId = null;
     updateActions();
     safeCall(refresh);
     $("knowledge-base-detail").hidden = true;
@@ -169,7 +208,8 @@ function bindEvents() {
   window.addEventListener("keydown", (event) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
       event.preventDefault();
-      window.close();
+      if (args.embedded) args.onClose?.();
+      else window.close();
     }
   });
   $("knowledge-base-list").addEventListener("mousedown", (event) => {
@@ -383,7 +423,12 @@ const refreshUnresolved = wrap(async function () {
   }
 });
 
-function select(id, record = true) {
+function select(id, record = true, mounted = false) {
+  if (!mounted) navigationVersion++;
+  if (args.embedded && !mounted)
+    return safeCall(async () => {
+      if (await showInlineEditor({ zettelId: id })) select(id, record, true);
+    });
   if (selectedId)
     scrollPositions.set(selectedId, $("knowledge-base-preview").scrollTop);
   if (record && history[historyIndex] !== id) {
@@ -406,7 +451,7 @@ function select(id, record = true) {
     li.setAttribute("aria-current", li.dataset.id === id ? "true" : "false");
   }
   safeCall(async () => {
-    await renderDetail(id);
+    if (!args.embedded) await renderDetail(id);
     if (selectedId === id)
       $("knowledge-base-preview").scrollTop = scrollPositions.get(id) || 0;
   });
@@ -499,44 +544,13 @@ const renderDetail = wrap(async function (id) {
     if (source) {
       const link = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
-        "button",
+        "div",
       );
       link.className = "source-link";
-      const icon = document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "span",
-      );
-      icon.className = "source-item-icon";
-      icon.setAttribute("aria-hidden", "true");
-      const content = document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "span",
-      );
-      content.className = "source-item-text";
-      const title = document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "span",
-      );
-      title.className = "source-item-title";
-      title.textContent = source.title;
-      content.appendChild(title);
-      const context = [source.creatorYear, source.publication]
-        .filter(Boolean)
-        .join(" · ");
-      if (context) {
-        const citation = document.createElementNS(
-          "http://www.w3.org/1999/xhtml",
-          "small",
-        );
-        citation.textContent = context;
-        content.appendChild(citation);
-      }
-      link.append(icon, content);
-      link.title = api.loc("manager-source-open");
-      link.addEventListener("click", () =>
-        safeCall(() => api.selectItem(source.key, source.libraryID)),
-      );
       srcBox.appendChild(link);
+      safeCall(() =>
+        window.ZoteroKnowledgeBaseMarkdown.source(link, source, api),
+      );
     } else {
       const gone = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
@@ -607,7 +621,34 @@ const renderDetail = wrap(async function (id) {
   );
 });
 
+async function showInlineEditor(options) {
+  const frame = document.getElementById("knowledge-base-workbench-editor");
+  if (
+    !(await api.mountEditor(frame, {
+      ...options,
+      onClose: args.onClose,
+      onSaved: (id) =>
+        safeCall(async () => {
+          selectedId = id;
+          await refresh();
+          updateActions();
+          options.onSaved?.(id);
+        }),
+    }))
+  )
+    return false;
+  frame.hidden = false;
+  for (const id of [
+    "knowledge-base-detail",
+    "knowledge-base-detail-empty",
+    "knowledge-base-unresolved",
+  ])
+    document.getElementById(id).hidden = true;
+  return true;
+}
+
 function openEditor(id) {
+  if (args.embedded) return safeCall(() => showInlineEditor({ zettelId: id }));
   api.openEditor({
     zettelId: id,
     onSaved: () =>
@@ -619,6 +660,15 @@ function openEditor(id) {
 }
 
 function newZettel(title = "") {
+  navigationVersion++;
+  if (args.embedded)
+    return safeCall(() =>
+      showInlineEditor({
+        kind:
+          $("knowledge-base-kind").value === "thinking" ? "thinking" : "zettel",
+        prefillTitle: title,
+      }),
+    );
   api.openEditor({
     kind: $("knowledge-base-kind").value === "thinking" ? "thinking" : "zettel",
     prefillTitle: title,
@@ -642,6 +692,11 @@ const removeZettel = wrap(async function (id) {
   );
   if (!ok) return;
   await api.deleteZettel(id);
+  if (args.embedded) {
+    const frame = document.getElementById("knowledge-base-workbench-editor");
+    frame.hidden = true;
+    api.clearEditor(frame);
+  }
   selectedId = null;
   updateActions();
   $("knowledge-base-detail").hidden = true;

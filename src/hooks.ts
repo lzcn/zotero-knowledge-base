@@ -12,6 +12,11 @@ import {
   closeNativeMarkdown,
 } from "./modules/native-markdown";
 import { rebuildCounts } from "./modules/zettel";
+import { stopWorkbenches, closeWorkbenches } from "./modules/workbench";
+import {
+  registerPreferences,
+  unregisterPreferences,
+} from "./modules/bibliography";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import {
   initAssets,
@@ -72,6 +77,7 @@ async function start(token: number): Promise<void> {
       ["cleanupUnusedImages", cleanupImagesAfterChange],
       ["registerItemPaneUI", registerItemPaneUI],
       ["nativeMarkdown", initNativeMarkdown],
+      ["registerPreferences", registerPreferences],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -163,6 +169,7 @@ async function onMainWindowLoad(win: Window): Promise<void> {
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
+  closeWorkbenches(win);
   for (const node of windows.get(win) ?? []) node.remove();
   windows.delete(win);
 }
@@ -187,6 +194,7 @@ async function releaseResources(): Promise<void> {
       }
     },
     unregisterItemPaneUI,
+    unregisterPreferences,
     closeNativeMarkdown,
     closeNativeNotes,
     closeAssets,
@@ -205,6 +213,7 @@ async function releaseResources(): Promise<void> {
 }
 
 function onAppShutdown(): void {
+  stopWorkbenches();
   // Start pending draft writes before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {
     const editor = win as unknown as Window & {

@@ -3,6 +3,15 @@ startup-finish = Knowledge Base ready
 startup-db-error = Failed to initialize the knowledge base. See Help → Debug Output Logging
 
 menu-open-manager = Knowledge Base
+pref-source-heading = Source References
+pref-source-style = Bibliography style
+pref-source-help = Uses styles installed in Zotero. Change or add styles in Settings → Cite.
+source-style-missing = Bibliography style unavailable — choose an installed style
+editor-source-format-failed = Could not format Source:
+editor-more = More actions
+editor-open-window = Open in Separate Window
+editor-convert-zettel = Convert to Zettel
+editor-convert-thinking = Convert to Thinking
 personal-knowledge-title = Personal Knowledge
 
 menu-new-zettel = New Card

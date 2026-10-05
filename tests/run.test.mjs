@@ -5,6 +5,14 @@ import { fileURLToPath } from "node:url";
 
 for (const [file, name] of [
   ["assets-notes.mjs", "Asset lifecycle"],
+  [
+    "workbench.mjs",
+    "Workbench navigation, conflicts and native session cleanup",
+  ],
+  [
+    "bibliography.mjs",
+    "Native bibliography rendering and asynchronous Source changes",
+  ],
   ["database.mjs", "SQLite storage, card lifecycle and relationship indexing"],
   ["ui.mjs", "Markdown, sources, editor and graph interactions in XML windows"],
   [

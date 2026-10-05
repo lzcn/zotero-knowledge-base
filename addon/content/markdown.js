@@ -4,6 +4,53 @@
 // Chrome windows are XML documents. Markdown emits HTML (including <br>,
 // <input> and <hr>), so inserting it through XML innerHTML would throw.
 window.ZoteroKnowledgeBaseMarkdown = {
+  /** @param {HTMLElement} container @param {string[]} tags */
+  tags(container, tags) {
+    container.replaceChildren(
+      ...tags.map((tag) => {
+        const label = document.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "span",
+        );
+        label.className = "note-tag";
+        label.textContent = tag;
+        label.setAttribute("role", "listitem");
+        return label;
+      }),
+    );
+    container.hidden = !tags.length;
+  },
+  /** @param {HTMLElement} container @param {import("../../src/modules/zotero").ItemSummary} item @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
+  async source(container, item, api) {
+    const token = {};
+    container._sourceRender = token;
+    container.classList.add("bibliography-reference");
+    container.textContent = item.title;
+    container.setAttribute("role", "link");
+    container.tabIndex = 0;
+    container.title = api.loc("manager-source-open");
+    container.onclick = (event) => {
+      const link = /** @type {Element} */ (event.target).closest?.("a[href]");
+      event.preventDefault();
+      (link
+        ? api.openLink(link.getAttribute("href"))
+        : api.selectItem(item.key, item.libraryID)
+      ).catch((error) => Zotero.logError(error));
+    };
+    container.onkeydown = (event) => {
+      if (event.target === container && event.key === "Enter")
+        container.click();
+    };
+    const html = await api.getSourceBibliography(item.key, item.libraryID);
+    if (container._sourceRender !== token || !container.isConnected || !html)
+      return;
+    const parsed = new window.DOMParser().parseFromString(html, "text/html");
+    container.replaceChildren(
+      ...Array.from(parsed.body.childNodes).map((node) =>
+        document.importNode(node, true),
+      ),
+    );
+  },
   /** @param {Element} container @param {string} id @param {string} title @param {string} [reference] */
   identity(container, id, title, reference = id) {
     const name = document.createElementNS(
@@ -131,6 +178,15 @@ window.ZoteroKnowledgeBaseMarkdown = {
   },
   /** @param {Element} container @param {string} body */
   render(container, body) {
+    const element = /** @type {HTMLElement} */ (container);
+    element._sourceRender = null;
+    if (element.classList.contains("bibliography-reference")) {
+      element.classList.remove("bibliography-reference");
+      element.removeAttribute("role");
+      element.removeAttribute("tabindex");
+      element.onclick = null;
+      element.onkeydown = null;
+    }
     const html = window.Zotero.ZoteroKnowledgeBase.api.renderMarkdown(body);
     const parsed = new window.DOMParser().parseFromString(html, "text/html");
     container.replaceChildren(

@@ -1,5 +1,4 @@
 import { getAll, type ZettelRow, type LinkRow, type NoteKind } from "./db";
-import { parseTags } from "./markdown";
 import { getItemSummary } from "./zotero";
 
 export interface GraphNode {
@@ -88,28 +87,27 @@ export async function getGraphData(): Promise<GraphData> {
     "#ec4899",
     "#e5484d",
   ];
-  const colorFor = (tag: string, libraryID: number | null) => {
-    const configured = libraryID
-      ? (
-          Zotero.Tags?.getColors(libraryID) as unknown as
-            | Map<string, { color: string }>
-            | undefined
-        )?.get(tag)?.color
+  const colorFor = (tags: string[], libraryID: number | null) => {
+    const colors = libraryID
+      ? (Zotero.Tags?.getColors(libraryID) as unknown as
+          | Map<string, { color: string; position?: number }>
+          | undefined)
       : undefined;
+    const colored = tags
+      .map((tag) => colors?.get(tag))
+      .filter((color): color is { color: string; position?: number } => !!color)
+      .sort((a, b) => (a.position || 0) - (b.position || 0));
+    if (colored.length) return colored[0].color;
+    const tag = tags[0];
     let hash = 0;
     for (const char of tag) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
-    return configured || palette[hash % palette.length];
+    return palette[hash % palette.length];
   };
   const nodes = new Map<string, GraphNode>();
   const bodies = new Map<string, string>();
   const edges: GraphEdge[] = [];
   for (const row of rows) {
-    const tags = [
-      ...new Set([
-        ...parseTags(`${row.title}\n${row.body}`),
-        ...(nativeTags.get(row.id) || []),
-      ]),
-    ];
+    const tags = nativeTags.get(row.id) || [];
     const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
     nodes.set(row.id, {
       id: row.id,
@@ -117,7 +115,7 @@ export async function getGraphData(): Promise<GraphData> {
       kind: "card",
       noteKind: row.kind,
       tags,
-      color: tags.length ? colorFor(tags[0], libraryID) : undefined,
+      color: tags.length ? colorFor(tags, libraryID) : undefined,
       parentId: parentMap.get(row.id) ?? null,
       snippet: row.body,
     });

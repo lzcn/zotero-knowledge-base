@@ -929,19 +929,63 @@ if (currentSchema) {
     (node) => node.id === taggedID,
   );
   check(
-    "Inline tags are indexed and graph colors are stable",
-    taggedNode.tags.join(",") === "tag-a,中文" &&
-      /^#[0-9a-f]{6}$/i.test(taggedNode.color) &&
+    "Hashtags remain body text and do not supply graph tags or colors",
+    !taggedNode.tags.length &&
+      taggedNode.color === undefined &&
       (await db.getAll("SELECT tag FROM tags WHERE zettel_id = ?", [taggedID]))
-        .length === 2,
+        .length === 0,
+  );
+  const previousTagItems = zoteroStub.Items;
+  const previousTagColors = zoteroStub.Tags;
+  let noteTags = ["中文 标签", "Machine learning"];
+  zoteroStub.Items = {
+    getByLibraryAndKeyAsync: async (_library, key) =>
+      key === "TAGNOTE"
+        ? {
+            isNote: () => true,
+            isInTrash: () => false,
+            getTags: () => noteTags.map((tag) => ({ tag })),
+          }
+        : false,
+    loadDataTypes: async () => {},
+  };
+  zoteroStub.Tags = {
+    getColors: () => new Map([["Machine learning", { color: "#3478f6" }]]),
+  };
+  await db.exec(
+    "INSERT INTO card_notes (card_id, note_key, library_id, original_body) VALUES (?, 'TAGNOTE', 1, '')",
+    [taggedID],
+  );
+  const nativeTaggedNode = (await graph.getGraphData()).nodes.find(
+    (node) => node.id === taggedID,
+  );
+  check(
+    "Native multiword tags supply graph colors without text parsing",
+    nativeTaggedNode.tags.join(",") === "中文 标签,Machine learning" &&
+      nativeTaggedNode.color === "#3478f6",
   );
   await zettel.saveZettel({ id: taggedID, title: "Tags", body: "#tag-b" });
-  check(
-    "Editing hashtags replaces the tag index",
-    (await db.getAll("SELECT tag FROM tags WHERE zettel_id = ?", [taggedID]))
-      .map((row) => row.tag)
-      .join() === "tag-b",
+  noteTags = ["Renamed native tag"];
+  const changedTags = (await graph.getGraphData()).nodes.find(
+    (node) => node.id === taggedID,
   );
+  check(
+    "Native tag changes replace graph tags; hashtag edits do not create an index",
+    changedTags.tags.join() === "Renamed native tag" &&
+      (await db.getAll("SELECT tag FROM tags WHERE zettel_id = ?", [taggedID]))
+        .length === 0,
+  );
+  noteTags = [];
+  const untaggedNode = (await graph.getGraphData()).nodes.find(
+    (node) => node.id === taggedID,
+  );
+  check(
+    "Removing native tags clears graph color even when hashtags remain",
+    !untaggedNode.tags.length && untaggedNode.color === undefined,
+  );
+  await db.exec("DELETE FROM card_notes WHERE card_id = ?", [taggedID]);
+  zoteroStub.Items = previousTagItems;
+  zoteroStub.Tags = previousTagColors;
   await zettel.deleteZettel(taggedID);
   const original = await zettel.getZettel(leafId);
   const draft = {
