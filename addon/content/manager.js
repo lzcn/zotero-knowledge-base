@@ -39,12 +39,13 @@ function updateActions() {
     document.getElementById(id).toggleAttribute("disabled", !selectedId);
 }
 
-function showError(msg) {
+function showError(error) {
+  const msg = String(error?.message || error);
   const box = $("knowledge-base-error");
   box.hidden = false;
   box.textContent = "⚠ " + msg;
   try {
-    Zotero.logError(new Error(String(msg)));
+    Zotero.logError(error?.stack ? error : new Error(msg));
   } catch (e) {
     console.error(e);
   }
@@ -55,14 +56,14 @@ function wrap(fn) {
     try {
       return await fn.apply(this, args);
     } catch (e) {
-      showError((e && (e.stack || e.message)) || String(e));
+      showError(e);
       throw e;
     }
   };
 }
 
 window.addEventListener("error", (ev) => {
-  showError(ev.error ? ev.error.stack || ev.error.message : ev.message);
+  showError(ev.error || ev.message);
 });
 
 const load = wrap(async function () {
@@ -405,7 +406,7 @@ const refresh = wrap(async function () {
 
 function safeCall(fn, ...args) {
   Promise.resolve(fn.apply(null, args)).catch((e) => {
-    showError((e && (e.stack || e.message)) || String(e));
+    showError(e);
   });
 }
 
@@ -638,6 +639,7 @@ async function showInlineEditor(options) {
   )
     return false;
   frame.hidden = false;
+  $("knowledge-base-error").hidden = true;
   for (const id of [
     "knowledge-base-detail",
     "knowledge-base-detail-empty",

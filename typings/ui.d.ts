@@ -25,6 +25,7 @@ declare global {
       ): import("../src/ui/markdown-source").MarkdownSource;
     };
     knowledgeBaseCardId?: string | null;
+    knowledgeBaseReady?: () => Promise<void>;
     knowledgeBaseDraftId?: string;
     knowledgeBaseStopping?: boolean;
     knowledgeBaseFlushDraft?: () => Promise<void>;

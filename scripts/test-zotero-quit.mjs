@@ -624,6 +624,41 @@ function runQuitTest() {
           await new Promise(resolve=>setTimeout(resolve,50));
         }
         if (workbench.document.getElementById("knowledge-base-workbench-editor").contentWindow.knowledgeBaseCardId !== connectionChildID) throw new Error("Clicking a child did not navigate within the Tab");
+        const navigationFrame = workbench.document.getElementById("knowledge-base-workbench-editor");
+        const childBeforeNavigation = navigationFrame.contentWindow;
+        await childBeforeNavigation.setEditorMode("source");
+        const navigationBody = childBeforeNavigation.document.getElementById("knowledge-base-editor-body");
+        navigationBody.value += "\\n\\nLast edit before rapid navigation.";
+        navigationBody.dispatchEvent(new childBeforeNavigation.Event("input", {bubbles:true}));
+        const originalGetZettel = kb.api.getZettel;
+        const untouchedHTML = looseNote.getNote();
+        let releaseEditorLoad, editorLoadHeld = false;
+        const editorLoadGate = new Promise(resolve => { releaseEditorLoad = resolve; });
+        kb.api.getZettel = async (id) => {
+          if (id === unsourced.id && !editorLoadHeld) {
+            editorLoadHeld = true;
+            await editorLoadGate;
+          }
+          return originalGetZettel(id);
+        };
+        try {
+          const loadingNavigation = kb.api.mountEditor(navigationFrame, {zettelId:unsourced.id});
+          for (let n=0; n<150 && !editorLoadHeld; n++) await new Promise(resolve=>setTimeout(resolve,25));
+          if (!editorLoadHeld) throw new Error("Could not delay workbench editor initialization");
+          const queuedReplacement = kb.api.mountEditor(navigationFrame, {zettelId:connectionChildID});
+          const latestNavigation = kb.api.mountEditor(navigationFrame, {zettelId:unsourced.id});
+          await new Promise(resolve=>setTimeout(resolve,50));
+          if (looseNote.getNote() !== untouchedHTML) throw new Error("Navigation saved an incompletely loaded note");
+          releaseEditorLoad();
+          const navigations = await Promise.all([loadingNavigation,queuedReplacement,latestNavigation]);
+          if (JSON.stringify(navigations) !== "[false,false,true]") throw new Error("Rapid workbench navigation did not select only the latest request: " + JSON.stringify(navigations));
+          if (navigationFrame.contentWindow.knowledgeBaseCardId !== unsourced.id || navigationFrame.contentWindow.document.getElementById("knowledge-base-editor-root").dataset.mode !== "visual") throw new Error("Rapid navigation returned before the final editor was ready");
+          if (looseNote.getNote() !== untouchedHTML || !(await originalGetZettel(connectionChildID)).body.includes("Last edit before rapid navigation.")) throw new Error("Rapid navigation lost edits or overwrote the next note");
+          if (!workbench.document.getElementById("knowledge-base-error").hidden) throw new Error("Rapid navigation displayed an error stack");
+        } finally {
+          releaseEditorLoad();
+          kb.api.getZettel = originalGetZettel;
+        }
         workbench.ZoteroKnowledgeBase_selectZettel(unsourced.id);
         for (let n=0; n<150; n++) {
           inline = workbench.document.getElementById("knowledge-base-workbench-editor").contentWindow;

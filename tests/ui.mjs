@@ -1123,6 +1123,89 @@ check(
   },
 );
 slow.win.close();
+let unchangedWrites = 0;
+const unchanged = await editor(
+  { zettelId: "UNCHANGED" },
+  {
+    getZettel: async () => ({
+      id: "UNCHANGED",
+      kind: "zettel",
+      title: "Untouched",
+      body: "Original content",
+      updated_at: 1,
+    }),
+    saveEditorCard: async () => {
+      unchangedWrites++;
+    },
+    saveEditorDraft: async () => {
+      unchangedWrites++;
+    },
+  },
+);
+await unchanged.win.__editorEval('setEditorMode("visual", false)');
+unchanged.win.__editorEval(
+  "richEditor.flush = async () => { throw new Error('Unexpected native write'); }",
+);
+const unchangedSaved = await unchanged.win.__editorEval("save(false)");
+check(
+  "Switching an unchanged saved note performs no native, draft or index writes",
+  () => {
+    assert.equal(unchangedSaved, true);
+    assert.equal(unchangedWrites, 0);
+  },
+);
+unchanged.win.close();
+let failedNativeDraft;
+let failedNativeWrites = 0;
+const failedNative = await editor(
+  { zettelId: "NATIVE_FAILURE" },
+  {
+    getZettel: async () => ({
+      id: "NATIVE_FAILURE",
+      kind: "zettel",
+      title: "Native failure",
+      body: "Keep this draft",
+      updated_at: 1,
+    }),
+    saveEditorDraft: async (input) => {
+      failedNativeDraft = input;
+    },
+    saveEditorCard: async () => {
+      failedNativeWrites++;
+    },
+  },
+);
+const nativeErrors = [];
+failedNative.win.Zotero.logError = (error) => nativeErrors.push(error);
+await failedNative.win.__editorEval('setEditorMode("visual", false)');
+failedNative.win.__editorEval(
+  "setDirty(); richEditor.flush = async () => { throw new Error('Native save failed'); }",
+);
+const failedNativeSave = failedNative.win.__editorEval("save(false)");
+const duplicateNativeSave = failedNative.win.__editorEval("save(false)");
+const nativeSaveResults = await Promise.all([
+  failedNativeSave,
+  duplicateNativeSave,
+]);
+check(
+  "A failed native flush blocks navigation and all concurrent callers see failure",
+  () => {
+    assert.deepEqual(nativeSaveResults, [false, false]);
+    assert.equal(failedNativeWrites, 0);
+    assert.equal(nativeErrors.length, 1);
+    assert.match(
+      failedNative.$("knowledge-base-editor-status").textContent,
+      /Native save failed/,
+    );
+    assert.equal(failedNative.win.__editorEval("dirty"), true);
+  },
+);
+await failedNative.win.__editorEval("persistDraft()");
+check("A failed native save retains recoverable editor content", () => {
+  assert.match(failedNativeDraft.body, /Keep this draft$/);
+  assert.equal(failedNativeDraft.id, "NATIVE_FAILURE");
+});
+failedNative.win.close();
 const recovered = await editor(
   { draftId: "recover" },
   {
@@ -1900,6 +1983,9 @@ const missing = await editor(
     getItemSummary: async () => null,
   },
 );
+missing.$("knowledge-base-editor-body").value +=
+  "\n\nAn edit with the source unavailable.";
+missing.win.__editorEval("setDirty()");
 await missing.win.__editorEval("save(false)");
 check(
   "Editing a detached source never silently deletes its original key/library",

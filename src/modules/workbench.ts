@@ -32,6 +32,8 @@ const workbenches = new Map<
 const contexts = new Map<string, EditorArgs & ManagerArgs>();
 const mounts = new WeakMap<Element, number>();
 const pending = new WeakMap<Element, string>();
+const transitions = new WeakMap<Element, Promise<boolean>>();
+const cancelLoads = new WeakMap<Element, () => void>();
 
 export function getViewArguments(token: string): EditorArgs & ManagerArgs {
   const args = contexts.get(token);
@@ -127,18 +129,62 @@ export async function mountEditor(
   const browser = element as Browser;
   const version = (mounts.get(element) || 0) + 1;
   mounts.set(element, version);
-  const current = browser.contentWindow;
-  if (args.zettelId && current?.knowledgeBaseCardId === args.zettelId)
-    return true;
-  if (current?.save && !(await current.save(false))) return false;
-  if (version !== mounts.get(element) || !element.isConnected) return false;
-  loadView(element, "editor", { ...args, embedded: true });
-  return true;
+  const previous = transitions.get(element);
+  const transition = (async () => {
+    // A browser's old global stays accessible while its replacement loads.
+    // Finish that load before another navigation reads or saves the document.
+    if (previous) await previous.catch(() => false);
+    if (version !== mounts.get(element) || !element.isConnected) return false;
+    const current = browser.contentWindow;
+    if (args.zettelId && current?.knowledgeBaseCardId === args.zettelId)
+      return true;
+    if (current?.save && !(await current.save(false))) return false;
+    if (version !== mounts.get(element) || !element.isConnected) return false;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        browser.removeEventListener("load", onLoad, true);
+        cancelLoads.delete(element);
+      };
+      const onLoad = (event: Event) => {
+        if (event.target !== browser.contentWindow.document) return;
+        browser.removeEventListener("load", onLoad, true);
+        const ready = browser.contentWindow.knowledgeBaseReady;
+        if (!ready) {
+          cleanup();
+          reject(new Error("Knowledge Base editor failed to load"));
+          return;
+        }
+        Promise.resolve().then(ready).then(resolve, reject).finally(cleanup);
+      };
+      cancelLoads.set(element, () => {
+        cleanup();
+        resolve();
+      });
+      browser.addEventListener("load", onLoad, true);
+      try {
+        loadView(element, "editor", { ...args, embedded: true });
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
+    });
+    return version === mounts.get(element) && element.isConnected;
+  })();
+  transitions.set(element, transition);
+  try {
+    return await transition;
+  } finally {
+    if (transitions.get(element) === transition) transitions.delete(element);
+  }
 }
 
 export function clearEditor(element: Element): void {
   const browser = element as Browser;
   mounts.set(element, (mounts.get(element) || 0) + 1);
+  cancelLoads.get(element)?.();
+  const token = pending.get(element);
+  if (token) contexts.delete(token);
+  pending.delete(element);
   browser.contentWindow.knowledgeBaseStopping = true;
   browser.loadURI(Services.io.newURI("about:blank"), {
     triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
@@ -153,6 +199,10 @@ function stopWorkbench(win: Window): void {
     "knowledge-base-workbench-editor",
   ) as unknown as Browser | null;
   const editor = editorBrowser?.contentWindow;
+  if (editorBrowser) {
+    mounts.set(editorBrowser, (mounts.get(editorBrowser) || 0) + 1);
+    cancelLoads.get(editorBrowser)?.();
+  }
   if (editor?.knowledgeBaseFlushDraft && !editor.knowledgeBaseStopping) {
     editor.knowledgeBaseFlushDraft().catch((error) => Zotero.logError(error));
     editor.knowledgeBaseStopping = true;

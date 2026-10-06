@@ -19,6 +19,8 @@ let noteKind = args.kind || "zettel";
 let customKey = null;
 let dirty = false;
 let loaded = false;
+let editorLoad = null;
+window.knowledgeBaseReady = load;
 let closing = false;
 let allowClose = false;
 let disposed = false;
@@ -97,7 +99,12 @@ window.addEventListener("error", (ev) => {
   }
 });
 
-async function load() {
+function load() {
+  if (!editorLoad) editorLoad = loadEditor();
+  return editorLoad;
+}
+
+async function loadEditor() {
   await window.KnowledgeBaseMarkdownSource.create(
     /** @type {HTMLTextAreaElement} */ (
       document.getElementById("knowledge-base-editor-body")
@@ -1476,6 +1483,7 @@ function setDirty() {
 async function save(closeAfter) {
   clearTimeout(autosaveTimer);
   if (
+    !loaded ||
     disposed ||
     window.knowledgeBaseStopping ||
     noteUnavailable ||
@@ -1483,33 +1491,33 @@ async function save(closeAfter) {
   )
     return false;
   if (saving) {
-    await saving;
+    if (!(await saving)) return false;
     if (dirty) return save(closeAfter);
     if (closeAfter) closeEditor();
     return true;
   }
-  if (editorMode === "visual" && richEditor) await richEditor.flush();
-  const input = snapshot();
-  if (!input.title && !input.body.trim() && !zettelId) {
-    clearTimeout(draftTimer);
-    try {
-      await draftWrite;
-      await api.discardEditorDraft(draftId);
-      if (revision !== input.draftRevision) return false;
-      dirty = false;
-      $("knowledge-base-editor-save").classList.remove("dirty");
-      setStatus("");
-      if (closeAfter) closeEditor();
-      return true;
-    } catch (error) {
-      reportSaveError(error);
-      return false;
-    }
-  }
-  const savedRevision = revision;
-  setStatus(api.loc("editor-saving"));
   saving = (async () => {
     try {
+      const nativeChanged =
+        editorMode === "visual" &&
+        richEditor &&
+        richEditor.getHTML() !== expectedNoteHTML;
+      if (!dirty && zettelId && !nativeChanged) return true;
+      if (editorMode === "visual" && richEditor) await richEditor.flush();
+      if (disposed || window.knowledgeBaseStopping) return false;
+      const input = snapshot();
+      if (!input.title && !input.body.trim() && !zettelId) {
+        clearTimeout(draftTimer);
+        await draftWrite;
+        await api.discardEditorDraft(draftId);
+        if (revision !== input.draftRevision) return false;
+        dirty = false;
+        $("knowledge-base-editor-save").classList.remove("dirty");
+        setStatus("");
+        return true;
+      }
+      const savedRevision = revision;
+      setStatus(api.loc("editor-saving"));
       await persistDraft();
       if (disposed || window.knowledgeBaseStopping) return false;
       const result = await api.saveEditorCard(input);

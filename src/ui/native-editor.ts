@@ -182,7 +182,9 @@ async function create(
     if (!readOnly) {
       const current = await Zotero.Items.getAsync(options.item.id);
       if (!current || current.isInTrash()) throw new Error("NOTE_UNAVAILABLE");
-      await element.getCurrentInstance()._save(getData());
+      const data = getData();
+      if (data && data.html !== current.getNote())
+        await element.getCurrentInstance()._save(data);
     }
   };
   return {

@@ -26,7 +26,23 @@ try {
   const editor = doc.createElement("browser");
   doc.body.append(editor);
   const locations = [];
-  editor.loadURI = (location) => locations.push(location);
+  editor.loadURI = (location) => {
+    locations.push(location);
+    const args = module.getViewArguments(
+      new URL(location).searchParams.get("context"),
+    );
+    editor.contentWindow = {
+      document: doc,
+      knowledgeBaseCardId: args.zettelId,
+      knowledgeBaseReady: async () => {},
+      save: async () => true,
+    };
+    globalThis.queueMicrotask(() => {
+      const event = new dom.window.Event("load");
+      Object.defineProperty(event, "target", { value: doc });
+      editor.dispatchEvent(event);
+    });
+  };
   editor.contentWindow = { save: async () => false };
   assert.equal(await module.mountEditor(editor, { zettelId: "next" }), false);
   assert.deepEqual(locations, []);
@@ -35,19 +51,72 @@ try {
   const save = new Promise((resolve) => {
     finishSave = resolve;
   });
-  editor.contentWindow.save = () => save;
+  let saveCalls = 0;
+  let activeSaves = 0;
+  let maxActiveSaves = 0;
+  editor.contentWindow.save = async () => {
+    saveCalls++;
+    activeSaves++;
+    maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+    try {
+      return await save;
+    } finally {
+      activeSaves--;
+    }
+  };
   const first = module.mountEditor(editor, { zettelId: "first" });
   const last = module.mountEditor(editor, { zettelId: "last" });
   finishSave(true);
   assert.equal(await first, false);
   assert.equal(await last, true);
+  assert.equal(saveCalls, 2);
+  assert.equal(maxActiveSaves, 1);
   assert.equal(locations.length, 1);
   const token = new URL(locations[0]).searchParams.get("context");
-  assert.equal(module.getViewArguments(token).zettelId, "last");
+  assert.equal(editor.contentWindow.knowledgeBaseCardId, "last");
   assert.throws(() => module.getViewArguments(token), /expired/);
   console.log(
     "PASS Only the latest asynchronous navigation loads a document; contexts are consumed once",
   );
+
+  let finishLoad;
+  let preparingSaveCalls = 0;
+  const ready = new Promise((resolve) => {
+    finishLoad = resolve;
+  });
+  const loadEditor = editor.loadURI;
+  editor.loadURI = (location) => {
+    loadEditor(location);
+    editor.contentWindow.knowledgeBaseReady = () => ready;
+    editor.contentWindow.save = async () => {
+      preparingSaveCalls++;
+      return true;
+    };
+  };
+  const loading = module.mountEditor(editor, { zettelId: "loading" });
+  await new Promise((resolve) => setImmediate(resolve));
+  const replacement = module.mountEditor(editor, { zettelId: "replacement" });
+  const latest = module.mountEditor(editor, { zettelId: "loading" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(preparingSaveCalls, 0);
+  finishLoad();
+  assert.equal(await loading, false);
+  assert.equal(await replacement, false);
+  assert.equal(await latest, true);
+  assert.equal(editor.contentWindow.knowledgeBaseCardId, "loading");
+  assert.equal(preparingSaveCalls, 0);
+  console.log(
+    "PASS Navigation waits for editor readiness and returning to the loading note supersedes queued replacements",
+  );
+
+  editor.loadURI = (location) => {
+    locations.push(location);
+  };
+  const cancelled = module.mountEditor(editor, { zettelId: "cancelled" });
+  await new Promise((resolve) => setImmediate(resolve));
+  module.clearEditor(editor);
+  assert.equal(await cancelled, false);
+  console.log("PASS Clearing an editor cancels pending document loads");
 
   const nativeStates = [
     { type: "library" },
