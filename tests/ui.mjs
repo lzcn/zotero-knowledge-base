@@ -20,14 +20,21 @@ await writeFile(
     "references",
     "native-notes",
     "preferences",
+    "document-merge",
+    "note-tags",
   ]
     .map(
       (name) =>
         `export * as ${name.replace(/-/g, "_")} from ${JSON.stringify(path.join(ROOT, "src/modules", `${name}.ts`))};`,
     )
     .join("\n") +
+    `\nexport * as platform from ${JSON.stringify(path.join(ROOT, "src/ui/platform.ts"))};` +
     `\nexport * as graph_layout from ${JSON.stringify(path.join(ROOT, "src/ui/graph-layout.ts"))};` +
-    `\nexport * as native_markdown_toolbar from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-toolbar.ts"))};`,
+    `\nexport * as native_reading_view from ${JSON.stringify(path.join(ROOT, "src/ui/native-reading-view.ts"))};` +
+    `\nexport * as native_markdown_toolbar from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-toolbar.ts"))};` +
+    `\nimport { markdownLanguage } from ${JSON.stringify(path.join(ROOT, "node_modules/@codemirror/lang-markdown/dist/index.js"))};` +
+    `\nimport { markdownMath } from ${JSON.stringify(path.join(ROOT, "src/ui/markdown-math.ts"))};` +
+    `\nexport const parseMath = text => markdownLanguage.parser.configure([markdownMath]).parse(text).toString();`,
 );
 const bundle = path.join(workspace, "bundle.mjs");
 await build({
@@ -51,8 +58,13 @@ const {
   references,
   native_notes,
   native_markdown_toolbar,
+  native_reading_view,
   preferences,
   graph_layout,
+  platform,
+  document_merge,
+  note_tags,
+  parseMath,
 } = await import(pathToFileURL(bundle).href);
 let checks = 0;
 function check(label, fn) {
@@ -60,6 +72,26 @@ function check(label, fn) {
   checks++;
   console.log(`PASS ${label}`);
 }
+check(
+  "macOS accelerators preserve Control editing and ignore input-method composition",
+  () => {
+    const event = { metaKey: false, ctrlKey: true, altKey: false };
+    assert.equal(platform.isAccelKey(event, true), false);
+    assert.equal(platform.isAccelKey(event, false), true);
+    assert.equal(
+      platform.isAccelKey({ ...event, ctrlKey: false, metaKey: true }, true),
+      true,
+    );
+    assert.equal(
+      platform.isAccelKey({ ...event, metaKey: true, isComposing: true }, true),
+      false,
+    );
+    assert.equal(
+      platform.isAccelKey({ ...event, metaKey: true, keyCode: 229 }, true),
+      false,
+    );
+  },
+);
 const wait = () => new Promise((resolve) => setTimeout(resolve, 0));
 const menuDOM = new JSDOM(
   '<div class="toolbar"><div class="start"></div><div class="end"><div class="dropdown"><button class="toolbar-button">…</button></div></div></div>',
@@ -107,6 +139,77 @@ check("Toolbar cleanup removes the switch and its observer", () => {
   assert.equal(toolbar.querySelector(".knowledge-base-markdown-toggle"), null);
 });
 menuDOM.window.close();
+const readingDOM = new JSDOM(
+  '<div id="editor-container"><div class="editor"><div class="toolbar"><div class="start"></div><div class="middle"><button>Format</button></div></div><div class="editor-core"><div class="primary-editor ProseMirror" contenteditable="true"><p id="paragraph">Native <strong>text</strong></p><span class="katex">Formula</span><img src="https://example.test/image.png" /></div></div></div></div>',
+  { pretendToBeVisual: true },
+);
+const readingWin = readingDOM.window;
+const nativeBody = readingWin.document.querySelector(".primary-editor");
+const originalNativeDOM = nativeBody.outerHTML;
+const originalToolbar = readingWin.document.querySelector(".toolbar");
+let openedLink;
+const reading = native_reading_view.attachReadingView(
+  readingWin,
+  "Reading view",
+  () => {},
+  (href) => (openedLink = href),
+);
+reading.show(true);
+check(
+  "Reading reuses native rendering without changing the toolbar or editable document",
+  () => {
+    const panel = readingWin.document.querySelector(
+      ".knowledge-base-reading-view",
+    );
+    assert.equal(panel.hidden, false);
+    assert.ok(panel.querySelector(".katex"));
+    assert.ok(panel.querySelector("img"));
+    assert.equal(panel.querySelector("[contenteditable], [id]"), null);
+    assert.equal(nativeBody.outerHTML, originalNativeDOM);
+    assert.equal(
+      readingWin.document.querySelector(".toolbar"),
+      originalToolbar,
+    );
+  },
+);
+reading.show(true, '<p>Draft <a href="knowledge-base://card/A">link</a></p>');
+readingWin.document.querySelector(".knowledge-base-reading-view a").click();
+check(
+  "Reading a Markdown draft follows links without applying it to the native writer",
+  () => {
+    assert.equal(openedLink, "knowledge-base://card/A");
+    assert.equal(nativeBody.outerHTML, originalNativeDOM);
+  },
+);
+reading.show(true);
+nativeBody.querySelector("p").textContent = "External native update";
+await new Promise((resolve) => setTimeout(resolve, 40));
+check(
+  "Native reading follows live changes and disposes its observer and surface",
+  () => {
+    assert.ok(
+      readingWin.document
+        .querySelector(".knowledge-base-reading-view")
+        .textContent.includes("External native update"),
+    );
+    reading.destroy();
+    assert.equal(
+      readingWin.document.querySelector(".knowledge-base-reading-view"),
+      null,
+    );
+    assert.equal(
+      readingWin.document.querySelector(".knowledge-base-reading-toggle"),
+      null,
+    );
+    assert.equal(
+      readingWin.document.body.classList.contains(
+        "knowledge-base-reading-mode",
+      ),
+      false,
+    );
+  },
+);
+readingWin.close();
 const equations = String.raw`Inline $E = mc^2$.
 
 $$
@@ -122,6 +225,51 @@ check(
     const source = rich_text.richTextToMarkdown(html);
     assert.match(source, /\$E = mc\^2\$/);
     assert.ok(source.includes(String.raw`\int_0^1 x^2\,dx = \frac{1}{3}`));
+  },
+);
+check(
+  "Display math interrupts prose before setext headings and closes before trailing text",
+  () => {
+    const body = String.raw`Before.
+$$
+W
+=
+\frac{a}{b}
+$$
+After.
+
+$$x_t$$ trailing prose with $y$.
+
+Real heading
+===
+`;
+    const doc = new JSDOM(markdown.renderMarkdown(body, htmlWindow)).window
+      .document;
+    assert.deepEqual(
+      [...doc.querySelectorAll('[data-type="block-math"]')].map((node) =>
+        node.getAttribute("data-latex").trim(),
+      ),
+      [
+        String.raw`W
+=
+\frac{a}{b}`,
+        "x_t",
+      ],
+    );
+    assert.equal(doc.querySelectorAll(".katex-error").length, 0);
+    assert.deepEqual(
+      [...doc.querySelectorAll("h1,h2")].map((node) => node.textContent),
+      ["Real heading"],
+    );
+    assert.match(doc.body.textContent, /After/);
+    assert.match(doc.body.textContent, /trailing prose with/);
+    assert.equal(doc.querySelectorAll('[data-type="inline-math"]').length, 1);
+    const source = rich_text.richTextToMarkdown(doc.body.innerHTML);
+    assert.ok(
+      source.includes(String.raw`W
+=
+\frac{a}{b}`),
+    );
   },
 );
 check(
@@ -631,6 +779,197 @@ check("A failed width save still clears the panel dragging state", () => {
 panelWin.close();
 if (originalPrefs === undefined) delete globalThis.Zotero.Prefs;
 else globalThis.Zotero.Prefs = originalPrefs;
+// Native tags and preference controls share the same effective-tag rules.
+const tagPreferences = new Map();
+const priorTagPrefs = globalThis.Zotero.Prefs;
+const priorTagItems = globalThis.Zotero.Items;
+const priorTagLogger = globalThis.Zotero.logError;
+globalThis.Zotero.Prefs = {
+  get: (key) => tagPreferences.get(key),
+  set: (key, value) => tagPreferences.set(key, value),
+};
+globalThis.Zotero.logError = () => {};
+const tagParent = {
+  id: 71,
+  parentItemID: false,
+  isInTrash: () => false,
+  getTags: () => [{ tag: "Machine learning" }, { tag: "中文 标签" }],
+};
+const tagNote = {
+  id: 72,
+  parentItemID: 71,
+  isNote: () => true,
+  isInTrash: () => false,
+  getTags: () => [{ tag: "Own tag" }, { tag: "Machine learning" }],
+};
+globalThis.Zotero.Items = {
+  getAsync: async (id) => (id === 72 ? tagNote : id === 71 ? tagParent : false),
+  loadDataTypes: async () => {},
+};
+assert.deepEqual(await native_notes.getNoteTags(72), [
+  "Own tag",
+  "Machine learning",
+  "中文 标签",
+]);
+preferences.setTagInheritance(false);
+assert.deepEqual(await native_notes.getNoteTags(72), [
+  "Own tag",
+  "Machine learning",
+]);
+preferences.setTagInheritance(true);
+tagNote.parentItemID = 999;
+assert.deepEqual(await native_notes.getNoteTags(72), [
+  "Own tag",
+  "Machine learning",
+]);
+tagNote.parentItemID = 71;
+check("Parent tags inherit live without changing the note's own tags", () => {
+  assert.equal(preferences.getTagInheritance(), true);
+  assert.deepEqual(tagNote.getTags(), [
+    { tag: "Own tag" },
+    { tag: "Machine learning" },
+  ]);
+});
+check(
+  "Deep card hierarchies inherit tags without recursion or duplicated names",
+  () => {
+    const tags = new Map(
+      Array.from({ length: 10000 }, (_, i) => [
+        String(i),
+        i === 0 ? ["Parent tag"] : ["Own tag"],
+      ]),
+    );
+    const parents = new Map(
+      Array.from(tags.keys(), (id) => [
+        id,
+        id === "0" ? null : String(Number(id) - 1),
+      ]),
+    );
+    const effective = note_tags.inheritCardTags(tags, parents);
+    assert.deepEqual(effective.get("9999"), ["Own tag", "Parent tag"]);
+    assert.deepEqual(tags.get("9999"), ["Own tag"]);
+    assert.equal(
+      note_tags.inheritCardTags(
+        new Map([
+          ["a", ["A"]],
+          ["b", ["B"]],
+        ]),
+        new Map([
+          ["a", "b"],
+          ["b", "a"],
+        ]),
+      ).size,
+      2,
+    );
+  },
+);
+preferences.setGraphGroups([
+  { tag: "Machine learning", color: "#AA22CC" },
+  { tag: "中文 标签", color: "#2288aa" },
+]);
+check(
+  "Graph groups preserve order and exact multiword tags, rejecting invalid colors",
+  () => {
+    assert.deepEqual(preferences.getGraphGroups(), [
+      { tag: "Machine learning", color: "#aa22cc" },
+      { tag: "中文 标签", color: "#2288aa" },
+    ]);
+    assert.throws(() =>
+      preferences.setGraphGroups([{ tag: "Bad", color: "red" }]),
+    );
+    assert.equal(preferences.getGraphGroups().length, 2);
+  },
+);
+const prefsDOM = new JSDOM(
+  await readFile(path.join(ROOT, "addon/content/preferences.xhtml"), "utf8"),
+  { contentType: "application/xhtml+xml", runScripts: "outside-only" },
+);
+const prefsWin = prefsDOM.window;
+prefsWin.document.createXULElement = (tag) =>
+  prefsWin.document.createElementNS(
+    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+    tag,
+  );
+prefsWin.MozXULElement = { insertFTLIfNeeded() {} };
+prefsWin.Zotero = {
+  logError: (error) => {
+    throw error;
+  },
+  ZoteroKnowledgeBase: {
+    api: {
+      ...preferences,
+      getGraphTags: async () => ["Machine learning", "中文 标签"],
+      getSourceStyles: async () => [{ id: "apa", title: "APA" }],
+      getSourceStyle: () => "apa",
+      setSourceStyle() {},
+      loc: (key) => key,
+    },
+  },
+};
+prefsWin.eval(
+  await readFile(path.join(ROOT, "addon/content/preferences.js"), "utf8"),
+);
+await Promise.all([
+  prefsWin.KnowledgeBasePreferences.start(prefsWin.document),
+  prefsWin.KnowledgeBasePreferences.start(prefsWin.document),
+]);
+const prefsCommand = (control) =>
+  control.dispatchEvent(new prefsWin.Event("command", { bubbles: true }));
+const groupRows = () => [
+  ...prefsWin.document.querySelectorAll(".graph-group-row"),
+];
+prefsCommand(groupRows()[1].querySelector(".graph-group-up"));
+assert.equal(preferences.getGraphGroups()[0].tag, "中文 标签");
+prefsCommand(groupRows()[0].querySelector(".graph-group-remove"));
+prefsCommand(prefsWin.document.getElementById("knowledge-base-add-group"));
+await wait();
+const newRow = groupRows()[1];
+const groupTag = newRow.querySelector(".graph-group-tag");
+groupTag.value = "中文 标签";
+prefsCommand(groupTag);
+const groupColor = newRow.querySelector(".graph-group-color");
+groupColor.value = "#117744";
+groupColor.dispatchEvent(new prefsWin.Event("change"));
+const titleLengthControl = prefsWin.document.getElementById(
+  "knowledge-base-graph-label-length",
+);
+assert.equal(titleLengthControl.value, "20");
+titleLengthControl.value = "12";
+titleLengthControl.dispatchEvent(new prefsWin.Event("change"));
+assert.equal(preferences.getGraphLabelLength(), 12);
+for (const invalid of ["0", "81", "12.5", ""]) {
+  titleLengthControl.value = invalid;
+  titleLengthControl.dispatchEvent(new prefsWin.Event("change"));
+  assert.equal(titleLengthControl.value, "12");
+}
+assert.throws(() => preferences.setGraphLabelLength(0));
+preferences.setGraphLabelLength(20);
+const inheritControl = prefsWin.document.getElementById(
+  "knowledge-base-inherit-tags",
+);
+inheritControl.checked = false;
+prefsCommand(inheritControl);
+check(
+  "Native Settings add, reorder, remove and autosave graph groups without duplicate handlers",
+  () => {
+    assert.equal(groupRows().length, 2);
+    assert.deepEqual(preferences.getGraphGroups(), [
+      { tag: "Machine learning", color: "#aa22cc" },
+      { tag: "中文 标签", color: "#117744" },
+    ]);
+    assert.equal(preferences.getTagInheritance(), false);
+    assert.equal(
+      prefsWin.document.getElementById("knowledge-base-preferences-error")
+        .hidden,
+      true,
+    );
+  },
+);
+prefsWin.close();
+globalThis.Zotero.Items = priorTagItems;
+globalThis.Zotero.logError = priorTagLogger;
+if (priorTagPrefs === undefined) delete globalThis.Zotero.Prefs;
+else globalThis.Zotero.Prefs = priorTagPrefs;
 const editorXML = await readFile(
   path.join(ROOT, "addon/content/editor.xhtml"),
   "utf8",
@@ -725,6 +1064,7 @@ async function editor(args = {}, overrides = {}) {
       })),
     getBacklinks: async () => [],
     onDataChange: () => () => {},
+    onNativeNoteChange: () => () => {},
     onSourceStyleChange: () => () => {},
     getSourceBibliography: async () =>
       '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
@@ -734,6 +1074,8 @@ async function editor(args = {}, overrides = {}) {
     discardEditorDraft: async () => {},
     saveEditorDraft: async () => {},
     getEditorDraft: async () => null,
+    mergeMarkdownDocuments: document_merge.mergeMarkdownDocuments,
+    isAccelKey: (event) => platform.isAccelKey(event, true),
     saveEditorCard: async (input) => {
       saved = input;
       nativeHTML = await api.nativeNoteHTML(input.title, input.body);
@@ -774,6 +1116,9 @@ async function editor(args = {}, overrides = {}) {
       const frame = dom.window.document.createElement("iframe");
       root.append(frame);
       frame.contentWindow.focus = () => {};
+      frame.contentWindow.Range.prototype.getClientRects = () => [];
+      frame.contentWindow.Range.prototype.getBoundingClientRect = () =>
+        new frame.contentWindow.DOMRect();
       frame.contentWindow.eval(sourceScript);
       return frame.contentWindow.KnowledgeBaseMarkdownSource.mount(
         root,
@@ -784,6 +1129,7 @@ async function editor(args = {}, overrides = {}) {
   };
   dom.window.KnowledgeBaseNativeEditor = {
     create: async (options) => {
+      dom.window.__nativeEditorOptions = options;
       let html = nativeHTML;
       return {
         getHTML: () => html,
@@ -794,6 +1140,15 @@ async function editor(args = {}, overrides = {}) {
         },
         setSourceMode: (value) => {
           options.element.setAttribute("data-source-mode", String(value));
+        },
+        getTypography: () => ({
+          "font-family": "sans-serif",
+          "font-size": "14px",
+          "line-height": "25px",
+        }),
+        setReadingMode: (value, html) => {
+          options.element.setAttribute("data-reading-mode", String(value));
+          dom.window.__readingHTML = html;
         },
         setReadOnly: async (value) => {
           options.element.mode = value ? "view" : "edit";
@@ -824,6 +1179,52 @@ async function editor(args = {}, overrides = {}) {
     saved: () => saved,
   };
 }
+check(
+  "LaTeX blocks protect equals signs and underscores from heading styling",
+  () => {
+    const tree = parseMath(
+      "# Title\n\n$$T_{i,k}\n=\n\\sum_{u=1}^{a_{i,k}} X_{i,k}^{(u)}$$\n\nHeading\n=\n\nInline $a_i * b_i$.",
+    );
+    assert.match(tree, /BlockMath/);
+    assert.match(tree, /InlineMath/);
+    assert.equal((tree.match(/SetextHeading1/g) || []).length, 1);
+    assert.equal((tree.match(/ATXHeading1/g) || []).length, 1);
+    assert.doesNotMatch(tree, /Emphasis/);
+  },
+);
+check(
+  "Math syntax leaves code, escaped dollars and currency as ordinary Markdown",
+  () => {
+    const tree = parseMath(
+      "`$x$`\n\n```tex\n$$x\n=\n$$\n```\n\n\\$literal\\$ and $5 to $10.",
+    );
+    assert.doesNotMatch(tree, /(?:Block|Inline)Math/);
+    assert.match(tree, /FencedCode/);
+    assert.match(tree, /InlineCode/);
+    assert.match(parseMath("$$x\n=\nUnfinished"), /BlockMath/);
+  },
+);
+const cursorFixture = await editor({ prefillTitle: "Cursor" });
+const cursorBody = cursorFixture.$("knowledge-base-editor-body");
+check(
+  "Programmatic source updates map the cursor without rewriting unchanged text",
+  () => {
+    cursorBody.value = "First paragraph\n\nSecond paragraph\n\nThird paragraph";
+    const position = cursorBody.value.indexOf("Second") + 3;
+    cursorBody.setSelectionRange(position, position + 4);
+    cursorBody.value += " suffix";
+    assert.equal(cursorBody.selectionStart, position);
+    assert.equal(cursorBody.selectionEnd, position + 4);
+    cursorBody.value = "Prefix " + cursorBody.value;
+    assert.equal(cursorBody.selectionStart, position + 7);
+    assert.equal(cursorBody.selectionEnd, position + 11);
+    const identical = cursorBody.value;
+    cursorBody.value = identical;
+    assert.equal(cursorBody.selectionStart, position + 7);
+    assert.equal(cursorBody.selectionEnd, position + 11);
+  },
+);
+cursorFixture.win.close();
 const ed = await editor({ prefillTitle: "New concept" });
 check("Connection categories stay visible for a note with no links", () => {
   assert.equal(ed.$("knowledge-base-editor-relations").hidden, false);
@@ -957,7 +1358,7 @@ const unavailableEditor = await editor(
   },
 );
 check(
-  "An erased native note opens its retained cache without acquiring a replacement",
+  "An unavailable original cannot create a replacement or offer cached-copy recovery",
   () => {
     assert.equal(unavailableAcquisitions, 0);
     assert.equal(
@@ -975,14 +1376,157 @@ check(
     );
     assert.equal(
       unavailableEditor.$("knowledge-base-editor-save-copy").hidden,
-      false,
+      true,
     );
     assert.equal(
       unavailableEditor.$("knowledge-base-editor-body").hidden,
       true,
     );
+    assert.equal(unavailableEditor.win.__editorEval("dirty"), false);
   },
 );
+const unavailableNavigation =
+  await unavailableEditor.win.knowledgeBasePrepareNavigation();
+check(
+  "A clean cached note can leave the workbench without attempting an unavailable save",
+  () => {
+    assert.equal(unavailableNavigation, true);
+  },
+);
+let restorationHealth = "trashed";
+let restorationChanged;
+let restoredNativeAcquisitions = 0;
+const restoredEditor = await editor(
+  { zettelId: "RESTORED_NOTE" },
+  {
+    getZettel: async () => ({
+      id: "RESTORED_NOTE",
+      title: "Original note",
+      body: "Native content",
+      updated_at: 3,
+    }),
+    getNoteHealth: async () => ({
+      note: restorationHealth,
+      source: "none",
+      editable: true,
+    }),
+    onDataChange: (listener) => {
+      restorationChanged = listener;
+      return () => {};
+    },
+    acquireNativeNote: async (input) => {
+      restoredNativeAcquisitions++;
+      return {
+        noteID: 42,
+        html: await restoredEditor.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+          input.title,
+          input.body,
+        ),
+      };
+    },
+  },
+);
+check(
+  "A note in Trash keeps its card and cannot create a Markdown-based replacement",
+  () => {
+    assert.equal(restoredNativeAcquisitions, 0);
+    assert.equal(
+      restoredEditor.$("knowledge-base-editor-save-copy").hidden,
+      true,
+    );
+  },
+);
+restorationHealth = "available";
+restorationChanged({
+  all: false,
+  cardIDs: ["RESTORED_NOTE"],
+  noteIDs: [],
+  itemKeys: [],
+  fields: ["availability"],
+});
+await wait();
+await wait();
+check(
+  "Restoring in Zotero reconnects an already open card without a manual editor toggle",
+  () => {
+    assert.equal(restoredNativeAcquisitions, 1);
+    assert.equal(restoredEditor.win.__editorEval("nativeNoteID"), 42);
+    assert.equal(restoredEditor.win.knowledgeBaseCardId, "RESTORED_NOTE");
+    assert.equal(restoredEditor.$("knowledge-base-rich-frame").hidden, false);
+    assert.equal(
+      restoredEditor.$("knowledge-base-editor-preview").hidden,
+      true,
+    );
+    assert.equal(
+      restoredEditor.$("knowledge-base-editor-save").disabled,
+      false,
+    );
+    assert.equal(restoredEditor.saved(), undefined);
+  },
+);
+restoredEditor.win.close();
+for (const pendingEdit of [false, true]) {
+  let health = "available";
+  let discarded = 0;
+  const fixture = await editor(
+    { zettelId: "AUTOSAVED_NOTE" },
+    {
+      getZettel: async () => ({
+        id: "AUTOSAVED_NOTE",
+        title: "Original note",
+        body: "Native content",
+        kind: "zettel",
+        updated_at: 3,
+      }),
+      getNoteHealth: async () => ({
+        note: health,
+        source: "none",
+        editable: true,
+      }),
+      discardEditorDraft: async () => discarded++,
+    },
+  );
+  if (pendingEdit) {
+    const body = fixture.$("knowledge-base-editor-body");
+    body.value += "\n\nUnsaved **Markdown**.";
+    body.dispatchEvent(new fixture.win.Event("input"));
+  } else {
+    await fixture.win.__editorEval('setEditorMode("visual", false)');
+    fixture.win.__nativeEditorOptions.onChange(
+      await fixture.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+        "Original note",
+        "Native content",
+      ),
+    );
+  }
+  const beforeTrash = fixture.win.__editorEval("snapshot()");
+  const nativeAPI = fixture.win.Zotero.ZoteroKnowledgeBase.api;
+  const acquireOriginal = nativeAPI.acquireNativeNote;
+  nativeAPI.acquireNativeNote = () =>
+    acquireOriginal({ title: "Original note", body: "Native content" });
+  health = "trashed";
+  await fixture.win.__editorEval("refreshHealth()");
+  health = "available";
+  await fixture.win.__editorEval("refreshHealth()");
+  check(
+    pendingEdit
+      ? "Trash restoration retains genuinely unsaved Markdown separately from the original"
+      : "Trash restoration clears an index-only draft already saved by the native editor",
+    () => {
+      assert.equal(fixture.win.__editorEval("dirty"), pendingEdit);
+      assert.equal(fixture.win.__editorEval("recoveryPending"), pendingEdit);
+      assert.equal(fixture.$("knowledge-base-rich-frame").hidden, pendingEdit);
+      assert.equal(discarded, pendingEdit ? 0 : 1);
+      if (pendingEdit) {
+        const afterRestore = fixture.win.__editorEval("snapshot()");
+        assert.equal(afterRestore.sourceDocument, beforeTrash.sourceDocument);
+        assert.equal(afterRestore.body, beforeTrash.body);
+      }
+      assert.equal(fixture.saved(), undefined);
+    },
+  );
+  fixture.win.close();
+}
 let closeChoice = 1;
 let promptCalls = 0;
 let closeCalls = 0;
@@ -1155,6 +1699,330 @@ check(
   },
 );
 unchanged.win.close();
+let acknowledgedCard = {
+  id: "ACKNOWLEDGED",
+  kind: "zettel",
+  title: "Original",
+  body: "Original body",
+  updated_at: 1,
+};
+const acknowledgedDrafts = [];
+const acknowledged = await editor(
+  { zettelId: acknowledgedCard.id },
+  {
+    getZettel: async () => acknowledgedCard,
+    getItemSummary: async (key, libraryID) => ({
+      key,
+      libraryID,
+      title: "Local source",
+    }),
+    discardEditorDraft: async (...values) => acknowledgedDrafts.push(values),
+  },
+);
+await acknowledged.win.__editorEval('setEditorMode("visual", false)');
+acknowledgedCard = {
+  ...acknowledgedCard,
+  title: "External heading",
+  body: "Saved elsewhere",
+  updated_at: 2,
+};
+acknowledged.win.__acknowledgedHTML =
+  await acknowledged.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+    acknowledgedCard.title,
+    acknowledgedCard.body,
+  );
+acknowledged.win.__editorEval(
+  "richEditor.getHTML = () => window.__acknowledgedHTML",
+);
+acknowledged.win.__nativeEditorOptions.onChange(
+  acknowledged.win.__acknowledgedHTML,
+);
+acknowledged.win.__nativeEditorOptions.onExternalHTML(
+  acknowledged.win.__acknowledgedHTML,
+);
+await wait();
+check(
+  "A native refresh matching saved content and metadata clears its redundant draft without another save",
+  () => {
+    assert.equal(acknowledged.win.__editorEval("dirty"), false);
+    assert.equal(acknowledged.win.__editorEval("expectedUpdatedAt"), 2);
+    assert.equal(acknowledgedDrafts.at(-1)[1], 1);
+  },
+);
+acknowledged.win.__editorEval(
+  'setSource({key:"LOCAL001",libraryID:1,title:"Local source"},true)',
+);
+acknowledged.win.__nativeEditorOptions.onChange(
+  acknowledged.win.__acknowledgedHTML,
+);
+await wait();
+check("Native refresh acknowledgement retains pending source changes", () => {
+  assert.equal(acknowledged.win.__editorEval("dirty"), true);
+  assert.equal(acknowledged.win.__editorEval("source.key"), "LOCAL001");
+  assert.equal(acknowledgedDrafts.length, 1);
+});
+acknowledged.win.close();
+const synchronized = await editor(
+  { zettelId: "SYNC_NOTE" },
+  {
+    getZettel: async () => ({
+      id: "SYNC_NOTE",
+      kind: "zettel",
+      title: "Original",
+      body: "Original body",
+      updated_at: 1,
+    }),
+  },
+);
+const latestHTML =
+  await synchronized.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+    "External heading",
+    "Changed in the other window",
+  );
+synchronized.win.__nativeEditorOptions.onExternalHTML(latestHTML);
+check(
+  "An idle Knowledge Base Markdown editor follows the same native note session",
+  () => {
+    assert.match(
+      synchronized.$("knowledge-base-editor-body").value,
+      /Changed in the other window/,
+    );
+    assert.equal(synchronized.win.__editorEval("dirty"), false);
+    assert.equal(synchronized.win.__editorEval("expectedNoteHTML"), latestHTML);
+  },
+);
+const preservedSource = synchronized
+  .$("knowledge-base-editor-body")
+  .value.replace("# External heading", "External heading\n===============")
+  .replace("Changed in the other window", "Changed in the other window  \n");
+synchronized.$("knowledge-base-editor-body").value = preservedSource;
+const normalizedHTML = latestHTML.replace(
+  'data-schema-version="9"',
+  'data-schema-version="10"',
+);
+synchronized.win.__nativeEditorOptions.onExternalHTML(normalizedHTML);
+check(
+  "Equivalent native HTML normalization preserves author Markdown layout",
+  () => {
+    assert.equal(
+      synchronized.$("knowledge-base-editor-body").value,
+      preservedSource,
+    );
+    assert.equal(
+      synchronized.win.__editorEval("expectedNoteHTML"),
+      normalizedHTML,
+    );
+  },
+);
+synchronized.$("knowledge-base-editor-body").value = synchronized
+  .$("knowledge-base-editor-body")
+  .value.replace("Changed in the other window", "Local draft");
+synchronized.win.__editorEval("setDirty()");
+const conflictingHTML =
+  await synchronized.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+    "External heading",
+    "A second external edit",
+  );
+synchronized.win.__nativeEditorOptions.onExternalHTML(conflictingHTML);
+await wait();
+check(
+  "Shared note updates preserve a divergent local draft and expose conflict recovery",
+  () => {
+    assert.match(
+      synchronized.$("knowledge-base-editor-body").value,
+      /Local draft/,
+    );
+    assert.equal(
+      synchronized.$("knowledge-base-editor-status").textContent,
+      "editor-save-conflict",
+    );
+    assert.equal(
+      synchronized.$("knowledge-base-editor-save-copy").hidden,
+      false,
+    );
+    assert.equal(
+      synchronized.win.__editorEval("expectedNoteHTML"),
+      normalizedHTML,
+    );
+  },
+);
+synchronized.win.close();
+const mergedEditor = await editor(
+  { zettelId: "MERGE_NOTE" },
+  {
+    getZettel: async () => ({
+      id: "MERGE_NOTE",
+      kind: "zettel",
+      title: "Merge",
+      body: "First paragraph\n\nSecond paragraph",
+      updated_at: 1,
+    }),
+  },
+);
+mergedEditor.$("knowledge-base-editor-body").value = mergedEditor
+  .$("knowledge-base-editor-body")
+  .value.replace("First paragraph", "Local first paragraph");
+mergedEditor.win.__editorEval("setDirty()");
+const mergedHTML =
+  await mergedEditor.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+    "Merge",
+    "First paragraph\n\nRemote second paragraph",
+  );
+mergedEditor.win.__nativeEditorOptions.onExternalHTML(mergedHTML);
+check(
+  "Independent Markdown edits merge and retain the native version as the save baseline",
+  () => {
+    assert.match(
+      mergedEditor.$("knowledge-base-editor-body").value,
+      /Local first paragraph/,
+    );
+    assert.match(
+      mergedEditor.$("knowledge-base-editor-body").value,
+      /Remote second paragraph/,
+    );
+    assert.equal(mergedEditor.win.__editorEval("expectedNoteHTML"), mergedHTML);
+    assert.equal(mergedEditor.win.__editorEval("dirty"), true);
+  },
+);
+mergedEditor.win.close();
+let releaseDeferredSave;
+let savingInput;
+const deferredEditor = await editor(
+  { zettelId: "DEFERRED_NOTE" },
+  {
+    getZettel: async () => ({
+      id: "DEFERRED_NOTE",
+      kind: "zettel",
+      title: "Deferred",
+      body: "First paragraph\n\nSecond paragraph",
+      updated_at: 1,
+    }),
+    saveEditorCard: async (input) => {
+      savingInput = input;
+      await new Promise((resolve) => {
+        releaseDeferredSave = resolve;
+      });
+      return {
+        id: "DEFERRED_NOTE",
+        updatedAt: 2,
+        html: await deferredEditor.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+          input.title,
+          input.body,
+        ),
+      };
+    },
+  },
+);
+deferredEditor.$("knowledge-base-editor-body").value = deferredEditor
+  .$("knowledge-base-editor-body")
+  .value.replace("First paragraph", "Saved first paragraph");
+deferredEditor.win.__editorEval("setDirty()");
+const deferredSave = deferredEditor.win.__editorEval("save(false)");
+for (let n = 0; n < 20 && !releaseDeferredSave; n++) await wait();
+assert.ok(releaseDeferredSave);
+// The native write has committed, while KB metadata completion is still pending.
+const interveningHTML =
+  await deferredEditor.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+    savingInput.title,
+    savingInput.body.replace("Second paragraph", "External second paragraph"),
+  );
+deferredEditor.win.__nativeEditorOptions.onExternalHTML(interveningHTML);
+releaseDeferredSave();
+assert.equal(await deferredSave, true);
+check(
+  "An external update during save is applied after the committed baseline without losing either edit",
+  () => {
+    assert.match(
+      deferredEditor.$("knowledge-base-editor-body").value,
+      /Saved first paragraph/,
+    );
+    assert.match(
+      deferredEditor.$("knowledge-base-editor-body").value,
+      /External second paragraph/,
+    );
+    assert.equal(
+      deferredEditor.win.__editorEval("expectedNoteHTML"),
+      interveningHTML,
+    );
+    assert.equal(deferredEditor.win.__editorEval("dirty"), false);
+  },
+);
+deferredEditor.win.close();
+let compositionSaves = 0;
+const compositionEditor = await editor(
+  { zettelId: "IME_NOTE" },
+  {
+    getZettel: async () => ({
+      id: "IME_NOTE",
+      kind: "zettel",
+      title: "Input",
+      body: "Initial paragraph",
+      updated_at: 1,
+    }),
+    saveEditorCard: async (input) => {
+      compositionSaves++;
+      return {
+        id: "IME_NOTE",
+        updatedAt: 2,
+        html: await compositionEditor.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
+          input.title,
+          input.body,
+        ),
+      };
+    },
+  },
+);
+const compositionBody = compositionEditor.$("knowledge-base-editor-body");
+const compositionFrame = compositionBody.querySelector("iframe").contentWindow;
+const compositionDOM = compositionFrame.document.querySelector(".cm-editor");
+compositionDOM.dispatchEvent(
+  new compositionFrame.CompositionEvent("compositionstart", { bubbles: true }),
+);
+compositionBody.value += "\n\n输入中的文字";
+compositionBody.dispatchEvent(
+  new compositionEditor.win.Event("input", { bubbles: true }),
+);
+compositionEditor.win.dispatchEvent(
+  new compositionEditor.win.KeyboardEvent("keydown", {
+    key: "w",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+compositionEditor.win.dispatchEvent(
+  new compositionEditor.win.KeyboardEvent("keydown", {
+    key: "s",
+    metaKey: true,
+    isComposing: true,
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await new Promise((resolve) => setTimeout(resolve, 620));
+check(
+  "Chinese composition blocks document autosave and Control-W never closes the editor",
+  () => {
+    assert.equal(compositionSaves, 0);
+    assert.equal(compositionBody.isComposing, true);
+    assert.match(compositionBody.value, /输入中的文字/);
+  },
+);
+compositionDOM.dispatchEvent(
+  new compositionFrame.CompositionEvent("compositionend", {
+    bubbles: true,
+    data: "文字",
+  }),
+);
+await new Promise((resolve) => setTimeout(resolve, 650));
+check(
+  "Finishing composition resumes saving the committed Chinese document",
+  () => {
+    assert.equal(compositionBody.isComposing, false);
+    assert.equal(compositionSaves, 1);
+  },
+);
+compositionEditor.win.close();
 let failedNativeDraft;
 let failedNativeWrites = 0;
 const failedNative = await editor(
@@ -1427,6 +2295,33 @@ check(
     assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
   },
 );
+await chooseMode(ed, "source");
+const readingSource = ed.$("knowledge-base-editor-body");
+readingSource.value = "# Kept draft\n\n$$x^2$$\n\nUnformatted  text";
+readingSource.setSelectionRange(8, 13);
+const sourceBeforeReading = readingSource.value;
+const writesBeforeReading = ed.saved();
+await ed.win.__editorEval("toggleReading()");
+check(
+  "Source Reading retains the draft and writer mode without saving or formatting",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "reading");
+    assert.equal(readingSource.hidden, true);
+    assert.equal(readingSource.value, sourceBeforeReading);
+    assert.equal(readingSource.selectionStart, 8);
+    assert.equal(readingSource.selectionEnd, 13);
+    assert.equal(ed.win.__editorEval("snapshot().sourceMode"), true);
+    assert.equal(ed.saved(), writesBeforeReading);
+    assert.ok(ed.win.__readingHTML.includes("katex-display"));
+  },
+);
+await ed.win.__editorEval("toggleReading()");
+assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "source");
+assert.equal(readingSource.hidden, false);
+assert.equal(readingSource.value, sourceBeforeReading);
+assert.equal(readingSource.selectionStart, 8);
+assert.equal(readingSource.selectionEnd, 13);
+await chooseMode(ed, "visual");
 check(
   "Native insertion uses host formatting instead of offering Markdown commands",
   () => {
@@ -1488,6 +2383,19 @@ check("Native math projects to Markdown without losing LaTeX", () => {
     "A $x^2$.\n\n$$y^2$$",
   );
 });
+check(
+  "Inline math does not add list escapes to adjacent prose or mutate the native DOM",
+  () => {
+    const root = htmlWindow.document.createElement("div");
+    root.innerHTML = String.raw`<p><span class="math">$\psi_1$</span>-norm and <span data-type="inline-math" data-latex="\alpha_1"></span>-tail</p><p>-literal</p>`;
+    const original = root.innerHTML;
+    assert.equal(
+      rich_text.richTextToMarkdown(root),
+      String.raw`$\psi_1$-norm and $\alpha_1$-tail` + "\n\n\\-literal",
+    );
+    assert.equal(root.innerHTML, original);
+  },
+);
 check(
   "Native structured citations, annotations and image keys stay intact in source",
   () => {
@@ -1862,7 +2770,7 @@ check(
     assert.equal(ed.win.document.activeElement, row);
     assert.equal(
       row.querySelector(".note-reference-text").textContent,
-      "20261001000000 · Target card",
+      "Target card (20261001000000)",
     );
     assert.equal(
       row.querySelector(".relation-title").textContent,
@@ -1901,7 +2809,11 @@ ed.win.ZoteroKnowledgeBaseMarkdown.renderFamily(
 check("Relationship IDs and tooltips display without wiki brackets", () => {
   const child = familyBox.querySelector(".family-link");
   assert.equal(child.querySelector(".relation-id").textContent, "0");
-  assert.equal(child.title, "0 · Child 0");
+  assert.equal(child.title, "Child 0 (0)");
+  assert.equal(
+    child.querySelector(".note-reference-text").textContent,
+    "Child 0 (0)",
+  );
 });
 check("Relationship refresh preserves an explicitly expanded child group", () =>
   assert.equal(familyBox.querySelector("details").open, true),
@@ -2132,7 +3044,13 @@ windows.push(graphDom.window);
 await new Promise((resolve) =>
   graphDom.window.addEventListener("load", resolve, { once: true }),
 );
-const graphOptions = { outline: true, references: true, sources: true };
+let graphLabelLength = 20;
+const graphOptions = {
+  outline: true,
+  references: true,
+  sources: true,
+  hideIsolated: false,
+};
 let optionsChanged;
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
@@ -2152,6 +3070,7 @@ graphDom.window.Zotero = {
       loc: (key) => key,
       getGraph: async () => graphData,
       getGraphOptions: () => graphOptions,
+      getGraphLabelLength: () => graphLabelLength,
       setGraphOption: (name, enabled) => {
         graphOptions[name] = enabled;
         optionsChanged?.();
@@ -2189,6 +3108,7 @@ check(
       outline: true,
       references: true,
       sources: true,
+      hideIsolated: false,
     });
     assert.equal(
       graphDom.window.document.getElementById("graph-settings"),
@@ -2378,7 +3298,7 @@ check(
 const hoverNode = graphDom.window.document.querySelector(".graph-node");
 hoverNode.dispatchEvent(new graphDom.window.Event("pointerenter"));
 check(
-  "Hover reveals the title and its neighbors without selecting a note",
+  "Hover reveals the title and its links without fading other nodes",
   () => {
     assert.ok(hoverNode.classList.contains("hovered"));
     assert.ok(
@@ -2389,26 +3309,167 @@ check(
       graphDom.window.document.querySelectorAll(".graph-node.selected").length,
       0,
     );
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".dimmed").length,
+      0,
+    );
   },
 );
 hoverNode.dispatchEvent(new graphDom.window.Event("pointerleave"));
 hoverNode.dispatchEvent(
   new graphDom.window.MouseEvent("click", { bubbles: true }),
 );
+check(
+  "Selection strengthens connected links while retaining the entire network",
+  () => {
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".dimmed").length,
+      0,
+    );
+    assert.ok(
+      graphDom.window.document.querySelector(".graph-edge.highlighted"),
+    );
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".graph-node.highlighted")
+        .length,
+      0,
+    );
+  },
+);
 graphDom.window.document
   .getElementById("graph-svg")
   .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
-check("Clicking the graph background clears selection and dimming", () => {
+check(
+  "Clicking the graph background clears selection and highlighted links",
+  () => {
+    assert.equal(
+      graphDom.window.document.querySelectorAll(
+        ".graph-node.selected,.graph-node.dimmed",
+      ).length,
+      0,
+    );
+    assert.equal(
+      graphDom.window.document.getElementById("graph-selection").hidden,
+      true,
+    );
+  },
+);
+const isolatedControl = graphDom.window.document.getElementById(
+  "graph-hide-isolated",
+);
+const toggleIsolated = (checked) => {
+  isolatedControl.checked = checked;
+  isolatedControl.dispatchEvent(
+    new graphDom.window.Event("command", { bubbles: true }),
+  );
+};
+const beforeIsolatedPositions = graphPositions();
+const beforeIsolatedViewport = graphDom.window.document
+  .querySelector("#graph-svg > g")
+  .getAttribute("transform");
+const originalGraphData = globalThis.structuredClone(graphData);
+graphDom.window.document
+  .querySelector('[data-node-id="I"]')
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
+toggleIsolated(true);
+await wait();
+check(
+  "Hiding isolated nodes saves the option and clears a hidden selection",
+  () => {
+    assert.equal(graphOptions.hideIsolated, true);
+    assert.deepEqual(
+      graphPositions().map(([id]) => id),
+      ["A", "B", "C", "S"],
+    );
+    assert.deepEqual(
+      graphPositions(),
+      beforeIsolatedPositions.filter(([id]) => id !== "I"),
+    );
+    assert.equal(
+      graphDom.window.document
+        .querySelector("#graph-svg > g")
+        .getAttribute("transform"),
+      beforeIsolatedViewport,
+    );
+    assert.equal(
+      graphDom.window.document.getElementById("graph-selection").hidden,
+      true,
+    );
+    assert.deepEqual(graphData, originalGraphData);
+  },
+);
+toggleIsolated(false);
+await wait();
+check(
+  "Showing isolated nodes restores their positions without moving the view",
+  () => {
+    assert.deepEqual(graphPositions(), beforeIsolatedPositions);
+    assert.equal(
+      graphDom.window.document
+        .querySelector("#graph-svg > g")
+        .getAttribute("transform"),
+      beforeIsolatedViewport,
+    );
+  },
+);
+// A self reference does not connect an otherwise isolated note to another node.
+graphData.edges.push({ source: "I", target: "I", kind: "link" });
+toggleIsolated(true);
+await wait();
+check("Self references do not keep isolated notes visible", () => {
   assert.equal(
-    graphDom.window.document.querySelectorAll(
-      ".graph-node.selected,.graph-node.dimmed",
-    ).length,
+    graphDom.window.document.querySelector('[data-node-id="I"]'),
+    null,
+  );
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-edge").length,
+    3,
+  );
+});
+graphOptions.references = false;
+optionsChanged();
+await wait();
+check(
+  "Isolation follows visible relationships instead of hidden references",
+  () => {
+    assert.deepEqual(
+      graphPositions().map(([id]) => id),
+      ["A", "S"],
+    );
+  },
+);
+graphOptions.sources = false;
+optionsChanged();
+await wait();
+check("A graph without visible connections has a valid empty state", () => {
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-node").length,
     0,
   );
   assert.equal(
-    graphDom.window.document.getElementById("graph-selection").hidden,
-    true,
+    graphDom.window.document.querySelectorAll(".graph-edge").length,
+    0,
   );
+  assert.equal(
+    graphDom.window.document.getElementById("graph-empty").hidden,
+    false,
+  );
+  assert.equal(
+    graphDom.window.document.getElementById("graph-error").textContent,
+    "",
+  );
+});
+graphData.edges.pop();
+graphOptions.references = true;
+graphOptions.sources = true;
+toggleIsolated(false);
+await wait();
+check("Disabling isolation restores all nodes and the untouched graph", () => {
+  assert.equal(
+    graphDom.window.document.querySelectorAll(".graph-node").length,
+    5,
+  );
+  assert.deepEqual(graphData, originalGraphData);
 });
 // Replace the entire API object as a plugin reload does, rather than mutating
 // one method on the old object. Open windows must call the new instance.
@@ -2461,6 +3522,31 @@ check("All Cards keeps every node while hiding crowded graph labels", () => {
     "",
   );
 });
+graphLabelLength = 12;
+optionsChanged();
+await wait();
+check(
+  "Graph title limits update live, including selected nodes, while retaining full tooltips",
+  () => {
+    const node = graphDom.window.document.querySelector(".graph-node");
+    node.dispatchEvent(
+      new graphDom.window.MouseEvent("click", { bubbles: true }),
+    );
+    node.dispatchEvent(new graphDom.window.MouseEvent("pointerenter"));
+    assert.equal(
+      node.querySelector("text").textContent,
+      Array.from(node.getAttribute("aria-label")).slice(0, 12).join("") + "…",
+    );
+    assert.ok(
+      node
+        .querySelector("title")
+        .textContent.startsWith(node.getAttribute("aria-label")),
+    );
+  },
+);
+graphLabelLength = 20;
+optionsChanged();
+await wait();
 const hiddenNode = graphDom.window.document.querySelector(
   ".graph-node.label-hidden",
 );
@@ -2517,6 +3603,7 @@ let managerCards = [
   },
 ];
 const managerCalls = { edits: [], graphs: [], deletes: [], opens: [] };
+let managerChanged;
 const labels = {
   "manager-new": "New card",
   "graph-title": "All cards graph",
@@ -2566,6 +3653,14 @@ managerWin.Zotero = {
       },
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
+      auditNativeNotes: async () => {},
+      isAccelKey: (event) => platform.isAccelKey(event, true),
+      searchZettelSummaries: async (_query, { kind }) => ({
+        items: managerCards.filter(
+          (card) => !kind || (card.kind || "zettel") === kind,
+        ),
+        cursor: null,
+      }),
       listZettels: async (_query, _entries, kind) =>
         managerCards.filter(
           (card) => !kind || (card.kind || "zettel") === kind,
@@ -2581,11 +3676,15 @@ managerWin.Zotero = {
       getOutgoing: async () => [],
       getBacklinks: async () => [],
       getUnresolvedRefs: async () => [],
-      onDataChange: () => () => {},
+      onDataChange: (listener) => {
+        managerChanged = listener;
+        return () => {};
+      },
       renderMarkdown: (body) => `<p>${body}</p>`,
       openEditor: (args) => managerCalls.edits.push(args),
       openGraph: (args) => managerCalls.graphs.push(args),
       openManager: (args) => managerCalls.opens.push(args),
+      openWorkbenchWindow: (args) => managerCalls.opens.push(args),
       isExternalNote: async () => false,
       deleteZettel: async (id) => {
         managerCalls.deletes.push(id);
@@ -2597,12 +3696,32 @@ managerWin.Zotero = {
 managerWin.eval(previewScript);
 managerWin.eval(
   (await readFile(path.join(ROOT, "addon/content/manager.js"), "utf8")) +
-    "\nwindow.__managerLoad = load;",
+    "\nwindow.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRows = () => zettels; window.__managerRenderHealth = renderHealth;",
 );
 await managerWin.__managerLoad();
 await wait();
 await wait();
 const managerDoc = managerWin.document;
+check("The workbench has no duplicate window-opening control", () => {
+  assert.equal(managerDoc.getElementById("knowledge-base-open-window"), null);
+});
+check(
+  "A missing original offers neither a cached copy nor a source restore",
+  () => {
+    const box = managerDoc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    );
+    managerWin.__managerRenderHealth(
+      box,
+      { note: "missing", source: "trashed", editable: true },
+      managerCards[0].id,
+    );
+    assert.equal(box.hidden, false);
+    assert.equal(box.textContent, "health-note-missing");
+    assert.equal(box.children.length, 1);
+  },
+);
 check(
   "Browser panels resize by keyboard and relations start as three collapsed groups",
   () => {
@@ -2778,6 +3897,181 @@ await wait();
 check("All notes restores the remaining card", () => {
   assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
 });
+const paginationAPI = managerWin.Zotero.ZoteroKnowledgeBase.api;
+const firstPagedCard = managerCards[0];
+const secondPagedCard = {
+  ...firstPagedCard,
+  id: "NEXT_PAGE",
+  title: "Next page card",
+};
+let pageCalls = [];
+paginationAPI.searchZettelSummaries = async (query, options) => {
+  pageCalls.push({ query, ...options });
+  return options.cursor
+    ? { items: [firstPagedCard, secondPagedCard], cursor: null }
+    : { items: [firstPagedCard], cursor: "page-two" };
+};
+await managerWin.__managerRefresh();
+for (
+  let n = 0;
+  n < 50 &&
+  managerDoc.getElementById("knowledge-base-list").getAttribute("aria-busy") ===
+    "true";
+  n++
+)
+  await new Promise((resolve) => setTimeout(resolve, 10));
+check(
+  "Automatic loading keeps existing cards, deduplicates overlap and stops at the last page",
+  () => {
+    assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 2);
+    assert.equal(pageCalls.at(-1).cursor, "page-two");
+    assert.equal(pageCalls.at(-1).limit, 100);
+    assert.equal(
+      managerDoc
+        .getElementById("knowledge-base-list")
+        .getAttribute("aria-busy"),
+      "false",
+    );
+  },
+);
+const manyCards = Array.from({ length: 1200 }, (_, index) => ({
+  ...firstPagedCard,
+  id: `VIRTUAL_${index}`,
+  title: `Virtual note ${index}`,
+  body: "Small summary",
+}));
+let metadataCalls = 0;
+paginationAPI.getZettel = async (id) => manyCards.find((row) => row.id === id);
+paginationAPI.searchZettelSummaries = async (_query, options) => {
+  metadataCalls++;
+  const offset = Number(options.cursor || 0);
+  return {
+    items: manyCards.slice(offset, offset + 100),
+    cursor: offset + 100 < manyCards.length ? String(offset + 100) : null,
+  };
+};
+await managerWin.__managerRefresh();
+for (
+  let n = 0;
+  n < 100 &&
+  managerDoc.getElementById("knowledge-base-list").getAttribute("aria-busy") ===
+    "true";
+  n++
+)
+  await new Promise((resolve) => setTimeout(resolve, 10));
+check(
+  "All twelve hundred notes load automatically while only viewport rows and short summaries stay rendered",
+  () => {
+    assert.equal(metadataCalls, 12);
+    assert.equal(managerWin.__managerRows().length, 1200);
+    assert.ok(
+      managerWin
+        .__managerRows()
+        .every((row) => row.body === "" && row.snippet.length <= 112),
+    );
+    assert.ok(managerDoc.querySelectorAll(".zettel-row").length < 20);
+    assert.equal(managerDoc.getElementById("knowledge-base-load-more"), null);
+  },
+);
+managerDoc.getElementById("knowledge-base-list").dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "End",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+check(
+  "Keyboard navigation reaches notes outside the initial viewport without additional data requests",
+  () => {
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active").dataset.id,
+      "VIRTUAL_1199",
+    );
+    assert.ok(managerDoc.querySelectorAll(".zettel-row").length < 20);
+    assert.equal(metadataCalls, 12);
+  },
+);
+paginationAPI.searchZettelSummaries = async (_query, options) => {
+  metadataCalls++;
+  assert.deepEqual(Array.from(options.cardIDs), ["VIRTUAL_1"]);
+  return {
+    items: [
+      { ...manyCards[1], title: "Updated single note", updated_at: Date.now() },
+    ],
+    cursor: null,
+  };
+};
+const beforeChangeScroll = managerDoc.getElementById(
+  "knowledge-base-list-pane",
+).scrollTop;
+managerChanged({ all: false, fields: ["content"], cardIDs: ["VIRTUAL_1"] });
+await wait();
+await wait();
+check(
+  "Editing one note refreshes only its summary while preserving all loaded rows and scroll position",
+  () => {
+    assert.equal(metadataCalls, 13);
+    assert.equal(managerWin.__managerRows().length, 1200);
+    assert.equal(managerWin.__managerRows()[0].title, "Updated single note");
+    assert.equal(
+      managerDoc.getElementById("knowledge-base-list-pane").scrollTop,
+      beforeChangeScroll,
+    );
+  },
+);
+paginationAPI.searchZettelSummaries = async (_query, options) => {
+  metadataCalls++;
+  assert.equal(options.cardIDs.length, 500);
+  return { items: [], cursor: null };
+};
+managerChanged({
+  all: false,
+  fields: ["availability"],
+  cardIDs: manyCards.slice(700).map((row) => row.id),
+});
+await wait();
+await wait();
+check(
+  "Removing filtered summaries near the end clamps the recycled viewport and keeps remaining notes visible",
+  () => {
+    assert.equal(metadataCalls, 14);
+    assert.equal(managerWin.__managerRows().length, 700);
+    assert.ok(managerDoc.querySelectorAll(".zettel-row").length > 0);
+    assert.ok(managerDoc.querySelectorAll(".zettel-row").length < 20);
+    assert.ok(
+      managerDoc.getElementById("knowledge-base-list-pane").scrollTop <
+        beforeChangeScroll,
+    );
+  },
+);
+let releaseStalePage;
+paginationAPI.searchZettelSummaries = async () =>
+  new Promise((resolve) => {
+    releaseStalePage = resolve;
+  });
+const stalePage = managerWin.__managerRefresh();
+await wait();
+const managerSearch = managerDoc.getElementById("knowledge-base-search");
+managerSearch.value = "new query";
+managerSearch.dispatchEvent(new managerWin.Event("input"));
+releaseStalePage({
+  items: [{ ...firstPagedCard, title: "Stale query title" }],
+  cursor: "stale-cursor",
+});
+await stalePage;
+check(
+  "Changing a query immediately rejects pending pages and their cursor",
+  () => {
+    assert.ok(managerDoc.querySelectorAll(".zettel-row").length < 20);
+    assert.ok(
+      !managerDoc
+        .getElementById("knowledge-base-list")
+        .textContent.includes("Stale query title"),
+    );
+    assert.equal(managerDoc.getElementById("knowledge-base-load-more"), null);
+  },
+);
 for (const win of windows) {
   win.dispatchEvent(new win.Event("unload"));
   win.close();

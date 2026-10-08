@@ -77,13 +77,18 @@ window.ZoteroKnowledgeBaseMarkdown = {
       "span",
     );
     text.className = "note-reference-text";
-    text.append(index);
-    if (!index.hidden && reference) text.append(document.createTextNode(" · "));
     text.append(name);
+    if (!index.hidden && reference) {
+      text.append(
+        document.createTextNode(" ("),
+        index,
+        document.createTextNode(")"),
+      );
+    } else text.append(index);
     container.append(text);
     container.setAttribute(
       "title",
-      index.hidden ? reference || id : `${reference} · ${title}`,
+      index.hidden ? reference || id : `${title} (${reference})`,
     );
     container.setAttribute("aria-label", container.getAttribute("title"));
   },

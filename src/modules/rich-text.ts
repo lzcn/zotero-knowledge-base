@@ -13,6 +13,30 @@ function mathMarkdown(element: HTMLElement): string | undefined {
 }
 
 export function richTextToMarkdown(html: string | HTMLElement): string {
+  const owner = (
+    typeof html === "string"
+      ? (globalThis.document ?? Zotero.getMainWindow().document)
+      : html.ownerDocument
+  ) as Document;
+  const root = owner.createElement("div");
+  if (typeof html === "string") root.innerHTML = html;
+  else root.append(html.cloneNode(true));
+  let prefix = "knowledgebasemathsource";
+  while (root.innerHTML.includes(prefix)) prefix += "x";
+  const inlineMath: string[] = [];
+  for (const node of Array.from(
+    root.querySelectorAll('span.math, [data-type="inline-math"]'),
+  ) as HTMLElement[]) {
+    const source = node.classList.contains("math")
+      ? node.textContent || ""
+      : mathMarkdown(node as HTMLElement)!;
+    node.replaceWith(
+      owner.createTextNode(`${prefix}${inlineMath.push(source) - 1}end`),
+    );
+  }
+  // Merge math and adjacent prose before escaping Markdown. A text node starting
+  // with "-norm" after inline math is not the start of a Markdown list.
+  root.normalize();
   const converter = new TurndownService({
     headingStyle: "atx",
     codeBlockStyle: "fenced",
@@ -92,5 +116,9 @@ export function richTextToMarkdown(html: string | HTMLElement): string {
       node.nodeName === "BR" && !!(node as HTMLElement).closest("th, td"),
     replacement: () => "<br>",
   });
-  return converter.turndown(html);
+  let result = converter.turndown(root);
+  inlineMath.forEach((source, index) => {
+    result = result.replaceAll(`${prefix}${index}end`, source);
+  });
+  return result;
 }

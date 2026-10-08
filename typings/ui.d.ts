@@ -26,10 +26,12 @@ declare global {
     };
     knowledgeBaseCardId?: string | null;
     knowledgeBaseReady?: () => Promise<void>;
+    knowledgeBaseRefreshNotes?: () => void;
     knowledgeBaseDraftId?: string;
     knowledgeBaseStopping?: boolean;
     knowledgeBaseFlushDraft?: () => Promise<void>;
     knowledgeBaseStopEditor?: () => void;
+    knowledgeBasePrepareNavigation?: () => Promise<boolean>;
     KnowledgeBaseNativeEditor: {
       create(
         options: import("../src/ui/native-editor").NativeEditorOptions,
@@ -161,6 +163,7 @@ export interface ManagerElements {
   "knowledge-base-toolbar": HTMLElementTagNameMap["header"];
   "knowledge-base-btn-new": HTMLElementTagNameMap["button"];
   "knowledge-base-btn-graph": HTMLElementTagNameMap["button"];
+  "knowledge-base-open-window": HTMLElementTagNameMap["button"];
   "knowledge-base-search": HTMLElementTagNameMap["input"];
   "knowledge-base-stats": HTMLElementTagNameMap["span"];
   "knowledge-base-main": HTMLElementTagNameMap["main"];
@@ -234,5 +237,6 @@ export interface GraphElements {
   "graph-legend-cards": HTMLElementTagNameMap["span"];
   "graph-legend-sources": HTMLElementTagNameMap["span"];
   "graph-legend-unresolved": HTMLElementTagNameMap["span"];
+  "graph-groups-legend": HTMLElementTagNameMap["span"];
   "graph-error": HTMLElementTagNameMap["span"];
 }

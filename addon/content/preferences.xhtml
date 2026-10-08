@@ -5,6 +5,27 @@
   onshowing="window.KnowledgeBasePreferences.start(document)"
 >
   <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-pref-workbench-heading" />
+    <hbox align="center">
+      <label
+        control="knowledge-base-workbench-mode"
+        data-l10n-id="knowledge-base-pref-workbench-mode"
+      />
+      <menulist native="true" id="knowledge-base-workbench-mode">
+        <menupopup>
+          <menuitem
+            value="tab"
+            data-l10n-id="knowledge-base-pref-workbench-tab"
+          />
+          <menuitem
+            value="window"
+            data-l10n-id="knowledge-base-pref-workbench-window"
+          />
+        </menupopup>
+      </menulist>
+    </hbox>
+  </vbox>
+  <vbox class="main-section">
     <html:h3 data-l10n-id="knowledge-base-pref-source-heading" />
     <hbox align="center">
       <label
@@ -20,6 +41,40 @@
       </menulist>
     </hbox>
     <description data-l10n-id="knowledge-base-pref-source-help" />
+  </vbox>
+  <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-pref-tags-heading" />
+    <checkbox
+      id="knowledge-base-inherit-tags"
+      native="true"
+      data-l10n-id="knowledge-base-pref-inherit-tags"
+    />
+    <description data-l10n-id="knowledge-base-pref-inherit-tags-help" />
+    <html:h3 data-l10n-id="knowledge-base-pref-groups-heading" />
+    <hbox align="center">
+      <label
+        id="knowledge-base-graph-label-length-label"
+        control="knowledge-base-graph-label-length"
+        data-l10n-id="knowledge-base-pref-graph-label-length"
+      />
+      <html:input
+        id="knowledge-base-graph-label-length"
+        type="number"
+        min="8"
+        max="80"
+        step="1"
+        style="width: 5em"
+        aria-labelledby="knowledge-base-graph-label-length-label"
+      />
+      <label data-l10n-id="knowledge-base-pref-graph-label-length-unit" />
+    </hbox>
+    <description data-l10n-id="knowledge-base-pref-groups-help" />
+    <vbox id="knowledge-base-graph-groups" />
+    <hbox
+      ><button
+        id="knowledge-base-add-group"
+        data-l10n-id="knowledge-base-pref-add-group"
+    /></hbox>
     <description
       id="knowledge-base-preferences-error"
       hidden="true"

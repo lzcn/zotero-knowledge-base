@@ -38,6 +38,15 @@ window.knowledgeBaseStopEditor = () => {
   $("knowledge-base-editor-body").destroy();
 };
 window.knowledgeBaseCardId = zettelId;
+window.knowledgeBasePrepareNavigation = async () => {
+  if (noteUnavailable) {
+    if (saving) await saving;
+    if (dirty) await persistDraft();
+    return !disposed;
+  }
+  if (libraryReadOnly && !dirty && !saving) return true;
+  return save(false);
+};
 let richBody = null;
 let hasSourceSelection = false;
 let sourceSelection = { start: 0, end: 0, scroll: 0 };
@@ -64,6 +73,8 @@ let unsubscribeSourceStyle = null;
 let sourceRenderVersion = 0;
 /** @type {"visual" | "source"} */
 let editorMode = "source";
+let readingMode = false;
+let readingVersion = 0;
 let modeVersion = 0;
 /** @type {Promise<void> | null} */
 let richEditorInitialization = null;
@@ -77,6 +88,7 @@ let recoveryHTML = null;
 let recoverySourceDocument = undefined;
 let nativeNoteID = null;
 let expectedNoteHTML = null;
+let pendingExternalHTML = null;
 let parentId = !zettelId ? args.prefillParentId || null : null;
 let parentSearchTimer = null;
 let parentSearchVersion = 0;
@@ -215,15 +227,142 @@ async function loadEditor() {
   await setEditorMode("visual", false);
   await refreshParentItem();
   await refreshNoteTags();
-  unsubscribe = api.onDataChange(() => {
-    if (editorMode !== "visual") updatePreview();
-    run(refreshRelations);
-    run(refreshHealth);
-    run(refreshNoteTags);
+  unsubscribe = api.onDataChange((change) => {
+    const inheritedTagsChanged =
+      api.getTagInheritance?.() !== false &&
+      change?.fields.some((field) =>
+        ["hierarchy", "availability"].includes(field),
+      );
+    if (inheritedTagsChanged) run(refreshNoteTags);
+    const relevant =
+      !change ||
+      change.all ||
+      change.cardIDs.includes(zettelId) ||
+      change.noteIDs.includes(nativeNoteID) ||
+      change.itemKeys.includes(source?.key);
+    if (!relevant) return;
+    const fields = change?.fields || [];
+    const all = !change || (change.all && !fields.length);
+    if (
+      editorMode !== "visual" &&
+      (all || fields.some((field) => ["content", "identity"].includes(field)))
+    )
+      updatePreview();
+    if (
+      all ||
+      fields.some((field) =>
+        ["identity", "links", "hierarchy", "source", "availability"].includes(
+          field,
+        ),
+      )
+    )
+      run(refreshRelations);
+    if (
+      all ||
+      fields.some((field) => ["source", "availability"].includes(field))
+    )
+      run(refreshHealth);
+    if (
+      !inheritedTagsChanged &&
+      (all ||
+        fields.some((field) =>
+          ["tags", "availability", "source"].includes(field),
+        ))
+    )
+      run(refreshNoteTags);
+    if (all || fields.some((field) => field !== "tags")) run(refreshSavedCard);
   });
   unsubscribeSourceStyle = api.onSourceStyleChange(() =>
     run(refreshSourceDisplay),
   );
+}
+
+async function refreshSavedCard() {
+  if (
+    !zettelId ||
+    saving ||
+    recoveryPending ||
+    disposed ||
+    window.knowledgeBaseStopping
+  )
+    return;
+  const id = zettelId;
+  const version = revision;
+  const [card, family] = await Promise.all([
+    api.getZettel(id),
+    api.getFamily(id),
+  ]);
+  if (!card) return;
+  const summary = card.item_key
+    ? await api.getItemSummary(card.item_key, card.library_id)
+    : null;
+  if (
+    disposed ||
+    id !== zettelId ||
+    revision !== version ||
+    saving ||
+    recoveryPending ||
+    window.knowledgeBaseStopping
+  )
+    return;
+  const alreadyCommitted = dirty;
+  if (dirty) {
+    const input = snapshot();
+    // A native refresh can commit the displayed document before its card save.
+    // Clear pending state only when content and every metadata field match.
+    if (
+      editorMode !== "visual" ||
+      input.nativeHTML !== expectedNoteHTML ||
+      input.title !== card.title ||
+      input.body !== card.body ||
+      input.kind !== card.kind ||
+      input.customKey !== (card.custom_key || null) ||
+      input.itemKey !== (card.item_key || null) ||
+      input.libraryID !== (card.library_id || null) ||
+      input.parentId !== (family.parent?.id || null)
+    )
+      return;
+    await draftWrite;
+    if (
+      disposed ||
+      window.knowledgeBaseStopping ||
+      revision !== version ||
+      saving
+    )
+      return;
+    await api.discardEditorDraft(draftId, version);
+    if (
+      disposed ||
+      window.knowledgeBaseStopping ||
+      revision !== version ||
+      saving
+    )
+      return;
+    clearTimeout(autosaveTimer);
+    clearTimeout(draftTimer);
+    dirty = false;
+    $("knowledge-base-editor-save").classList.remove("dirty");
+    document.getElementById("knowledge-base-editor-save-copy").hidden = true;
+    setStatus(api.loc("editor-saved"));
+  }
+  expectedUpdatedAt = card.updated_at;
+  noteKind = card.kind || "zettel";
+  customKey = card.custom_key || null;
+  parentId = family.parent?.id || null;
+  setSource(
+    summary ||
+      (card.item_key
+        ? {
+            key: card.item_key,
+            libraryID: card.library_id,
+            title: api.loc("manager-source-missing"),
+            missing: true,
+          }
+        : null),
+    false,
+  );
+  updateNoteIdentity(card);
+  return alreadyCommitted;
 }
 
 function updateNoteIdentity(note = null) {
@@ -368,8 +507,18 @@ function applyLocale() {
 }
 
 function navigateNote(id) {
-  if (args.embedded) api.openManager({ selectId: id });
+  if (args.onNavigate) args.onNavigate({ zettelId: id });
+  else if (args.embedded) api.openManager({ selectId: id });
   else api.openEditor({ zettelId: id, window: true });
+}
+
+async function openNoteLink(href) {
+  const card = args.onNavigate ? await api.resolveCardLink(href) : null;
+  if (card)
+    args.onNavigate(
+      card.targetId ? { zettelId: card.targetId } : { prefillTitle: card.ref },
+    );
+  else await api.openLink(href);
 }
 
 function closeEditor() {
@@ -636,6 +785,15 @@ function bindEvents() {
     searchTimer = setTimeout(searchSources, 250);
   });
   $("knowledge-base-editor-title").addEventListener("input", () => setDirty());
+  $("knowledge-base-editor-body").addEventListener("compositionstart", () => {
+    clearTimeout(autosaveTimer);
+    clearTimeout(draftTimer);
+    clearTimeout(previewTimer);
+    clearTimeout(relationsTimer);
+  });
+  $("knowledge-base-editor-body").addEventListener("compositionend", () => {
+    if (dirty) scheduleSave();
+  });
   $("knowledge-base-editor-body").addEventListener("input", () => {
     setDirty();
     const body = $("knowledge-base-editor-body");
@@ -768,17 +926,17 @@ function bindEvents() {
     const link = target.closest("a");
     if (!link) return;
     ev.preventDefault();
-    run(() => api.openLink(link.getAttribute("href")));
+    run(() => openNoteLink(link.getAttribute("href")));
   });
   window.addEventListener("keydown", (ev) => {
-    if (ev.defaultPrevented) return;
-    if ((ev.ctrlKey || ev.metaKey) && ev.key === "s") {
+    if (ev.defaultPrevented || ev.isComposing || ev.keyCode === 229) return;
+    if (api.isAccelKey(ev) && ev.key === "s") {
       ev.preventDefault();
       save(false);
-    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "e") {
+    } else if (api.isAccelKey(ev) && ev.key.toLowerCase() === "e") {
       ev.preventDefault();
       run(toggleMarkdown);
-    } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "w") {
+    } else if (api.isAccelKey(ev) && ev.key.toLowerCase() === "w") {
       ev.preventDefault();
       run(closeIfClean);
     } else if (ev.key === "Escape") {
@@ -943,6 +1101,48 @@ function run(fn) {
     });
 }
 
+function syncExternalHTML(html) {
+  if (disposed || recoveryPending) return;
+  if (saving) {
+    pendingExternalHTML = html;
+    return;
+  }
+  if (html === expectedNoteHTML) return;
+  if (
+    editorMode === "visual" ||
+    api.getMarkdownDocument(html) === api.getMarkdownDocument(expectedNoteHTML)
+  ) {
+    expectedNoteHTML = html;
+    return;
+  }
+  if (!dirty) {
+    expectedNoteHTML = html;
+    const content = api.getMarkdownSource(html);
+    $("knowledge-base-editor-title").value = content.title;
+    $("knowledge-base-editor-body").value = api.getMarkdownDocument(html);
+    richBody = content.body;
+    setStatus("");
+    if (readingMode) run(refreshReading);
+  } else {
+    const merged = api.mergeMarkdownDocuments(
+      api.getMarkdownDocument(expectedNoteHTML),
+      $("knowledge-base-editor-body").value,
+      api.getMarkdownDocument(html),
+    );
+    if (merged !== null) {
+      expectedNoteHTML = html;
+      $("knowledge-base-editor-body").value = merged;
+      setDirty();
+      if (readingMode) run(refreshReading);
+      return;
+    }
+    clearTimeout(autosaveTimer);
+    setStatus(api.loc("editor-save-conflict"));
+    document.getElementById("knowledge-base-editor-save-copy").hidden = false;
+    run(persistDraft);
+  }
+}
+
 async function ensureRichEditor() {
   if (richEditor || noteUnavailable) return;
   if (!richEditorInitialization) {
@@ -961,16 +1161,23 @@ async function ensureRichEditor() {
           $("knowledge-base-editor-body").value = content.body;
           richBody = content.body;
           setDirty();
+          run(refreshSavedCard);
         },
         onSavedHTML(html) {
           if (!recoveryPending && editorMode === "visual")
             expectedNoteHTML = html;
           if (!disposed && editorMode === "source" && dirty) scheduleSave();
         },
+        subscribeNote: api.onNativeNoteChange,
+        onExternalHTML: syncExternalHTML,
         onOpenLink(href) {
-          run(() => api.openLink(href));
+          run(() => openNoteLink(href));
         },
         markdownLabel: api.loc("editor-format-markdown"),
+        readingLabel: api.loc("editor-reading"),
+        onReading() {
+          run(toggleReading);
+        },
         noteLinkLabel: api.loc("editor-link-pick"),
         onNoteLink: openCardPicker,
         onMarkdown() {
@@ -984,7 +1191,7 @@ async function ensureRichEditor() {
         },
       });
       const content = api.projectNativeNote(note.html);
-      if (!args.draftId) {
+      if (!args.draftId && !recoveryPending) {
         $("knowledge-base-editor-title").value = content.title;
         $("knowledge-base-editor-body").value = content.body;
       }
@@ -998,6 +1205,7 @@ async function ensureRichEditor() {
 
 /** @param {"visual" | "source"} mode */
 async function setEditorMode(mode, focus = true) {
+  if (readingMode) leaveReading(false);
   const version = ++modeVersion;
   const body = $("knowledge-base-editor-body");
   const preview = $("knowledge-base-editor-preview");
@@ -1049,6 +1257,7 @@ async function setEditorMode(mode, focus = true) {
   }
   if (disposed || window.closed || version !== modeVersion) return;
   richEditor?.setSourceMode(mode === "source" && !recoveryPending);
+  if (richEditor) body.setTypography(richEditor.getTypography());
   editorMode = mode;
   $("knowledge-base-editor-root").setAttribute("data-mode", mode);
   body.hidden = mode !== "source" || noteUnavailable;
@@ -1104,6 +1313,49 @@ async function setEditorMode(mode, focus = true) {
 function toggleMarkdown() {
   if (recoveryPending || noteUnavailable || libraryReadOnly) return;
   return setEditorMode(editorMode === "source" ? "visual" : "source");
+}
+
+function leaveReading(focus = true) {
+  readingMode = false;
+  ++readingVersion;
+  richEditor?.setReadingMode(false);
+  const body = $("knowledge-base-editor-body");
+  body.hidden = editorMode !== "source" || noteUnavailable;
+  $("knowledge-base-editor-root").setAttribute("data-mode", editorMode);
+  if (focus) {
+    if (editorMode === "source") body.focus();
+    else richEditor?.focus();
+  }
+}
+
+async function refreshReading() {
+  const version = ++readingVersion;
+  if (!readingMode) return;
+  let html;
+  if (editorMode === "source") {
+    const body = $("knowledge-base-editor-body").value;
+    await api.prepareMarkdown(body);
+    html = api.renderMarkdown(body);
+  }
+  if (disposed || !readingMode || version !== readingVersion) return;
+  richEditor?.setReadingMode(true, html);
+}
+
+async function toggleReading() {
+  if (!richEditor || recoveryPending || noteUnavailable) return;
+  if (readingMode) return leaveReading();
+  readingMode = true;
+  try {
+    await refreshReading();
+    if (!readingMode || disposed) return;
+    $("knowledge-base-editor-body").hidden = true;
+    $("knowledge-base-editor-root").setAttribute("data-mode", "reading");
+    closeCommands();
+    $("knowledge-base-link-drop").hidden = true;
+  } catch (error) {
+    leaveReading();
+    throw error;
+  }
 }
 
 function updatePreview() {
@@ -1216,7 +1468,9 @@ async function refreshRelations() {
       const open = () =>
         targetId
           ? navigateNote(targetId)
-          : api.openEditor({ prefillTitle: link.ref });
+          : args.onNavigate
+            ? args.onNavigate({ prefillTitle: link.ref })
+            : api.openEditor({ prefillTitle: link.ref });
       button.addEventListener("click", open);
       list.appendChild(row);
     }
@@ -1248,7 +1502,7 @@ function updateRelationView() {
 }
 
 function insertText(text, range = null) {
-  if (recoveryPending || libraryReadOnly) return;
+  if (recoveryPending || libraryReadOnly || readingMode) return;
   if (editorMode === "visual" && richEditor) {
     run(async () => richEditor.insertHTML(await api.nativeNoteHTML("", text)));
     richEditor.focus();
@@ -1286,7 +1540,7 @@ async function insertItemReference(item, range) {
 }
 
 function formatSelection(kind) {
-  if (recoveryPending || libraryReadOnly) return;
+  if (recoveryPending || libraryReadOnly || readingMode) return;
   if (editorMode === "visual" && richEditor) {
     return;
   }
@@ -1305,13 +1559,10 @@ function formatSelection(kind) {
 }
 
 function editKeydown(ev) {
-  if (ev.defaultPrevented) return;
+  if (ev.defaultPrevented || ev.isComposing || ev.keyCode === 229) return;
   if (commandKeydown(ev)) return;
   const body = $("knowledge-base-editor-body");
-  if (
-    (ev.ctrlKey || ev.metaKey) &&
-    ["b", "i", "k"].includes(ev.key.toLowerCase())
-  ) {
+  if (api.isAccelKey(ev) && ["b", "i", "k"].includes(ev.key.toLowerCase())) {
     ev.preventDefault();
     ev.stopPropagation();
     const kind = { b: "bold", i: "italic" }[ev.key.toLowerCase()];
@@ -1336,7 +1587,7 @@ function editKeydown(ev) {
 }
 
 function openCardPicker() {
-  if (libraryReadOnly) return;
+  if (libraryReadOnly || readingMode) return;
   const body = $("knowledge-base-editor-body");
   linkRange = { start: body.selectionStart, end: body.selectionEnd };
   $("knowledge-base-link-drop").hidden = false;
@@ -1462,7 +1713,8 @@ function scheduleSave() {
   clearTimeout(draftTimer);
   clearTimeout(autosaveTimer);
   draftTimer = setTimeout(persistDraft, 250);
-  autosaveTimer = setTimeout(() => save(false), 500);
+  if (!$("knowledge-base-editor-body").isComposing)
+    autosaveTimer = setTimeout(() => save(false), 500);
 }
 
 function setDirty() {
@@ -1487,7 +1739,8 @@ async function save(closeAfter) {
     disposed ||
     window.knowledgeBaseStopping ||
     noteUnavailable ||
-    libraryReadOnly
+    libraryReadOnly ||
+    $("knowledge-base-editor-body").isComposing
   )
     return false;
   if (saving) {
@@ -1496,6 +1749,7 @@ async function save(closeAfter) {
     if (closeAfter) closeEditor();
     return true;
   }
+  let failure = null;
   saving = (async () => {
     try {
       const nativeChanged =
@@ -1520,7 +1774,10 @@ async function save(closeAfter) {
       setStatus(api.loc("editor-saving"));
       await persistDraft();
       if (disposed || window.knowledgeBaseStopping) return false;
-      const result = await api.saveEditorCard(input);
+      const result = await api.saveEditorCard({
+        ...input,
+        isCurrent: () => !disposed && !window.knowledgeBaseStopping,
+      });
       zettelId = result.id;
       expectedUpdatedAt = result.updatedAt;
       if (result.html) expectedNoteHTML = result.html;
@@ -1548,12 +1805,20 @@ async function save(closeAfter) {
       run(refreshParentItem);
       return true;
     } catch (error) {
-      reportSaveError(error);
+      failure = error;
       return false;
     }
   })();
-  const success = await saving;
+  let success = await saving;
   saving = null;
+  if (pendingExternalHTML && !disposed) {
+    const latest = pendingExternalHTML;
+    pendingExternalHTML = null;
+    syncExternalHTML(latest);
+  }
+  // Notifications arriving during a save must be reconciled after it settles.
+  if (await refreshSavedCard()) success = true;
+  if (failure && !success) reportSaveError(failure);
   if (success && closeAfter && !disposed) {
     if (dirty) return save(true);
     closeEditor();
@@ -1846,7 +2111,7 @@ function commandKeydown(ev) {
 
 async function refreshNoteTags() {
   const noteID = nativeNoteID;
-  const tags = await api.getNoteTags(noteID);
+  const tags = await api.getNoteTags(noteID, zettelId);
   if (disposed || noteID !== nativeNoteID) return;
   window.ZoteroKnowledgeBaseMarkdown.tags(
     document.getElementById("knowledge-base-note-tags"),
@@ -1896,30 +2161,78 @@ async function refreshHealth() {
     );
   const restore = $("knowledge-base-editor-restore");
   restore.setAttribute("label", api.loc("health-restore"));
-  restore.hidden = health.note !== "trashed" && health.source !== "trashed";
+  restore.hidden =
+    health.note === "missing" ||
+    (health.note !== "trashed" && health.source !== "trashed");
   restore.disabled = !health.editable;
   $("knowledge-base-editor-save").disabled = unavailable || libraryReadOnly;
   if (unavailable && !noteUnavailable) {
     clearTimeout(autosaveTimer);
+    const input = snapshot();
     if (dirty) await persistDraft();
+    if (version !== healthVersion || disposed) return;
     noteUnavailable = true;
     recoveryPending = true;
-    recoveryHTML = null;
+    recoveryHTML = input.nativeHTML || null;
+    recoverySourceDocument = input.sourceDocument;
+    $("knowledge-base-editor-title").value = input.title;
+    $("knowledge-base-editor-body").value = input.body;
     if (richEditor) {
       richEditor.destroy();
       richEditor = null;
       const old = $("knowledge-base-rich-frame");
       old.replaceWith(old.cloneNode(false));
     }
-    document.getElementById("knowledge-base-editor-save-copy").hidden =
-      !health.editable;
+    document.getElementById("knowledge-base-editor-save-copy").hidden = true;
     await setEditorMode("visual", false);
   } else if (!unavailable && noteUnavailable) {
+    if (dirty && nativeNoteID) {
+      const input = snapshot();
+      const [note, card, family] = await Promise.all([
+        Zotero.Items.getAsync(nativeNoteID),
+        api.getZettel(zettelId),
+        api.getFamily(zettelId),
+      ]);
+      if (version !== healthVersion || disposed) return;
+      const content = note ? api.projectNativeNote(note.getNote()) : null;
+      // Native autosave can finish before the pending card-index save.
+      const alreadySaved =
+        card &&
+        content &&
+        content.title === input.title &&
+        content.body === input.body &&
+        (!input.nativeHTML || input.nativeHTML === note.getNote()) &&
+        (input.sourceDocument === undefined ||
+          input.sourceDocument === api.getMarkdownDocument(note.getNote())) &&
+        input.kind === card.kind &&
+        input.customKey === (card.custom_key || null) &&
+        input.itemKey === (card.item_key || null) &&
+        input.libraryID === (card.library_id || null) &&
+        input.parentId === (family.parent?.id || null);
+      if (alreadySaved) {
+        await draftWrite;
+        if (version !== healthVersion || disposed) return;
+        await api.discardEditorDraft(draftId);
+        if (version !== healthVersion || disposed) return;
+        dirty = false;
+        $("knowledge-base-editor-save").classList.remove("dirty");
+        setStatus("");
+      }
+    }
+    if (version !== healthVersion || disposed) return;
     noteUnavailable = false;
     recoveryPending = !!dirty;
+    if (!dirty) {
+      recoveryHTML = null;
+      recoverySourceDocument = undefined;
+    }
     nativeNoteID = null;
     expectedNoteHTML = null;
     document.getElementById("knowledge-base-editor-save-copy").hidden = true;
+    await refreshSavedCard();
+    if (version !== healthVersion || disposed) return;
+    await setEditorMode("visual", false);
+    await refreshNoteTags();
   } else if (richEditor && libraryReadOnly) await richEditor.setReadOnly(true);
   await refreshParentItem();
 }

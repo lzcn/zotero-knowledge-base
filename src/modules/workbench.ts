@@ -5,6 +5,7 @@ interface Browser extends Element {
   loadURI(uri: nsIURI, options: { triggeringPrincipal: nsIPrincipal }): void;
   contentWindow: Window & {
     save?: (closeAfter: boolean) => Promise<boolean>;
+    knowledgeBasePrepareNavigation?: () => Promise<boolean>;
   };
 }
 interface Tabs {
@@ -29,6 +30,9 @@ const workbenches = new Map<
     restoreSession(): void;
   }
 >();
+let workbenchWindow:
+  | { win?: Window; browser?: Browser; args: ManagerArgs }
+  | undefined;
 const contexts = new Map<string, EditorArgs & ManagerArgs>();
 const mounts = new WeakMap<Element, number>();
 const pending = new WeakMap<Element, string>();
@@ -67,6 +71,7 @@ export function openWorkbench(args: ManagerArgs = {}): void {
   const existing = workbenches.get(win);
   if (existing) {
     existing.tabs.select(existing.id);
+    existing.browser.contentWindow.knowledgeBaseRefreshNotes?.();
     if (args.editor) {
       existing.args.editor = args.editor;
       existing.browser.contentWindow.ZoteroKnowledgeBase_editNote?.(
@@ -122,6 +127,54 @@ export function openWorkbench(args: ManagerArgs = {}): void {
   loadView(browser, "manager", viewArgs);
 }
 
+export function openWorkbenchWindow(args: ManagerArgs = {}): void {
+  if (workbenchWindow?.win && !workbenchWindow.win.closed) {
+    const record = workbenchWindow;
+    Object.assign(record.args, args);
+    record.win?.focus();
+    const manager = record.browser?.contentWindow;
+    manager?.knowledgeBaseRefreshNotes?.();
+    if (args.editor) manager?.ZoteroKnowledgeBase_editNote?.(args.editor);
+    else if (args.selectId) {
+      record.args.editor = undefined;
+      manager?.ZoteroKnowledgeBase_selectZettel?.(args.selectId);
+    }
+    return;
+  }
+  const record: NonNullable<typeof workbenchWindow> = {
+    args: {
+      ...args,
+      embedded: true,
+      window: true,
+      onClose: () => record.win?.close(),
+    },
+  };
+  workbenchWindow = record;
+  record.win = Zotero.getMainWindow().openDialog(
+    `chrome://${config.addonRef}/content/workbench.xhtml`,
+    "_blank",
+    "chrome,centerscreen,resizable=yes,width=1100,height=760",
+    {
+      // Register lifecycle listeners in the new chrome document's own global.
+      load: (win: Window) => {
+        if (workbenchWindow !== record || win.closed || record.browser) return;
+        record.win = win;
+        win.document.title = config.addonName;
+        record.browser = win.document.getElementById(
+          "knowledge-base-window-browser",
+        ) as unknown as Browser;
+        loadView(record.browser, "manager", record.args);
+      },
+      stop: () => {
+        if (record.browser) stopWorkbenchBrowser(record.browser);
+      },
+      closed: () => {
+        if (workbenchWindow === record) workbenchWindow = undefined;
+      },
+    },
+  ) as Window;
+}
+
 export async function mountEditor(
   element: Element,
   args: EditorArgs,
@@ -138,7 +191,9 @@ export async function mountEditor(
     const current = browser.contentWindow;
     if (args.zettelId && current?.knowledgeBaseCardId === args.zettelId)
       return true;
-    if (current?.save && !(await current.save(false))) return false;
+    if (current?.knowledgeBasePrepareNavigation) {
+      if (!(await current.knowledgeBasePrepareNavigation())) return false;
+    } else if (current?.save && !(await current.save(false))) return false;
     if (version !== mounts.get(element) || !element.isConnected) return false;
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {
@@ -194,7 +249,11 @@ export function clearEditor(element: Element): void {
 function stopWorkbench(win: Window): void {
   const record = workbenches.get(win);
   if (!record) return;
-  const manager = record.browser.contentWindow;
+  stopWorkbenchBrowser(record.browser);
+}
+
+function stopWorkbenchBrowser(browser: Browser): void {
+  const manager = browser.contentWindow;
   const editorBrowser = manager?.document.getElementById(
     "knowledge-base-workbench-editor",
   ) as unknown as Browser | null;
@@ -208,19 +267,22 @@ function stopWorkbench(win: Window): void {
     editor.knowledgeBaseStopping = true;
     editor.knowledgeBaseStopEditor?.();
   }
-  for (const browser of [record.browser, editorBrowser]) {
-    const token = browser && pending.get(browser);
+  for (const view of [browser, editorBrowser]) {
+    const token = view && pending.get(view);
     if (token) contexts.delete(token);
+    if (view) pending.delete(view);
   }
 }
 
 export function stopWorkbenches(): void {
   for (const win of workbenches.keys()) stopWorkbench(win);
+  if (workbenchWindow?.browser) stopWorkbenchBrowser(workbenchWindow.browser);
 }
 
 export function closeWorkbenches(win?: Window): void {
   for (const [owner, record] of [...workbenches]) {
     if (!win || win === owner) record.tabs.close(record.id);
   }
+  if (!win) workbenchWindow?.win?.close();
   if (!win) contexts.clear();
 }

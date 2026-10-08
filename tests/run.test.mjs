@@ -4,7 +4,13 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 for (const [file, name] of [
+  ["document-merge.mjs", "Three-way document merging and conflict boundaries"],
+  ["graph-worker.mjs", "Background graph geometry and cancellation"],
   ["assets-notes.mjs", "Asset lifecycle"],
+  [
+    "note-sessions.mjs",
+    "Shared note sessions, scoped events and cancelled writes",
+  ],
   [
     "workbench.mjs",
     "Workbench navigation, conflicts and native session cleanup",

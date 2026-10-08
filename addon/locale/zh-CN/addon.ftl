@@ -3,6 +3,12 @@ startup-finish = 知识库已就绪
 startup-db-error = 知识库初始化失败，请通过 帮助→调试输出日志 查看详情
 
 menu-open-manager = 知识库
+pref-workbench-heading = 工作台
+pref-workbench-mode = 打开方式
+pref-workbench-tab =
+    .label = Zotero 标签页
+pref-workbench-window =
+    .label = 独立窗口
 pref-source-heading = 来源引用
 pref-source-style = 参考文献格式
 pref-source-help = 使用 Zotero 已安装的格式。可在设置 → 引用中添加或管理。
@@ -108,7 +114,7 @@ editor-reference-insert = 插入条目或笔记引用
 editor-link-pick = 插入笔记链接
 editor-link-placeholder = 搜索笔记标题、正文或 ID…
 editor-link-empty = 没有匹配的笔记；也可以直接写 [[新概念]]
-editor-reading = 浏览模式
+editor-reading = 阅读视图
 editor-mode = 编辑模式
 editor-body-placeholder = 用 Markdown 写正文，通过 [[ID]] 引用卡片。
 editor-format-text = 文字
@@ -225,18 +231,18 @@ manager-confirm-remove = 从 Knowledge Base 移除“{ $title }”？原 Zotero 
 
 relations-hierarchy = 层级
 panel-resize = 调整面板宽度
-health-note-trashed = 原笔记在回收站中，内容缓存仍保留。
-health-note-missing = 原笔记不可用，可以将缓存另存为新笔记。
+health-note-trashed = 笔记在 Zotero 回收站中，恢复后自动继续使用原卡片。
+health-note-missing = 找不到原 Zotero 笔记。
 health-source-trashed = 来源在回收站中，原链接仍保留。
 health-source-missing = 来源不可用，可选择其他来源重新关联。
 health-restore = 恢复原记录
-health-open-cache = 打开缓存笔记
 health-read-only = 此文献库为只读。
 editor-format-native = 富文本
 editor-format-markdown = Markdown
 graph-outline = 层级
 graph-references = 引用
 graph-sources = 来源
+graph-hide-isolated = 隐藏孤立节点
 
 preview-image-missing = 图片不可用
 
@@ -271,3 +277,20 @@ editor-change-parent = 修改上级…
 editor-key-invalid = Key 不能含空格、方括号、|，或以 @ 开头。
 
 editor-key-exists = 此 Key 已被另一篇笔记使用。
+
+manager-deleted-notes = 在 Zotero 回收站中
+
+pref-tags-heading = 笔记标签
+pref-inherit-tags =
+    .label = 继承父级标签
+pref-inherit-tags-help = 包含 Zotero 父条目和上级卡片的标签，保留笔记原有标签。
+pref-groups-heading = 图谱分组
+pref-graph-label-length = 图谱标题长度
+pref-graph-label-length-unit = 个字符
+pref-groups-help = 为每组选择标签和颜色；先匹配的分组优先，同组笔记在图谱中聚集。
+pref-add-group =
+    .label = 新建分组
+graph-group-tag = 选择标签
+graph-group-color = 分组颜色
+graph-group-up = 上移
+graph-group-remove = 移除分组

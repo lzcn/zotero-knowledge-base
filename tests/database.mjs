@@ -12,6 +12,7 @@ import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import os from "node:os";
 import path from "node:path";
+import { JSDOM } from "jsdom";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -63,6 +64,7 @@ class Connection {
     this.db = new DatabaseSync(filename);
   }
   async execute(sql, params = null) {
+    if (failStatement?.(sql)) throw new Error("Injected KB commit failure");
     executedStatements.push(sql);
     const bound = Array.isArray(params)
       ? params
@@ -101,6 +103,7 @@ class Connection {
   }
 }
 const executedStatements = [];
+let failStatement;
 
 /* ------------------------------------------------------------------ */
 /* host bindings (must exist before the bundle is imported)                  */
@@ -221,6 +224,9 @@ const bundle = path.join(workspace, "bundle.mjs");
 await writeFile(
   entry,
   `export * as drafts from ${JSON.stringify(path.join(ROOT, "src/modules/editor-drafts.ts"))};\n` +
+    `export * as events from ${JSON.stringify(path.join(ROOT, "src/modules/events.ts"))};\n` +
+    `export * as nativeNotes from ${JSON.stringify(path.join(ROOT, "src/modules/native-notes.ts"))};\n` +
+    `export * as operations from ${JSON.stringify(path.join(ROOT, "src/modules/note-operations.ts"))};\n` +
     // Absolute paths so esbuild does not need the entry to sit in the project.
     `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
     `export * as zettel from ${JSON.stringify(path.join(ROOT, "src/modules/zettel.ts"))};\n` +
@@ -232,16 +238,24 @@ await build({
   entryPoints: [entry],
   bundle: true,
   format: "esm",
-  platform: "neutral",
+  platform: "browser",
   outfile: bundle,
   logLevel: "warning",
 });
 
 // One bundle, one module instance: both modules must share the same
 // connection object for the flow checks to mean anything.
-const { db, zettel, graph, hierarchy, drafts, noteRefs } = await import(
-  pathToFileURL(bundle).href
-);
+const {
+  db,
+  zettel,
+  graph,
+  hierarchy,
+  drafts,
+  noteRefs,
+  events,
+  nativeNotes,
+  operations,
+} = await import(pathToFileURL(bundle).href);
 
 async function readSchema(file) {
   const inspect = new DatabaseSync(file);
@@ -268,6 +282,7 @@ async function readSchema(file) {
 const REQUIRED = [
   "id",
   "title",
+  "title_folded",
   "body",
   "item_key",
   "library_id",
@@ -295,7 +310,11 @@ async function initialize(label, dataDir, prepare) {
   }
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
-  check("schemaVersion is 8", schema.version === "8", `got ${schema.version}`);
+  check(
+    "schemaVersion is 11",
+    schema.version === "11",
+    `got ${schema.version}`,
+  );
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
   check(
     "all required columns present",
@@ -303,8 +322,8 @@ async function initialize(label, dataDir, prepare) {
     missing.join(", "),
   );
   check(
-    "all 8 indexes present",
-    schema.indexes.length === 8,
+    "all 11 indexes present",
+    schema.indexes.length === 11,
     `got ${schema.indexes.length}`,
   );
   return schema;
@@ -425,6 +444,511 @@ if (currentSchema) {
         b.sourceId === "20260101010102" && b.sourceTitle === "existing two",
     ),
   );
+
+  const searchFixtures = [];
+  for (let n = 0; n < 7; n++)
+    searchFixtures.push(
+      await zettel.saveZettel({
+        title: n === 0 ? "SearchNeedle" : `Search fixture ${n}`,
+        body:
+          n === 0
+            ? ""
+            : 'SearchNeedle 中文检索示例 literal_100% quote" OR syntax',
+      }),
+    );
+  for (const id of searchFixtures)
+    await db.exec("UPDATE zettels SET updated_at = 42 WHERE id = ?", [id]);
+  let page = await zettel.searchZettels("SearchNeedle", { limit: 2 });
+  const paged = page.items.map((row) => row.id);
+  check(
+    "Full-text search ranks title matches before body matches",
+    paged[0] === searchFixtures[0],
+  );
+  while (page.cursor) {
+    page = await zettel.searchZettels("SearchNeedle", {
+      limit: 2,
+      cursor: page.cursor,
+    });
+    paged.push(...page.items.map((row) => row.id));
+  }
+  check(
+    "Keyset pagination retains all results without duplicates when timestamps tie",
+    new Set(paged).size === 7 && paged.length === 7,
+  );
+  check(
+    "Chinese two-character substrings and query operators stay literal",
+    (await zettel.listZettels("检索")).length === 6 &&
+      (await zettel.listZettels('quote" OR syntax')).length === 6,
+  );
+  check(
+    "Percent and underscore are literal search characters",
+    (await zettel.listZettels("literal_100%")).length === 6 &&
+      (await zettel.listZettels("%")).length === 6,
+  );
+  const lookupSQL = executedStatements.length;
+  await zettel.listZettels("中文检索");
+  check(
+    "Indexed substring queries avoid body LIKE scans and whole-graph counts",
+    !executedStatements
+      .slice(lookupSQL)
+      .some((sql) => /body LIKE|FROM links GROUP BY/.test(sql)),
+  );
+  await zettel.saveZettel({
+    id: searchFixtures[1],
+    title: "Changed search fixture",
+    body: "Replacement phrase",
+  });
+  check(
+    "Dirty search rows update before the next query without stale matches",
+    (await zettel.listZettels("SearchNeedle")).length === 6 &&
+      (await zettel.listZettels("Replacement phrase")).length === 1,
+  );
+  const originalItems = zoteroStub.Items;
+  const originalNativeDB = zoteroStub.DB;
+  const auditDOM = new JSDOM("<body></body>");
+  zoteroStub.getMainWindow = () => auditDOM.window;
+  zoteroStub.Promise = { delay: async () => {} };
+  zoteroStub.DB = {
+    valueQueryAsync: async (_sql, [_library, key]) =>
+      key === "CACHEMISSNOTE" ? 5678 : false,
+  };
+  let trashed = true;
+  const auditNote = {
+    id: 1234,
+    key: "AUDITNOTE",
+    libraryID: 1,
+    isNote: () => true,
+    isInTrash: () => trashed,
+    getNote: () =>
+      '<div data-schema-version="9"><h1>Changed search fixture</h1><p>Replacement phrase</p></div>',
+  };
+  zoteroStub.Items = {
+    ...originalItems,
+    getByLibraryAndKeyAsync: async (_library, key) =>
+      key === auditNote.key ? auditNote : false,
+  };
+  for (const [index, key] of [
+    [1, "AUDITNOTE"],
+    [2, "ERASEDNOTE"],
+    [3, "CACHEMISSNOTE"],
+  ])
+    await db.exec(
+      "INSERT INTO card_notes(card_id, note_key, library_id, original_body) VALUES (?, ?, 1, '')",
+      [searchFixtures[index], key],
+    );
+  const auditFirst = nativeNotes.auditNativeNotes();
+  const auditCoalesced = nativeNotes.auditNativeNotes();
+  check(
+    "Concurrent availability audits share one operation",
+    auditFirst === auditCoalesced,
+  );
+  await auditFirst;
+  check(
+    "Trash retains the original mapping while confirmed permanent deletion removes its card and mapping",
+    (
+      await db.getOne("SELECT state FROM unavailable_notes WHERE card_id = ?", [
+        searchFixtures[1],
+      ])
+    ).state === "trashed" &&
+      !(await zettel.getZettel(searchFixtures[2])) &&
+      !(await db.getOne("SELECT * FROM card_notes WHERE card_id = ?", [
+        searchFixtures[2],
+      ])) &&
+      !!(await db.getOne("SELECT * FROM card_notes WHERE card_id = ?", [
+        searchFixtures[1],
+      ])),
+  );
+  check(
+    "An Items cache miss does not remove an original still present in the Zotero database",
+    !!(await zettel.getZettel(searchFixtures[3])) &&
+      !!(await db.getOne("SELECT * FROM card_notes WHERE card_id = ?", [
+        searchFixtures[3],
+      ])),
+  );
+  await db.closeDB();
+  await db.initDB();
+  check(
+    "Reopening the database retains Trash mappings and card identities",
+    (
+      await db.getOne("SELECT note_key FROM card_notes WHERE card_id = ?", [
+        searchFixtures[1],
+      ])
+    ).note_key === "AUDITNOTE" &&
+      (
+        await db.getOne(
+          "SELECT state FROM unavailable_notes WHERE card_id = ?",
+          [searchFixtures[1]],
+        )
+      ).state === "trashed",
+  );
+  check(
+    "Active searches exclude deleted notes while the deleted filter includes their cached records",
+    !(
+      await zettel.searchZettels("", {
+        availability: "active",
+        cardIDs: searchFixtures.slice(1, 3),
+      })
+    ).items.length &&
+      (
+        await zettel.searchZettels("", {
+          availability: "deleted",
+          cardIDs: searchFixtures.slice(1, 3),
+        })
+      ).items.length === 1 &&
+      !(await graph.getGraphData()).nodes.some((node) =>
+        searchFixtures.slice(1, 3).includes(node.id),
+      ),
+  );
+  trashed = false;
+  await nativeNotes.auditNativeNotes();
+  check(
+    "Restored originals reenter the active list with the same card identity",
+    (
+      await zettel.searchZettels("", {
+        availability: "active",
+        cardIDs: [searchFixtures[1]],
+      })
+    ).items[0]?.id === searchFixtures[1] &&
+      !(await db.getOne(
+        "SELECT state FROM unavailable_notes WHERE card_id = ?",
+        [searchFixtures[1]],
+      )),
+  );
+  const unchangedAuditStart = executedStatements.length;
+  await nativeNotes.auditNativeNotes();
+  check(
+    "Repeated audits avoid card and availability writes for unchanged notes",
+    !executedStatements
+      .slice(unchangedAuditStart)
+      .some((sql) => /^(INSERT|UPDATE|DELETE)/.test(sql)),
+  );
+  for (const id of searchFixtures.slice(1, 4))
+    await db.exec("DELETE FROM card_notes WHERE card_id = ?", [id]);
+  zoteroStub.Items = originalItems;
+  zoteroStub.DB = originalNativeDB;
+  auditDOM.window.close();
+  for (const id of searchFixtures) await zettel.deleteZettel(id);
+  check(
+    "Deleting cards removes their full-text index entries",
+    !(await zettel.listZettels("SearchNeedle")).length,
+  );
+  check(
+    "Existing content is indexed during schema migration",
+    (await zettel.listZettels("existing one")).length >= 1,
+  );
+
+  const longNoteID = await zettel.saveZettel({
+    title: "Long summary fixture",
+    body: "x".repeat(20000) + "Body search beyond prefix",
+  });
+  const summaryPage = await zettel.searchZettels("Body search beyond prefix", {
+    summary: true,
+  });
+  check(
+    "List summaries cap transferred text while full-text search and selected-note retrieval retain the entire body",
+    summaryPage.items.some(
+      (row) => row.id === longNoteID && row.body.length === 2048,
+    ) && (await zettel.getZettel(longNoteID)).body.length > 20000,
+  );
+  check(
+    "Changed-note summaries obey both ID scope and full-text filters",
+    (
+      await zettel.searchZettels("Body search beyond prefix", {
+        summary: true,
+        cardIDs: [longNoteID],
+      })
+    ).items.length === 1 &&
+      (
+        await zettel.searchZettels("not matching fixture", {
+          summary: true,
+          cardIDs: [longNoteID],
+        })
+      ).items.length === 0 &&
+      (await zettel.searchZettels("", { summary: true, cardIDs: [] })).items
+        .length === 0,
+  );
+  await zettel.deleteZettel(longNoteID);
+  const journalDOM = new JSDOM("<!doctype html><body></body>");
+  const oldHost = { ...zoteroStub };
+  const oldItems = zoteroStub.Items;
+  let nativeWrites = 0;
+  const journalNote = {
+    id: 7001,
+    key: "JOURNAL1",
+    libraryID: 1,
+    html: "<h1>Journal fixture</h1><p>Before interruption</p>",
+    isNote: () => true,
+    isEditable: () => true,
+    isInTrash: () => false,
+    getNote() {
+      return this.html;
+    },
+    setNote(html) {
+      const changed = html !== this.html;
+      this.html = html;
+      return changed;
+    },
+    async save() {
+      nativeWrites++;
+    },
+  };
+  zoteroStub.getMainWindow = () => journalDOM.window;
+  zoteroStub.Items = {
+    ...oldItems,
+    getAsync: async (id) => (id === journalNote.id ? journalNote : null),
+    getByLibraryAndKeyAsync: async (library, key) =>
+      library === 1 && key === journalNote.key ? journalNote : null,
+  };
+  zoteroStub.DB = {
+    executeTransaction: async (fn) => {
+      const original = journalNote.html;
+      try {
+        return await fn();
+      } catch (error) {
+        journalNote.html = original;
+        throw error;
+      }
+    },
+  };
+  const journalID = await zettel.saveZettel({
+    title: "Journal fixture",
+    body: "Before interruption",
+  });
+  await db.exec(
+    "INSERT INTO card_notes(card_id, note_key, library_id, original_body, external) VALUES (?, ?, 1, ?, 1)",
+    [journalID, journalNote.key, "Before interruption"],
+  );
+  const journalInput = () => ({
+    id: journalID,
+    title: "Journal fixture",
+    body: "After interruption",
+    sourceMode: true,
+    sourceDocument: "# Journal fixture\n\nAfter interruption",
+    noteID: journalNote.id,
+    expectedNoteHTML: journalNote.html,
+  });
+  failStatement = (sql) => /DELETE FROM note_save_operations/.test(sql);
+  let interrupted = false;
+  try {
+    await nativeNotes.saveNativeCard(journalInput());
+  } catch (error) {
+    interrupted = String(error).includes("Injected KB commit failure");
+  }
+  failStatement = undefined;
+  check(
+    "A failure after the native commit rolls back KB metadata while retaining its intent and draft",
+    interrupted &&
+      journalNote.html.includes("After interruption") &&
+      (await zettel.getZettel(journalID)).body === "Before interruption" &&
+      (await operations.listNoteOperations()).length === 1 &&
+      (await drafts.listEditorDrafts()).length === 1,
+  );
+  const writesBeforeRecovery = nativeWrites;
+  await db.closeDB();
+  await db.initDB();
+  await nativeNotes.recoverNativeSaves();
+  await nativeNotes.recoverNativeSaves();
+  check(
+    "Restart reconciliation is idempotent and commits the card, mapping and draft without rewriting native content",
+    (await zettel.getZettel(journalID)).body === "After interruption" &&
+      !(await operations.listNoteOperations()).length &&
+      !(await drafts.listEditorDrafts()).length &&
+      nativeWrites === writesBeforeRecovery,
+  );
+  const protectedInput = {
+    ...journalInput(),
+    body: "Pending content",
+    sourceDocument: "# Journal fixture\n\nPending content",
+  };
+  const intended = "<h1>Journal fixture</h1><p>Pending content</p>";
+  const protectedOperation = await operations.prepareNoteOperation(
+    protectedInput,
+    journalNote,
+    intended,
+    (await zettel.getZettel(journalID)).updated_at,
+  );
+  journalNote.html = "<h1>Journal fixture</h1><p>Later external edit</p>";
+  await nativeNotes.recoverNativeSaves();
+  check(
+    "Recovery retains an intervening native edit and the pending draft",
+    journalNote.html.includes("Later external edit") &&
+      (await operations.listNoteOperations()).length === 1 &&
+      (await zettel.getZettel(journalID)).body === "After interruption",
+  );
+  journalNote.html = intended;
+  await zettel.saveZettel({
+    id: journalID,
+    title: "Changed metadata",
+    body: "Newer card content",
+  });
+  await nativeNotes.recoverNativeSaves();
+  check(
+    "Recovery never overwrites newer KB metadata",
+    (await zettel.getZettel(journalID)).title === "Changed metadata" &&
+      (await operations.listNoteOperations()).length === 1,
+  );
+  await operations.abandonNoteOperation(protectedOperation);
+  await drafts.discardEditorDraft(protectedOperation.input.draftId);
+  const beforeCancelled = journalNote.html;
+  let cancelled = false;
+  try {
+    await nativeNotes.saveNativeCard({
+      ...journalInput(),
+      isCurrent: () => false,
+    });
+  } catch (error) {
+    cancelled = String(error).includes("NOTE_SESSION_CLOSED");
+  }
+  check(
+    "Cancellation before the native write retires only the intent and retains the draft",
+    cancelled &&
+      journalNote.html === beforeCancelled &&
+      !(await operations.listNoteOperations()).length &&
+      (await drafts.listEditorDrafts()).length === 1,
+  );
+  for (const draft of await drafts.listEditorDrafts())
+    await drafts.discardEditorDraft(draft.draftId);
+  const newOperation = await operations.prepareNoteOperation(
+    {
+      ...journalInput(),
+      id: undefined,
+      draftId: "new-note-intent",
+      draftRevision: 1,
+    },
+    journalNote,
+    journalNote.html,
+    null,
+  );
+  check(
+    "A reserved new card identity never makes an uncommitted recovery draft point at a missing card",
+    !(await drafts.getEditorDraft("new-note-intent")).id &&
+      newOperation.input.id,
+  );
+  await drafts.saveEditorDraft({
+    ...newOperation.input,
+    id: undefined,
+    draftRevision: 2,
+    body: "Newer typing retained",
+    sourceDocument: "# Journal fixture\n\nNewer typing retained",
+  });
+  await zettel.saveEditorCard(
+    {
+      id: newOperation.input.id,
+      title: newOperation.input.title,
+      body: newOperation.input.body,
+    },
+    () => operations.completeNoteOperation(newOperation),
+  );
+  const newerDraft = await drafts.getEditorDraft("new-note-intent");
+  check(
+    "Completing an older save preserves newer typing and rebases its new card identity and version",
+    newerDraft.body === "Newer typing retained" &&
+      newerDraft.id === newOperation.input.id &&
+      newerDraft.expectedUpdatedAt ===
+        (await zettel.getZettel(newOperation.input.id)).updated_at &&
+      newerDraft.expectedNoteHTML === newOperation.intendedHTML,
+  );
+  await drafts.discardEditorDraft("new-note-intent");
+  await zettel.deleteZettel(newOperation.input.id);
+  await db.exec("DELETE FROM card_notes WHERE card_id = ?", [journalID]);
+  await zettel.deleteZettel(journalID);
+  for (const key of Object.keys(zoteroStub))
+    if (!(key in oldHost)) delete zoteroStub[key];
+  Object.assign(zoteroStub, oldHost);
+  zoteroStub.Items = oldItems;
+  journalDOM.window.close();
+
+  const migrated = await db.getOne(
+    "SELECT title_folded FROM zettels WHERE id = ?",
+    ["20260101010101"],
+  );
+  const migratedLink = await db.getOne(
+    "SELECT ref_folded FROM links WHERE source_id = ?",
+    ["20260101010102"],
+  );
+  check(
+    "Schema migration backfills title and link lookup keys without changing existing content",
+    migrated.title_folded === "existing one" &&
+      migratedLink.ref_folded === "existing one",
+  );
+
+  const duplicateA = await zettel.saveZettel({ title: "Twin", body: "" });
+  const duplicateB = await zettel.saveZettel({ title: "Twin", body: "" });
+  const unicodeTarget = await zettel.saveZettel({ title: "École", body: "" });
+  const indexSource = await zettel.saveZettel({
+    title: "Index fixture",
+    body: "[[Twin]] [[ÉCOLE]] [[Pending target]]",
+  });
+  const lookupStart = executedStatements.length;
+  const matches = await zettel.resolveRefs(["Twin", "ÉCOLE", duplicateA]);
+  check(
+    "Duplicate titles stay unresolved while IDs and Unicode case folding remain deterministic",
+    !matches.has("Twin") &&
+      matches.get("ÉCOLE") === unicodeTarget &&
+      matches.get(duplicateA) === duplicateA,
+  );
+  check(
+    "Reference lookup does not scan all titles",
+    !executedStatements
+      .slice(lookupStart)
+      .some((sql) => /SELECT id, title FROM zettels\s*$/.test(sql)),
+  );
+  const changes = [];
+  const unsubscribeChanges = events.onDataChange((change) =>
+    changes.push(change),
+  );
+  const incrementalStart = executedStatements.length;
+  await zettel.saveZettel({
+    id: indexSource,
+    title: "Index fixture",
+    body: "Changed prose [[Twin]] [[ÉCOLE|new label]] [[Pending target]]",
+  });
+  const incrementalSQL = executedStatements.slice(incrementalStart);
+  check(
+    "Prose and link-label edits preserve existing link rows instead of rewriting the index",
+    !incrementalSQL.some((sql) =>
+      /^(DELETE FROM links|INSERT(?: OR IGNORE)? INTO links)/.test(sql.trim()),
+    ),
+  );
+  check(
+    "Content-only changes announce their own card and skip topology notifications",
+    changes.at(-1).cardIDs.join() === indexSource &&
+      changes.at(-1).fields.join() === "content",
+  );
+  const unchangedIndex = await zettel.getZettel(indexSource);
+  const eventCount = changes.length;
+  await zettel.saveZettel({
+    id: indexSource,
+    title: unchangedIndex.title,
+    body: unchangedIndex.body,
+  });
+  check(
+    "An unchanged card retains its version and emits no refresh event",
+    (await zettel.getZettel(indexSource)).updated_at ===
+      unchangedIndex.updated_at && changes.length === eventCount,
+  );
+  const forwardTarget = await zettel.saveZettel({
+    title: "Pending target",
+    body: "",
+  });
+  check(
+    "Target creation resolves only matching forward links and includes affected readers in its event",
+    (await zettel.getOutgoing(indexSource)).some(
+      (link) =>
+        link.ref === "Pending target" && link.targetId === forwardTarget,
+    ) &&
+      changes.at(-1).cardIDs.includes(indexSource) &&
+      changes.at(-1).fields.includes("links"),
+  );
+  unsubscribeChanges();
+  for (const id of [
+    indexSource,
+    duplicateA,
+    duplicateB,
+    unicodeTarget,
+    forwardTarget,
+  ])
+    await zettel.deleteZettel(id);
 
   let releaseCleanup;
   let cleanupStarted;
@@ -1039,6 +1563,17 @@ if (currentSchema) {
     "Late draft writes cannot replace a newer draft",
     (await drafts.getEditorDraft(draft.draftId)).body === "newer draft",
   );
+  await drafts.discardEditorDraft(draft.draftId, 2);
+  check(
+    "Acknowledging an older native save retains a newer draft",
+    (await drafts.getEditorDraft(draft.draftId)).body === "newer draft",
+  );
+  await drafts.discardEditorDraft(draft.draftId, 3);
+  check(
+    "Acknowledging the current draft revision removes it",
+    !(await drafts.getEditorDraft(draft.draftId)),
+  );
+  await drafts.saveEditorDraft(newer);
   const nativeDocumentDraft = {
     ...draft,
     nativeDocument: true,
@@ -1088,6 +1623,14 @@ if (currentSchema) {
   check(
     "reopening an existing database preserves cards and links",
     (await zettel.getOutgoing(forwardId))[0]?.targetId === laterId,
+  );
+  await zettel.listZettels("Isolated");
+  await db.exec("DROP TABLE search_documents");
+  await db.closeDB();
+  await db.initDB();
+  check(
+    "Missing rebuildable search tables are restored and existing cards are reindexed",
+    (await zettel.listZettels("Isolated")).length === 500,
   );
   await db.closeDB();
 }

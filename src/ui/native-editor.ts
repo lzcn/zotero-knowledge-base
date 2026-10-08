@@ -1,4 +1,10 @@
-import { attachMarkdownToggle } from "./native-markdown-toolbar";
+import { isAccelKey } from "./platform";
+import {
+  attachMarkdownToggle,
+  getNativeTypography,
+} from "./native-markdown-toolbar";
+import { attachReadingView } from "./native-reading-view";
+import type { NativeNoteChange } from "../modules/note-sessions";
 
 /** Thin adapter around Zotero's editor; the host owns editing and note storage. */
 export interface NativeEditorInstance {
@@ -28,10 +34,17 @@ export interface NativeEditorOptions {
   readOnly?: boolean;
   onChange(html: string): void;
   onSavedHTML(html: string): void;
+  onExternalHTML(html: string): void;
+  subscribeNote(
+    noteID: number,
+    listener: (change: NativeNoteChange) => void,
+  ): () => void;
   onOpenLink(href: string): void;
   onShortcut(key: string): void;
   markdownLabel: string;
   onMarkdown(): void;
+  readingLabel: string;
+  onReading(): void;
   noteLinkLabel: string;
   onNoteLink(): void;
 }
@@ -41,6 +54,8 @@ export interface NativeEditorController {
   flush(): Promise<void>;
   setReadOnly(value: boolean): Promise<void>;
   setSourceMode(value: boolean): void;
+  setReadingMode(value: boolean, html?: string): void;
+  getTypography(): Record<string, string>;
   reload(): Promise<void>;
   insertHTML(html: string): void;
   focus(): void;
@@ -61,21 +76,15 @@ async function create(
   let removeMarkdownToggle: ReturnType<typeof attachMarkdownToggle> | undefined;
   let removeNoteLink = () => {};
   let sourceMode = false;
+  let readingView: ReturnType<typeof attachReadingView> | undefined;
   let previousDisableSaving = element.getCurrentInstance()._disableSaving;
   const ownedInstances = new Set<string>();
-  const observerID = Zotero.Notifier.registerObserver(
-    {
-      notify(_event, _type, ids, extraData) {
-        if (destroyed || !ids.some((id) => Number(id) === options.item.id))
-          return;
-        const id =
-          extraData?.[options.item.id]?.noteEditorID || extraData?.noteEditorID;
-        if (ownedInstances.has(id)) options.onSavedHTML(options.item.getNote());
-      },
-    },
-    ["item"],
-    "knowledge-base-editor",
-  );
+  const unsubscribeNote = options.subscribeNote(options.item.id, (change) => {
+    if (destroyed) return;
+    if (change.origin && ownedInstances.has(change.origin))
+      options.onSavedHTML(change.html);
+    else options.onExternalHTML(change.html);
+  });
   const getData = () => {
     const data = frame?.wrappedJSObject.getDataSync(false);
     return data
@@ -87,14 +96,17 @@ async function create(
     const html = getData()?.html;
     if (html && html !== lastHTML) {
       lastHTML = html;
-      options.onChange(html);
+      // Native refresh messages also report HTML saved by another editor.
+      // A view matching storage has no local change to save again.
+      if (html === options.item.getNote()) options.onExternalHTML(html);
+      else options.onChange(html);
     }
   };
   const input = () => {
     queueMicrotask(changed);
   };
   const keydown = (event: KeyboardEvent) => {
-    if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+    if (!isAccelKey(event)) return;
     const key = event.key.toLowerCase();
     if (["s", "k", "w", "e"].includes(key)) {
       event.preventDefault();
@@ -122,6 +134,7 @@ async function create(
     if (event.key === "Escape") event.stopPropagation();
   };
   const detach = () => {
+    readingView?.destroy();
     removeMarkdownToggle?.();
     removeNoteLink();
     if (!frame) return;
@@ -169,6 +182,13 @@ async function create(
       };
     }
     removeMarkdownToggle?.setMode(sourceMode);
+    if (!readOnly)
+      readingView = attachReadingView(
+        frame,
+        options.readingLabel,
+        options.onReading,
+        options.onOpenLink,
+      );
     if (sourceMode) element.getCurrentInstance()._disableSaving = true;
     frame.document.addEventListener("input", input, true);
     frame.document.addEventListener("keydown", keydown, true);
@@ -205,6 +225,11 @@ async function create(
         `${height}px`,
       );
     },
+    setReadingMode(value, html) {
+      readingView?.show(value, html);
+      if (value) readingView?.focus();
+    },
+    getTypography: () => getNativeTypography(frame),
     async setReadOnly(value) {
       if (readOnly === value) return;
       await flush();
@@ -241,7 +266,7 @@ async function create(
       if (!sourceMode)
         element.getCurrentInstance()._disableSaving = previousDisableSaving;
       detach();
-      Zotero.Notifier.unregisterObserver(observerID);
+      unsubscribeNote();
       element.destroy();
     },
   };

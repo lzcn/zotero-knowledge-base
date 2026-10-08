@@ -1,5 +1,7 @@
 import { getAll, type ZettelRow, type LinkRow, type NoteKind } from "./db";
 import { getItemSummary } from "./zotero";
+import { getGraphGroups, getTagInheritance } from "./preferences";
+import { inheritCardTags, loadNativeTags } from "./note-tags";
 
 export interface GraphNode {
   id: string;
@@ -7,6 +9,7 @@ export interface GraphNode {
   reference?: string;
   tags?: string[];
   color?: string;
+  group?: string;
   kind: "card" | "source" | "unresolved";
   snippet: string;
   noteKind?: NoteKind;
@@ -39,7 +42,9 @@ export interface GraphOptions {
 /** No list-view LIMIT: isolated cards and cards beyond the first 500 belong
  * to the knowledge graph too. Sources are separate provenance nodes. */
 export async function getGraphData(): Promise<GraphData> {
-  const rows = await getAll<ZettelRow>("SELECT * FROM zettels ORDER BY id");
+  const rows = await getAll<ZettelRow>(
+    "SELECT * FROM zettels z WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY id",
+  );
   const links = await getAll<LinkRow>(
     "SELECT source_id, target_id, ref FROM links",
   );
@@ -55,7 +60,6 @@ export async function getGraphData(): Promise<GraphData> {
   const libraries = new Map(
     mappings.map((row) => [row.card_id, row.library_id]),
   );
-  const nativeTags = new Map<string, string[]>();
   const notes = await Promise.all(
     mappings.map(async (row) => ({
       row,
@@ -69,15 +73,16 @@ export async function getGraphData(): Promise<GraphData> {
     (entry): entry is typeof entry & { note: Zotero.Item } =>
       !!entry.note && entry.note.isNote() && !entry.note.isInTrash(),
   );
-  await Zotero.Items.loadDataTypes(
-    available.map(({ note }) => note!),
-    ["tags"],
+  const inherit = getTagInheritance();
+  const tagsByNote = await loadNativeTags(
+    available.map(({ note }) => note),
+    inherit,
   );
+  let nativeTags = new Map<string, string[]>();
   for (const { row, note } of available)
-    nativeTags.set(
-      row.card_id,
-      note!.getTags().map((tag) => tag.tag),
-    );
+    nativeTags.set(row.card_id, tagsByNote.get(note) || []);
+  if (inherit) nativeTags = inheritCardTags(nativeTags, parentMap);
+  const groups = getGraphGroups();
   const palette = [
     "#3478f6",
     "#30a46c",
@@ -109,13 +114,16 @@ export async function getGraphData(): Promise<GraphData> {
   for (const row of rows) {
     const tags = nativeTags.get(row.id) || [];
     const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
+    const group = groups.find((group) => group.tag && tags.includes(group.tag));
     nodes.set(row.id, {
       id: row.id,
       title: row.title || row.id,
       kind: "card",
       noteKind: row.kind,
       tags,
-      color: tags.length ? colorFor(tags, libraryID) : undefined,
+      color:
+        group?.color || (tags.length ? colorFor(tags, libraryID) : undefined),
+      group: group?.tag,
       parentId: parentMap.get(row.id) ?? null,
       snippet: row.body,
     });
@@ -133,6 +141,7 @@ export async function getGraphData(): Promise<GraphData> {
   for (const link of links) {
     if (
       !nodes.has(link.source_id) ||
+      (link.target_id && !nodes.has(link.target_id)) ||
       (!link.target_id && link.ref.startsWith("zotero://"))
     )
       continue;

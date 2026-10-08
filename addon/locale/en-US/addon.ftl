@@ -3,6 +3,12 @@ startup-finish = Knowledge Base ready
 startup-db-error = Failed to initialize the knowledge base. See Help → Debug Output Logging
 
 menu-open-manager = Knowledge Base
+pref-workbench-heading = Workbench
+pref-workbench-mode = Open in
+pref-workbench-tab =
+    .label = Zotero tab
+pref-workbench-window =
+    .label = Separate window
 pref-source-heading = Source References
 pref-source-style = Bibliography style
 pref-source-help = Uses styles installed in Zotero. Change or add styles in Settings → Cite.
@@ -134,7 +140,7 @@ editor-reference-insert = Insert item or note reference
 editor-link-pick = Insert note link
 editor-link-placeholder = Search note title, body or ID…
 editor-link-empty = No matching notes. You can also write [[New concept]].
-editor-reading = Reading view
+editor-reading = Reading View
 editor-mode = Editor mode
 editor-body-placeholder = Write in Markdown. Type [[ID]] to reference a card.
 editor-format-text = Text
@@ -251,18 +257,18 @@ manager-confirm-remove = Remove “{ $title }” from Knowledge Base? The origin
 
 relations-hierarchy = Hierarchy
 panel-resize = Resize panel
-health-note-trashed = The original note is in Trash. Cached content is retained.
-health-note-missing = The original note is unavailable. You can save the cached content as a new note.
+health-note-trashed = This note is in Zotero Trash. Restoring it reconnects the same card.
+health-note-missing = The original Zotero note is unavailable.
 health-source-trashed = The source is in Trash. The original link is retained.
 health-source-missing = The source is unavailable. Choose another source to relink it.
 health-restore = Restore original
-health-open-cache = Open cached note
 health-read-only = This library is read-only.
 editor-format-native = Rich text
 editor-format-markdown = Markdown
 graph-outline = Hierarchy
 graph-references = References
 graph-sources = Sources
+graph-hide-isolated = Hide isolated nodes
 
 preview-image-missing = Image unavailable
 
@@ -297,3 +303,20 @@ editor-change-parent = Change Parent…
 editor-key-invalid = Use a key without spaces, brackets, | or a leading @.
 
 editor-key-exists = This key belongs to another note.
+
+manager-deleted-notes = In Zotero Trash
+
+pref-tags-heading = Note tags
+pref-inherit-tags =
+    .label = Inherit parent tags
+pref-inherit-tags-help = Include tags from Zotero parent items and ancestor cards. Native note tags remain unchanged.
+pref-groups-heading = Graph groups
+pref-graph-label-length = Graph title length
+pref-graph-label-length-unit = characters
+pref-groups-help = Choose a tag and color for each group. The first matching group takes priority; matching notes cluster together.
+pref-add-group =
+    .label = New group
+graph-group-tag = Choose tag
+graph-group-color = Group color
+graph-group-up = Move up
+graph-group-remove = Remove group

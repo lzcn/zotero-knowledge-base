@@ -1,7 +1,8 @@
+import { isAccelKey } from "./platform";
 import { select as d3Select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
 import { edgePath, filterGraph } from "../modules/graph";
-import { createGraphLayout } from "./graph-layout";
+import { createAsyncGraphLayout } from "./graph-layout-controller";
 
 const api = /** @type {import("../modules/api").KnowledgeBaseAPI} */ (
   new Proxy({}, { get: (_, key) => window.Zotero.ZoteroKnowledgeBase.api[key] })
@@ -36,6 +37,7 @@ let unsubscribeOptions;
 let layoutKey = "";
 let simulation;
 let hoveredId;
+let viewMoved = false;
 const savedPositions = new Map();
 
 function svgElement(tag, attrs = {}) {
@@ -73,6 +75,18 @@ function visibleGraph() {
         ? options.references
         : options.sources,
   );
+  if (options.hideIsolated) {
+    const connected = new Set();
+    for (const edge of data.edges) {
+      if (edge.source === edge.target) continue;
+      connected.add(edge.source);
+      connected.add(edge.target);
+    }
+    data.nodes = data.nodes.filter((node) => connected.has(node.id));
+    data.edges = data.edges.filter(
+      (edge) => connected.has(edge.source) && connected.has(edge.target),
+    );
+  }
   return data;
 }
 function size() {
@@ -83,45 +97,77 @@ function size() {
   };
 }
 function applyTransform() {
-  updateLabels();
+  updatePositions();
   scene?.setAttribute(
     "transform",
     `translate(${transform.x},${transform.y}) scale(${transform.k})`,
   );
 }
-// Labels keep their reading size while zooming; reveal the active title in full.
+/** @param {import("./graph-layout").LayoutNode} node */
+function displayRadius(node) {
+  return Math.max(node.radius, 3.5 / transform.k);
+}
+function titleLabel(title) {
+  const chars = Array.from(title);
+  const limit = api.getGraphLabelLength();
+  return chars.slice(0, limit).join("") + (chars.length > limit ? "…" : "");
+}
+// Keep visible labels compact at every zoom; tooltips and details retain full titles.
 function updateLabels() {
+  const { width: viewportWidth, height: viewportHeight } = size();
+  const labelLimit = Math.max(
+    24,
+    Math.min(160, Math.floor((viewportWidth * viewportHeight) / 6500)),
+  );
+  for (const node of $("graph-svg").querySelectorAll("marker")) {
+    const marker = /** @type {SVGMarkerElement} */ (node);
+    marker.setAttribute("markerWidth", String(5 / transform.k));
+    marker.setAttribute("markerHeight", String(5 / transform.k));
+  }
   const occupied = [];
   const circles = layoutNodes.map((node) => ({
     id: node.id,
     x: node.x * transform.k + transform.x,
     y: node.y * transform.k + transform.y,
-    radius: node.radius * transform.k + 3,
+    radius: displayRadius(node) * transform.k + 3,
   }));
   const nodes = [...layoutNodes].sort(
     (a, b) =>
       Number(b.id === hoveredId) - Number(a.id === hoveredId) ||
       Number(b.id === selectedId) - Number(a.id === selectedId) ||
-      b.radius - a.radius,
+      b.radius - a.radius ||
+      Number(b.kind === "card") - Number(a.kind === "card"),
   );
   for (const node of nodes) {
     const group = nodeElements.get(node.id);
     if (!group) continue;
     const focused = node.id === selectedId || node.id === hoveredId;
+    const hub = node.radius >= 12;
+    group.classList.toggle("hub", hub);
+    const radius = displayRadius(node);
+    group.querySelector(".graph-node-dot").setAttribute("r", String(radius));
+    group
+      .querySelector(".graph-node-ring")
+      .setAttribute("r", String(radius + 4 / transform.k));
     const label = group.querySelector("text");
-    const chars = Array.from(node.title);
-    label.textContent = focused
-      ? node.title
-      : chars.slice(0, 16).join("") + (chars.length > 16 ? "…" : "");
+    label.textContent = titleLabel(node.title);
     label.style.fontSize = `${12 / transform.k}px`;
     label.style.strokeWidth = `${4 / transform.k}px`;
-    label.setAttribute("y", String(node.radius + 16 / transform.k));
+    label.setAttribute("y", String(radius + 16 / transform.k));
+    if (
+      !focused &&
+      (occupied.length >= labelLimit ||
+        (transform.k < 0.18 && !group.classList.contains("highlighted")))
+    ) {
+      group.classList.add("label-hidden");
+      continue;
+    }
     const width = Array.from(label.textContent).reduce(
       (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
       0,
     );
     const x = node.x * transform.k + transform.x - width / 2;
-    const y = (node.y + node.radius) * transform.k + transform.y + 4;
+    const y = (node.y + radius) * transform.k + transform.y + 4;
     const rect = { x, y, right: x + width + 8, bottom: y + 22 };
     const overlaps = occupied.some(
       (other) =>
@@ -130,21 +176,26 @@ function updateLabels() {
         rect.y < other.bottom &&
         rect.bottom > other.y,
     );
-    const coversNode = circles.some(
-      (circle) =>
-        circle.id !== node.id &&
-        rect.x < circle.x + circle.radius &&
-        rect.right > circle.x - circle.radius &&
-        rect.y < circle.y + circle.radius &&
-        rect.bottom > circle.y - circle.radius,
-    );
+    const coversNode =
+      !overlaps &&
+      circles.some(
+        (circle) =>
+          circle.id !== node.id &&
+          rect.x < circle.x + circle.radius &&
+          rect.right > circle.x - circle.radius &&
+          rect.y < circle.y + circle.radius &&
+          rect.bottom > circle.y - circle.radius,
+      );
     const visible =
       focused ||
-      ((transform.k >= 0.4 || group.classList.contains("highlighted")) &&
-        occupied.length < 80 &&
+      ((transform.k >= 0.18 || group.classList.contains("highlighted")) &&
+        occupied.length < labelLimit &&
+        rect.right > 0 &&
+        rect.x < viewportWidth &&
+        rect.bottom > 0 &&
+        rect.y < viewportHeight &&
         !overlaps &&
-        !coversNode &&
-        !group.classList.contains("dimmed"));
+        (hub || !coversNode));
     group.classList.toggle("label-hidden", !visible);
     if (visible) occupied.push(rect);
   }
@@ -159,10 +210,10 @@ function fit() {
     maxY = -Infinity;
   for (const node of nodes) {
     const halfWidth =
-      Array.from(node.title)
-        .slice(0, 24)
-        .reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7), 0) /
-      2;
+      Array.from(titleLabel(node.title)).reduce(
+        (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
+        0,
+      ) / 2;
     minX = Math.min(minX, node.x - halfWidth - 24);
     maxX = Math.max(maxX, node.x + halfWidth + 24);
     minY = Math.min(minY, node.y - 30);
@@ -170,7 +221,11 @@ function fit() {
   }
   const k = Math.max(
     0.0001,
-    Math.min(1, width / (maxX - minX), height / (maxY - minY)),
+    Math.min(
+      1,
+      Math.max(80, width - 64) / (maxX - minX),
+      Math.max(80, height - 80) / (maxY - minY),
+    ),
   );
   transform = {
     x: width / 2 - ((minX + maxX) / 2) * k,
@@ -187,9 +242,32 @@ function fit() {
 function render() {
   $("graph-legend-sources").hidden = !api.getGraphOptions().sources;
   const data = visibleGraph();
+  const legend = $("graph-groups-legend");
+  legend.replaceChildren();
+  const groups = new Map(
+    data.nodes
+      .filter((node) => node.group)
+      .map((node) => [node.group, node.color]),
+  );
+  legend.hidden = !groups.size;
+  for (const [tag, color] of groups) {
+    const label = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    label.className = "graph-group-legend";
+    const swatch = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    swatch.className = "graph-group-swatch";
+    swatch.style.backgroundColor = color;
+    label.append(swatch, document.createTextNode(tag));
+    legend.append(label);
+  }
   const nextKey = JSON.stringify([
-    graph.nodes.map((node) => node.id),
-    graph.edges,
+    graph.nodes.map((node) => [node.id, node.group]),
+    graph.edges.map(({ source, target, kind }) => [source, target, kind]),
   ]);
   const retainLayout = nextKey === layoutKey;
   simulation?.stop();
@@ -201,7 +279,7 @@ function render() {
     if (!graphNodes.has(id)) savedPositions.delete(id);
   const firstLayout = !layoutKey || !layoutNodes.length;
   layoutKey = nextKey;
-  simulation = createGraphLayout(data, savedPositions, !retainLayout);
+  simulation = createAsyncGraphLayout(data, savedPositions, !retainLayout);
   const nodes = simulation.nodes();
   const edges = data.edges.map((edge) => ({ ...edge }));
   const svg = $("graph-svg");
@@ -209,19 +287,25 @@ function render() {
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
   const defs = svgElement("defs");
-  const marker = svgElement("marker", {
-    id: "graph-arrow",
-    viewBox: "0 0 10 10",
-    refX: 9,
-    refY: 5,
-    markerWidth: 6,
-    markerHeight: 6,
-    orient: "auto",
-  });
-  marker.appendChild(
-    svgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "var(--muted)" }),
-  );
-  defs.appendChild(marker);
+  for (const [id, color] of [
+    ["graph-arrow", "var(--graph-link)"],
+    ["graph-arrow-highlighted", "var(--accent)"],
+  ]) {
+    const marker = svgElement("marker", {
+      id,
+      viewBox: "0 0 10 10",
+      refX: 9,
+      refY: 5,
+      markerWidth: 6,
+      markerHeight: 6,
+      markerUnits: "userSpaceOnUse",
+      orient: "auto",
+    });
+    marker.appendChild(
+      svgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: color }),
+    );
+    defs.appendChild(marker);
+  }
   svg.appendChild(defs);
   scene = svgElement("g");
   svg.appendChild(scene);
@@ -252,15 +336,18 @@ function render() {
       "data-node-id": node.id,
     });
     if (node.color) group.style.setProperty("--node-color", node.color);
-    group.appendChild(svgElement("circle", { r: node.radius }));
+    group.appendChild(
+      svgElement("circle", { class: "graph-node-dot", r: node.radius }),
+    );
+    group.appendChild(
+      svgElement("circle", { class: "graph-node-ring", r: node.radius + 4 }),
+    );
     const label = svgElement("text", {
       x: 0,
       y: node.radius + 18,
       "text-anchor": "middle",
     });
-    const titleChars = Array.from(node.title);
-    label.textContent =
-      titleChars.slice(0, 24).join("") + (titleChars.length > 24 ? "…" : "");
+    label.textContent = titleLabel(node.title);
     group.appendChild(label);
     const title = svgElement("title");
     title.textContent = `${node.title}\n${(node.tags || []).join(" · ")}\n${node.snippet}`;
@@ -290,7 +377,7 @@ function render() {
       if (ev.key === "Enter") run(() => openNode(node));
     });
     group.addEventListener("pointerdown", (ev) => {
-      if (ev.button !== 0) return;
+      if (ev.button !== 0 || (window.Zotero.isMac && ev.ctrlKey)) return;
       ev.stopPropagation();
       drag = node;
       dragMoved = false;
@@ -305,7 +392,14 @@ function render() {
   layoutNodes = nodes;
   const tick = () => {
     for (const { edge, line } of renderedEdges) {
-      line.setAttribute("d", edgePath(edge.source, edge.target, edge.kind));
+      line.setAttribute(
+        "d",
+        edgePath(
+          { ...edge.source, radius: displayRadius(edge.source) },
+          { ...edge.target, radius: displayRadius(edge.target) },
+          edge.kind,
+        ),
+      );
     }
     for (const node of nodes)
       nodeElements
@@ -315,7 +409,19 @@ function render() {
   };
   tick();
   updatePositions = tick;
-  simulation.on("tick", tick);
+  const reduceMotion = window.matchMedia?.(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  simulation.on("tick", () => {
+    if (!reduceMotion || drag) tick();
+  });
+  simulation.on("worker", () => {
+    svg.dataset.layoutThread = "worker";
+  });
+  simulation.on("end", () => {
+    tick();
+    if (firstLayout && !viewMoved) fit();
+  });
   if (firstLayout) fit();
   else applyTransform();
   $("graph-empty").hidden = nodes.length > 0;
@@ -328,21 +434,11 @@ function render() {
 function highlight() {
   const focusId = hoveredId || selectedId;
   const query = $("graph-search").value.trim().toLowerCase();
-  const neighbors = new Set(focusId ? [focusId] : []);
-  if (focusId)
-    for (const edge of visibleGraph().edges) {
-      if (edge.source === focusId) neighbors.add(edge.target);
-      if (edge.target === focusId) neighbors.add(edge.source);
-    }
   const matched = new Set();
   for (const node of layoutNodes) {
     if (
-      focusId
-        ? neighbors.has(node.id)
-        : query &&
-          `${node.title} ${node.id} ${node.snippet}`
-            .toLowerCase()
-            .includes(query)
+      query &&
+      `${node.title} ${node.id} ${node.snippet}`.toLowerCase().includes(query)
     )
       matched.add(node.id);
   }
@@ -350,7 +446,6 @@ function highlight() {
   for (const [id, element] of nodeElements) {
     element.classList.toggle("selected", id === selectedId);
     element.classList.toggle("highlighted", matched.has(id));
-    element.classList.toggle("dimmed", active && !matched.has(id));
     element.classList.toggle("hovered", id === hoveredId);
   }
   for (const { edge, line } of renderedEdges) {
@@ -358,7 +453,13 @@ function highlight() {
       ? edge.source.id === focusId || edge.target.id === focusId
       : matched.has(edge.source.id) || matched.has(edge.target.id);
     line.classList.toggle("highlighted", active && connected);
-    line.classList.toggle("dimmed", active && !connected);
+    if (edge.kind !== "source")
+      line.setAttribute(
+        "marker-end",
+        connected && active
+          ? "url(#graph-arrow-highlighted)"
+          : "url(#graph-arrow)",
+      );
   }
   const activeNode = nodeElements.get(focusId);
   if (activeNode && scene.lastElementChild !== activeNode)
@@ -547,28 +648,27 @@ async function load() {
     button.setAttribute("tooltiptext", label);
     button.setAttribute("aria-label", label);
   }
+  const optionControls =
+    /** @type {[keyof import("../modules/preferences").GraphOptions, string][]} */ ([
+      ["outline", "graph-outline"],
+      ["references", "graph-references"],
+      ["sources", "graph-sources"],
+      ["hideIsolated", "graph-hide-isolated"],
+    ]);
   const syncOptions = () => {
     const options = api.getGraphOptions();
-    for (const name of /** @type {("outline" | "references" | "sources")[]} */ ([
-      "outline",
-      "references",
-      "sources",
-    ])) {
+    for (const [name, id] of optionControls) {
       const control = /** @type {HTMLElement & {checked: boolean}} */ (
-        document.getElementById(`graph-${name}`)
+        document.getElementById(id)
       );
-      control.setAttribute("label", api.loc(`graph-${name}`));
+      control.setAttribute("label", api.loc(id));
       control.checked = options[name];
     }
   };
   syncOptions();
-  for (const name of /** @type {("outline" | "references" | "sources")[]} */ ([
-    "outline",
-    "references",
-    "sources",
-  ])) {
+  for (const [name, id] of optionControls) {
     const control = /** @type {HTMLElement & {checked: boolean}} */ (
-      document.getElementById(`graph-${name}`)
+      document.getElementById(id)
     );
     control.addEventListener("command", () =>
       api.setGraphOption(name, control.checked),
@@ -617,9 +717,12 @@ async function load() {
         event.type !== "dblclick" &&
         !drag &&
         (event.type === "wheel" ||
-          (!event.button && !event.target.closest(".graph-node"))),
+          (!event.button &&
+            !(window.Zotero.isMac && event.ctrlKey) &&
+            !event.target.closest(".graph-node"))),
     )
     .on("zoom", (event) => {
+      if (event.sourceEvent) viewMoved = true;
       transform = {
         x: event.transform.x,
         y: event.transform.y,
@@ -627,6 +730,28 @@ async function load() {
       };
       applyTransform();
     });
+  $("graph-svg").addEventListener(
+    "wheel",
+    (event) => {
+      if (!window.Zotero.isMac || event.ctrlKey || event.metaKey || drag)
+        return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      viewMoved = true;
+      const unit =
+        event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? size().height : 1;
+      d3Select($("graph-svg")).call(
+        zoomBehavior.transform,
+        zoomIdentity
+          .translate(
+            transform.x - event.deltaX * unit,
+            transform.y - event.deltaY * unit,
+          )
+          .scale(transform.k),
+      );
+    },
+    { capture: true, passive: false },
+  );
   d3Select($("graph-svg")).call(zoomBehavior).on("dblclick.zoom", null);
   $("graph-svg").addEventListener("pointermove", (ev) => {
     if (drag) {
@@ -642,6 +767,8 @@ async function load() {
       drag.fy = y;
       drag.x = drag.fx;
       drag.y = drag.fy;
+      viewMoved = true;
+      simulation.restart();
       updatePositions();
     }
   });
@@ -649,7 +776,7 @@ async function load() {
     if (drag) {
       drag.fx = null;
       drag.fy = null;
-      simulation.alphaTarget(0);
+      simulation.alphaTarget(0).restart();
       updatePositions();
     }
     drag = null;
@@ -662,7 +789,7 @@ async function load() {
       hoveredId = undefined;
       select(undefined);
     }
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+    if (isAccelKey(event) && event.key.toLowerCase() === "w") {
       event.preventDefault();
       window.close();
     }
@@ -671,7 +798,17 @@ async function load() {
     const { width, height } = size();
     $("graph-svg").setAttribute("viewBox", `0 0 ${width} ${height}`);
   });
-  unsubscribe = api.onDataChange(() => {
+  unsubscribe = api.onDataChange((change) => {
+    if (
+      change &&
+      !change.all &&
+      !change.cardIDs.some((id) => graphNodes.has(id)) &&
+      !change.itemKeys.some((key) =>
+        graph.nodes.some((node) => node.itemKey === key),
+      ) &&
+      !change.fields.includes("availability")
+    )
+      return;
     clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => run(refresh), 180);
   });

@@ -26,17 +26,35 @@ function escapeHTML(text: string): string {
   );
 }
 
+const blockMath =
+  /^ {0,3}\$\$[ \t]*\n?([\s\S]+?)\n?[ \t]*\$\$(?:[ \t]*(?:\n|$))?/;
+
 const markdown = new Marked({
   gfm: true,
   async: false,
+  tokenizer: {
+    lheading(src) {
+      const heading = this.rules.block.lheading.exec(src);
+      const start = src.search(/^ {0,3}\$\$/m);
+      // Setext headings look ahead across paragraphs before startBlock is used.
+      // Let the math extension consume a formula containing a standalone '='.
+      if (
+        heading &&
+        start >= 0 &&
+        start < heading[0].length &&
+        blockMath.test(src.slice(start))
+      )
+        return;
+      return false;
+    },
+  },
   extensions: [
     {
       name: "blockMath",
       level: "block",
       start: (src) => src.indexOf("$$"),
       tokenizer(src) {
-        const match =
-          /^ {0,3}\$\$[ \t]*\n?([\s\S]+?)\n?[ \t]*\$\$[ \t]*(?:\n|$)/.exec(src);
+        const match = blockMath.exec(src);
         if (match) return { type: "blockMath", raw: match[0], latex: match[1] };
       },
       renderer: (token) =>

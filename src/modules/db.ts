@@ -10,7 +10,7 @@
  */
 
 const DB_FILENAME = "knowledge-base.sqlite";
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 11;
 
 export type NoteKind = "literature" | "zettel" | "thinking";
 
@@ -35,6 +35,8 @@ export interface LinkRow {
 }
 
 const SCHEMA_TABLES: string[] = [
+  `CREATE TABLE IF NOT EXISTS unavailable_notes (card_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('missing', 'trashed')))`,
+  `CREATE TABLE IF NOT EXISTS note_save_operations (id TEXT PRIMARY KEY, card_id TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS note_keys (key TEXT PRIMARY KEY, card_id TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, UNIQUE(note_key, library_id))`,
   `CREATE TABLE IF NOT EXISTS editor_drafts (id TEXT PRIMARY KEY, body TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
@@ -46,6 +48,7 @@ const SCHEMA_TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS zettels (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL DEFAULT '',
+    title_folded TEXT NOT NULL DEFAULT '',
     body TEXT NOT NULL DEFAULT '',
     item_key TEXT,
     library_id INTEGER,
@@ -59,6 +62,7 @@ const SCHEMA_TABLES: string[] = [
     source_id TEXT NOT NULL,
     target_id TEXT,
     ref TEXT NOT NULL,
+    ref_folded TEXT NOT NULL DEFAULT '',
     UNIQUE(source_id, ref)
   )`,
   `CREATE TABLE IF NOT EXISTS tags (
@@ -76,6 +80,8 @@ const SCHEMA_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_id)`,
   `CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_id)`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_title ON zettels(title)`,
+  `CREATE INDEX IF NOT EXISTS idx_zettels_title_folded ON zettels(title_folded)`,
+  `CREATE INDEX IF NOT EXISTS idx_links_unresolved_ref ON links(ref_folded) WHERE target_id IS NULL`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_updated ON zettels(updated_at)`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_item ON zettels(item_key)`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_annotation ON zettels(annotation_key)`,
@@ -180,6 +186,32 @@ async function ensureSchema(): Promise<void> {
     );
   if (!columns.some((column) => column.name === "custom_key"))
     await exec("ALTER TABLE zettels ADD COLUMN custom_key TEXT");
+  if (!columns.some((column) => column.name === "title_folded"))
+    await exec(
+      "ALTER TABLE zettels ADD COLUMN title_folded TEXT NOT NULL DEFAULT ''",
+    );
+  const linkColumns = await getAll<{ name: string }>(
+    "PRAGMA table_info(links)",
+  );
+  if (!linkColumns.some((column) => column.name === "ref_folded"))
+    await exec(
+      "ALTER TABLE links ADD COLUMN ref_folded TEXT NOT NULL DEFAULT ''",
+    );
+  // JavaScript case folding preserves the existing Unicode title matching behavior.
+  for (const row of await getAll<{ id: string; title: string }>(
+    "SELECT id, title FROM zettels WHERE title_folded = '' AND title <> ''",
+  ))
+    await exec("UPDATE zettels SET title_folded = ? WHERE id = ?", [
+      row.title.toLowerCase(),
+      row.id,
+    ]);
+  for (const row of await getAll<{ source_id: string; ref: string }>(
+    "SELECT source_id, ref FROM links WHERE ref_folded = ''",
+  ))
+    await exec(
+      "UPDATE links SET ref_folded = ? WHERE source_id = ? AND ref = ?",
+      [row.ref.toLowerCase(), row.source_id, row.ref],
+    );
   const mappings = await getAll<{ name: string }>(
     "PRAGMA table_info(card_notes)",
   );
@@ -201,13 +233,47 @@ async function ensureSchema(): Promise<void> {
   await exec(
     `INSERT OR IGNORE INTO card_parents (card_id, parent_id) SELECT id, NULL FROM zettels`,
   );
+  await ensureSearchIndex();
   await assertSchema();
+}
+
+async function ensureSearchIndex(): Promise<void> {
+  const existing = await getAll<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('search_terms', 'search_documents', 'search_dirty')",
+  );
+  // Gecko's SQLite lacks the FTS modules. Keep this rebuildable index in ordinary tables.
+  await exec(
+    "CREATE TABLE IF NOT EXISTS search_documents (card_id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, custom_key TEXT NOT NULL)",
+  );
+  await exec(
+    "CREATE TABLE IF NOT EXISTS search_terms (term TEXT NOT NULL, card_id TEXT NOT NULL, PRIMARY KEY(term, card_id)) WITHOUT ROWID",
+  );
+  await exec(
+    "CREATE INDEX IF NOT EXISTS idx_search_card ON search_terms(card_id)",
+  );
+  await exec(
+    "CREATE TABLE IF NOT EXISTS search_dirty (card_id TEXT PRIMARY KEY)",
+  );
+  await exec(`CREATE TRIGGER IF NOT EXISTS zettel_search_insert AFTER INSERT ON zettels BEGIN
+    INSERT OR IGNORE INTO search_dirty(card_id) VALUES (new.id); END`);
+  await exec(`CREATE TRIGGER IF NOT EXISTS zettel_search_delete AFTER DELETE ON zettels BEGIN
+    DELETE FROM search_terms WHERE card_id = old.id;
+    DELETE FROM search_documents WHERE card_id = old.id;
+    DELETE FROM search_dirty WHERE card_id = old.id; END`);
+  await exec(`CREATE TRIGGER IF NOT EXISTS zettel_search_update AFTER UPDATE OF title, body, custom_key ON zettels
+    WHEN old.title <> new.title OR old.body <> new.body OR old.custom_key IS NOT new.custom_key BEGIN
+    INSERT OR IGNORE INTO search_dirty(card_id) VALUES (new.id); END`);
+  if (existing.length !== 3)
+    await exec(
+      "INSERT OR IGNORE INTO search_dirty(card_id) SELECT id FROM zettels",
+    );
 }
 
 /** Columns `zettels` must have in the current schema. */
 const REQUIRED_COLUMNS = [
   "id",
   "title",
+  "title_folded",
   "body",
   "item_key",
   "library_id",

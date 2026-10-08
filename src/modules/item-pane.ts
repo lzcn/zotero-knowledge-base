@@ -11,6 +11,7 @@ import { isPersonalKnowledgeItem } from "./zotero";
 import { onDataChange } from "./events";
 
 const subscriptions = new Map<HTMLElement, () => void>();
+const sectionItems = new WeakMap<HTMLElement, Zotero.Item>();
 
 let sectionID: string | undefined;
 let columnID: string | false;
@@ -61,7 +62,18 @@ export async function registerItemPaneUI(): Promise<void> {
       }) => {
         subscriptions.set(
           body,
-          onDataChange(() => {
+          onDataChange((change) => {
+            const item = sectionItems.get(body);
+            if (
+              change &&
+              !change.all &&
+              (!change.fields.some((field) =>
+                ["identity", "source", "availability"].includes(field),
+              ) ||
+                (!(item && isPersonalKnowledgeItem(item)) &&
+                  !change.itemKeys.includes(item?.key || "")))
+            )
+              return;
             void refresh().catch((error: Error) => Zotero.logError(error));
           }),
         );
@@ -71,6 +83,7 @@ export async function registerItemPaneUI(): Promise<void> {
         subscriptions.delete(body);
       },
       onRender: ({ body, item }: { body: HTMLElement; item: Zotero.Item }) => {
+        sectionItems.set(body, item);
         renderSection(body, item);
       },
     }) || undefined;

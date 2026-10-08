@@ -24,6 +24,10 @@ export function attachMarkdownToggle(
   });
   const style = frame.document.createElement("style");
   style.textContent = `
+    /* Keep the last line within reach without adding saved document nodes. */
+    #editor-container .editor .editor-core .primary-editor {
+      padding-block-end: max(var(--editor-padding-block, 20px), 50vh);
+    }
     .toolbar .knowledge-base-markdown-toggle,
     .toolbar .knowledge-base-note-link {
       display: inline-flex; align-items: center; justify-content: center;
@@ -38,9 +42,9 @@ export function attachMarkdownToggle(
     .toolbar .knowledge-base-markdown-toggle:focus-visible,
     .toolbar .knowledge-base-note-link:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
     .knowledge-base-markdown-toggle.active { background: var(--fill-quarternary, #e6e9ee); border-radius: 4px; }
-    .knowledge-base-source-mode .primary-editor { visibility: hidden; pointer-events: none; }
+    .knowledge-base-source-mode .primary-editor:not(.knowledge-base-reading-content) { visibility: hidden; pointer-events: none; }
     .knowledge-base-source-mode .toolbar .middle,
-    .knowledge-base-source-mode .toolbar .center { visibility: hidden; pointer-events: none; }
+    .knowledge-base-source-mode .toolbar .center { opacity: .5; pointer-events: none; }
   `;
   frame.document.head.append(style);
   const insert = () => {
@@ -73,4 +77,26 @@ export function attachMarkdownToggle(
       },
     },
   );
+}
+
+/** Match the user's actual Zotero note font, zoom and comfortable/compact width. */
+export function getNativeTypography(frame: Window): Record<string, string> {
+  const primary = frame.document.querySelector(".primary-editor");
+  if (!primary) return {};
+  const style = frame.getComputedStyle(primary);
+  const paragraph = primary.querySelector("p") || primary;
+  const paragraphStyle = frame.getComputedStyle(paragraph);
+  const parentStyle = frame.getComputedStyle(primary.parentElement!);
+  if (!style || !paragraphStyle || !parentStyle) return {};
+  return {
+    "font-family": style.fontFamily,
+    "font-size": style.fontSize,
+    "line-height": paragraphStyle.lineHeight,
+    "letter-spacing": style.letterSpacing,
+    color: style.color,
+    background: parentStyle.backgroundColor,
+    "padding-inline": style.paddingInlineStart,
+    "padding-block": style.paddingBlockStart,
+    "max-width": style.maxWidth,
+  };
 }

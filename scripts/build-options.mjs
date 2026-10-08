@@ -2,6 +2,12 @@
 export function buildOptions(pkg, environment, outputDirectory = "dist/addon") {
   return [
     {
+      entryPoints: ["src/ui/graph-layout-worker.ts"],
+      bundle: true,
+      target: "firefox115",
+      outfile: `${outputDirectory}/content/graph-layout-worker.js`,
+    },
+    {
       entryPoints: ["src/ui/markdown-source.ts"],
       bundle: true,
       target: "firefox115",

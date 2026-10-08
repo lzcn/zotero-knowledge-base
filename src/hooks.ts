@@ -5,6 +5,7 @@ import {
   initNativeNotes,
   closeNativeNotes,
   stopNativeNotes,
+  recoverNativeSaves,
 } from "./modules/native-notes";
 import {
   initNativeMarkdown,
@@ -12,6 +13,11 @@ import {
   closeNativeMarkdown,
 } from "./modules/native-markdown";
 import { rebuildCounts } from "./modules/zettel";
+import {
+  initNoteSessions,
+  stopNoteSessions,
+  closeNoteSessions,
+} from "./modules/note-sessions";
 import { stopWorkbenches, closeWorkbenches } from "./modules/workbench";
 import {
   registerPreferences,
@@ -72,6 +78,11 @@ async function start(token: number): Promise<void> {
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
       ["initAssets", initAssets],
+      ["noteSessions", initNoteSessions],
+      [
+        "recoverNativeSaves",
+        () => recoverNativeSaves(() => token !== generation),
+      ],
       ["nativeNotes", initNativeNotes],
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
@@ -147,6 +158,17 @@ async function onMainWindowLoad(win: Window): Promise<void> {
     addMenu("menu_ToolsPopup", "menu-open-manager", "menu-open-manager", () =>
       addon.api.openManager(),
     );
+    const toolbar = doc.getElementById("zotero-items-toolbar");
+    if (!toolbar)
+      throw new Error("Missing Zotero toolbar: zotero-items-toolbar");
+    const button = doc.createXULElement("toolbarbutton");
+    button.id = `${config.addonRef}-toolbar-button`;
+    button.classList.add("zotero-tb-button");
+    button.setAttribute("tooltiptext", getString("menu-open-manager"));
+    button.setAttribute("aria-label", getString("menu-open-manager"));
+    button.addEventListener("command", () => addon.api.openManager());
+    toolbar.insertBefore(button, toolbar.querySelector(":scope > spacer"));
+    nodes.push(button);
     addMenu("zotero-itemmenu", "itemmenu-new-card", "menu-new-zettel", () => {
       const pane = (
         win as Window & {
@@ -182,6 +204,7 @@ async function releaseResources(): Promise<void> {
     () => {
       for (const kind of [
         "manager",
+        "workbench",
         "editor",
         "graph",
         "annotations",
@@ -197,6 +220,7 @@ async function releaseResources(): Promise<void> {
     unregisterPreferences,
     closeNativeMarkdown,
     closeNativeNotes,
+    closeNoteSessions,
     closeAssets,
     () => ztoolkit.unregisterAll(),
     closeDB,
@@ -235,6 +259,7 @@ function onAppShutdown(): void {
   }
   stopNativeMarkdown();
   stopNativeNotes();
+  stopNoteSessions();
   ++generation;
   ready = false;
   addon.data.alive = false;

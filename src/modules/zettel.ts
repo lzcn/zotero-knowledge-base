@@ -12,11 +12,13 @@ import {
 } from "./db";
 import { saveParent, removeParent } from "./hierarchy";
 import { parseCardLinks } from "./markdown";
-import { notifyDataChange } from "./events";
+import { notifyDataChange, type DataField } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
 import { getNoteReferences } from "./note-references";
+import { searchRows, type SearchOptions } from "./search";
 
 export interface Zettel extends ZettelRow {
+  searchRank?: number;
   reference?: string;
   outgoing: number;
   incoming: number;
@@ -77,7 +79,17 @@ export async function resolveRefs(
   shouldStop = () => false,
 ): Promise<Map<string, string>> {
   const map = new Map<string, string>();
+  refs = [...new Set(refs)];
   if (!refs.length || shouldStop()) return map;
+  if (refs.length > 400) {
+    for (let offset = 0; offset < refs.length && !shouldStop(); offset += 400)
+      for (const [ref, id] of await resolveRefs(
+        refs.slice(offset, offset + 400),
+        shouldStop,
+      ))
+        map.set(ref, id);
+    return map;
+  }
   const placeholders = refs.map(() => "?").join(",");
   // Native note hyperlinks retain their user-written labels and URLs.
   for (const ref of refs) {
@@ -137,20 +149,32 @@ export async function resolveRefs(
     refs,
   );
   if (shouldStop()) return map;
-  for (const r of byTitle)
-    if (!r.title.startsWith("@") && !map.has(r.title)) map.set(r.title, r.id);
-  // by title, case-insensitive fallback
-  const lower = new Map<string, string>();
-  const all = await getAll<{ id: string; title: string }>(
-    `SELECT id, title FROM zettels`,
+  const exact = new Map<string, string[]>();
+  for (const row of byTitle) {
+    const ids = exact.get(row.title) ?? [];
+    ids.push(row.id);
+    exact.set(row.title, ids);
+  }
+  for (const [title, ids] of exact)
+    if (ids.length === 1 && !title.startsWith("@") && !map.has(title))
+      map.set(title, ids[0]);
+  const remaining = refs.filter((ref) => !ref.startsWith("@") && !map.has(ref));
+  if (!remaining.length) return map;
+  const foldedRefs = [...new Set(remaining.map((ref) => ref.toLowerCase()))];
+  const lower = new Map<string, string[]>();
+  const candidates = await getAll<{ id: string; title_folded: string }>(
+    `SELECT id, title_folded FROM zettels WHERE title_folded IN (${foldedRefs.map(() => "?").join(",")})`,
+    foldedRefs,
   );
   if (shouldStop()) return map;
-  for (const r of all) if (r.title) lower.set(r.title.toLowerCase(), r.id);
-  for (const ref of refs) {
-    if (!ref.startsWith("@") && !map.has(ref)) {
-      const hit = lower.get(ref.toLowerCase());
-      if (hit) map.set(ref, hit);
-    }
+  for (const row of candidates) {
+    const ids = lower.get(row.title_folded) ?? [];
+    ids.push(row.id);
+    lower.set(row.title_folded, ids);
+  }
+  for (const ref of remaining) {
+    const ids = lower.get(ref.toLowerCase());
+    if (ids?.length === 1) map.set(ref, ids[0]);
   }
   return map;
 }
@@ -203,49 +227,40 @@ export async function listZettels(
   entriesOnly = false,
   kind?: NoteKind,
 ): Promise<Zettel[]> {
-  if (kind && !["literature", "zettel", "thinking"].includes(kind))
-    throw new Error("Invalid note type");
-  const entryFilter =
-    (kind ? `kind = '${kind}' AND ` : "") +
-    (entriesOnly
-      ? "id IN (SELECT card_id FROM card_parents WHERE parent_id IS NULL)"
-      : "1 = 1");
-  const q = query.trim();
-  let rows: ZettelRow[];
-  if (q) {
-    const like = `%${q}%`;
-    rows = await getAll<ZettelRow>(
-      `SELECT * FROM zettels
-       WHERE (${entryFilter}) AND (title LIKE ? OR body LIKE ? OR id LIKE ?)
-       ORDER BY updated_at DESC LIMIT 500`,
-      [like, like, like],
+  return (await searchZettels(query, { entriesOnly, kind, limit: 500 })).items;
+}
+
+export async function searchZettels(query = "", options: SearchOptions = {}) {
+  const page = await searchRows(query, options);
+  const items: Zettel[] = [];
+  // Only count links for the returned page, rather than grouping the entire graph.
+  for (let offset = 0; offset < page.rows.length; offset += 400) {
+    const rows = page.rows.slice(offset, offset + 400);
+    const ids = rows.map((row) => row.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const counts = await getAll<{
+      id: string;
+      outgoing: number;
+      incoming: number;
+    }>(
+      `SELECT z.id,
+       (SELECT COUNT(*) FROM links WHERE source_id = z.id AND target_id IS NOT NULL) AS outgoing,
+       (SELECT COUNT(*) FROM links WHERE target_id = z.id) AS incoming
+       FROM zettels z WHERE z.id IN (${placeholders})`,
+      ids,
     );
-  } else {
-    rows = await getAll<ZettelRow>(
-      `SELECT * FROM zettels WHERE ${entryFilter} ORDER BY updated_at DESC LIMIT 500`,
-    );
+    const byID = new Map(counts.map((row) => [row.id, row]));
+    for (const row of rows)
+      items.push({
+        ...rowToZettel(
+          row,
+          byID.get(row.id)?.outgoing ?? 0,
+          byID.get(row.id)?.incoming ?? 0,
+        ),
+        searchRank: row.search_rank,
+      });
   }
-  const counts = await getAll<{
-    source_id: string;
-    outgoing: number;
-    incoming: number;
-  }>(
-    `SELECT source_id,
-       SUM(CASE WHEN target_id IS NOT NULL THEN 1 ELSE 0 END) AS outgoing,
-       0 AS incoming
-     FROM links GROUP BY source_id`,
-  );
-  const incoming = await getAll<{ target_id: string; incoming: number }>(
-    `SELECT target_id, COUNT(*) AS incoming FROM links
-     WHERE target_id IS NOT NULL GROUP BY target_id`,
-  );
-  const outMap = new Map(counts.map((c) => [c.source_id, c.outgoing]));
-  const inMap = new Map(
-    incoming.map((c) => [c.target_id as string, c.incoming]),
-  );
-  return rows.map((r) =>
-    rowToZettel(r, outMap.get(r.id) ?? 0, inMap.get(r.id) ?? 0),
-  );
+  return { items, cursor: page.cursor };
 }
 
 /** All zettels whose source is the given Zotero item, newest first. */
@@ -406,10 +421,18 @@ export async function saveEditorCard(
   const body = input.body;
 
   const result = await transaction(async () => {
+    const fields = new Set<DataField>();
+    const affected = new Set<string>();
     let id: string;
     let previousItemKey: string | null = null;
     let effectiveAnnotationKey: string | null = input.annotationKey ?? null;
     const previous = input.id ? await getZettel(input.id) : null;
+    const previousParent = input.id
+      ? await getOne<{ parent_id: string | null }>(
+          "SELECT parent_id FROM card_parents WHERE card_id = ?",
+          [input.id],
+        )
+      : null;
     if (
       input.expectedUpdatedAt !== undefined &&
       (previous?.updated_at ?? null) !== input.expectedUpdatedAt
@@ -453,7 +476,31 @@ export async function saveEditorCard(
       if (existing && existing.id !== input.id)
         throw new Error("LITERATURE_EXISTS");
     }
-    if (previous) now = Math.max(now, previous.updated_at + 1);
+    if (!previous || title !== previous.title || body !== previous.body)
+      fields.add("content");
+    if (
+      !previous ||
+      title !== previous.title ||
+      kind !== previous.kind ||
+      customKey !== previous.custom_key
+    )
+      fields.add("identity");
+    if (
+      !previous ||
+      (input.itemKey ?? null) !== previous.item_key ||
+      (input.libraryID ?? null) !== previous.library_id
+    )
+      fields.add("source");
+    if (!previous) fields.add("availability");
+    if (
+      !previous ||
+      (input.parentId !== undefined &&
+        input.parentId !== (previousParent?.parent_id ?? null))
+    ) {
+      fields.add("hierarchy");
+      if (previousParent?.parent_id) affected.add(previousParent.parent_id);
+      if (input.parentId) affected.add(input.parentId);
+    }
     if (input.id && previous) {
       id = input.id;
       const old = await getOne<{
@@ -465,23 +512,30 @@ export async function saveEditorCard(
         input.annotationKey === undefined
           ? (old?.annotation_key ?? null)
           : input.annotationKey;
-      await exec(
-        `UPDATE zettels
-         SET title = ?, body = ?, item_key = ?, library_id = ?,
+      if (effectiveAnnotationKey !== previous.annotation_key)
+        fields.add("source");
+      now = fields.size
+        ? Math.max(now, previous.updated_at + 1)
+        : previous.updated_at;
+      if (fields.size)
+        await exec(
+          `UPDATE zettels
+         SET title = ?, title_folded = ?, body = ?, item_key = ?, library_id = ?,
              annotation_key = ?, kind = ?, custom_key = ?, updated_at = ?
          WHERE id = ?`,
-        [
-          title,
-          body,
-          input.itemKey ?? null,
-          input.libraryID ?? null,
-          effectiveAnnotationKey,
-          kind,
-          customKey,
-          now,
-          id,
-        ],
-      );
+          [
+            title,
+            title.toLowerCase(),
+            body,
+            input.itemKey ?? null,
+            input.libraryID ?? null,
+            effectiveAnnotationKey,
+            kind,
+            customKey,
+            now,
+            id,
+          ],
+        );
     } else {
       const allIds = await getAll<{ id: string }>(
         `SELECT id FROM zettels UNION SELECT key AS id FROM note_keys`,
@@ -491,11 +545,12 @@ export async function saveEditorCard(
           ? input.id
           : newZettelID(new Set(allIds.map((r) => r.id)));
       await exec(
-        `INSERT INTO zettels (id, title, body, item_key, library_id, annotation_key, kind, custom_key, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO zettels (id, title, title_folded, body, item_key, library_id, annotation_key, kind, custom_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           title,
+          title.toLowerCase(),
           body,
           input.itemKey ?? null,
           input.libraryID ?? null,
@@ -512,26 +567,65 @@ export async function saveEditorCard(
         "INSERT OR IGNORE INTO note_keys (key, card_id) VALUES (?, ?)",
         [customKey, id],
       );
-    await saveParent(id, input.parentId);
-    await reindexLinks(id, body);
-    await resolveUnresolvedLinks();
+    if (fields.has("hierarchy")) await saveParent(id, input.parentId);
+    if (!previous || body !== previous.body) {
+      const links = await reindexLinks(id, body);
+      if (links.changed) fields.add("links");
+      links.affected.forEach((id) => affected.add(id));
+    }
+    if (fields.has("identity")) {
+      const resolved = await resolveUnresolvedLinks(
+        () => false,
+        [id, title, ...(customKey ? [customKey] : [])],
+      );
+      if (resolved.size) fields.add("links");
+      resolved.forEach((id) => affected.add(id));
+      // Titles and public keys also appear in existing backlinks and relationship lists.
+      for (const row of await getAll<{ source_id: string }>(
+        "SELECT source_id FROM links WHERE target_id = ? UNION SELECT card_id AS source_id FROM card_parents WHERE parent_id = ? UNION SELECT parent_id AS source_id FROM card_parents WHERE card_id = ? AND parent_id IS NOT NULL",
+        [id, id, id],
+      ))
+        affected.add(row.source_id);
+    }
     await beforeCommit?.();
     if (input.draftId && input.draftRevision !== undefined)
       await exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
         input.draftId,
         input.draftRevision,
       ]);
-    return { id, previousItemKey, effectiveAnnotationKey };
+    return {
+      id,
+      previousItemKey,
+      effectiveAnnotationKey,
+      fields: [...fields],
+      affected: [...affected],
+    };
   });
 
-  await refreshItemCount(input.itemKey ?? null);
-  if (result.previousItemKey && result.previousItemKey !== input.itemKey) {
-    await refreshItemCount(result.previousItemKey);
+  if (
+    result.fields.includes("source") ||
+    result.fields.includes("availability")
+  ) {
+    await refreshItemCount(input.itemKey ?? null);
+    if (result.previousItemKey && result.previousItemKey !== input.itemKey) {
+      await refreshItemCount(result.previousItemKey);
+    }
+    await refreshAnnotationCount(result.effectiveAnnotationKey);
   }
-  await refreshAnnotationCount(result.effectiveAnnotationKey);
-  notifyDataChange();
+  if (result.fields.length)
+    notifyDataChange({
+      cardIDs: [result.id, ...result.affected],
+      itemKeys: [
+        ...new Set(
+          [input.itemKey, result.previousItemKey].filter(
+            (key): key is string => !!key,
+          ),
+        ),
+      ],
+      fields: result.fields,
+    });
   // The note is committed; housekeeping must not hold up save feedback.
-  void cleanupImagesAfterChange();
+  if (result.fields.includes("content")) void cleanupImagesAfterChange();
   return { id: result.id, updatedAt: now };
 }
 
@@ -540,54 +634,102 @@ export async function deleteZettel(id: string): Promise<void> {
     item_key: string | null;
     annotation_key: string | null;
   }>(`SELECT item_key, annotation_key FROM zettels WHERE id = ?`, [id]);
+  const neighbors = await getAll<{ id: string }>(
+    "SELECT source_id AS id FROM links WHERE target_id = ? UNION SELECT target_id AS id FROM links WHERE source_id = ? AND target_id IS NOT NULL UNION SELECT parent_id AS id FROM card_parents WHERE card_id = ? AND parent_id IS NOT NULL UNION SELECT card_id AS id FROM card_parents WHERE parent_id = ?",
+    [id, id, id, id],
+  );
   await transaction(async () => {
+    await exec("DELETE FROM unavailable_notes WHERE card_id = ?", [id]);
+    await exec("DELETE FROM card_notes WHERE card_id = ?", [id]);
     await exec("DELETE FROM note_keys WHERE card_id = ?", [id]);
     await removeParent(id);
     await exec(`DELETE FROM links WHERE source_id = ?`, [id]);
     await exec(`UPDATE links SET target_id = NULL WHERE target_id = ?`, [id]);
     await exec(`DELETE FROM tags WHERE zettel_id = ?`, [id]);
     await exec(`DELETE FROM zettels WHERE id = ?`, [id]);
-    await resolveUnresolvedLinks();
   });
   await refreshItemCount(row?.item_key ?? null);
   await refreshAnnotationCount(row?.annotation_key ?? null);
-  notifyDataChange();
+  notifyDataChange({
+    cardIDs: [id, ...neighbors.map((row) => row.id)],
+    itemKeys: row?.item_key ? [row.item_key] : [],
+    fields: ["availability", "hierarchy", "links", "source"],
+  });
   await cleanupImagesAfterChange();
 }
 
-async function reindexLinks(zettelId: string, body: string): Promise<void> {
-  await exec(`DELETE FROM links WHERE source_id = ?`, [zettelId]);
-  const parsed = parseLinks(body);
-  if (!parsed.length) return;
-  const resolved = await resolveRefs(parsed.map((p) => p.ref));
-  for (const p of parsed) {
-    await exec(
-      `INSERT OR IGNORE INTO links (source_id, target_id, ref) VALUES (?, ?, ?)`,
-      [zettelId, resolved.get(p.ref) ?? null, p.ref],
-    );
+async function reindexLinks(zettelId: string, body: string) {
+  const affected = new Set<string>();
+  const previous = await getAll<{ ref: string; target_id: string | null }>(
+    "SELECT ref, target_id FROM links WHERE source_id = ?",
+    [zettelId],
+  );
+  const desired = new Set(parseLinks(body).map((link) => link.ref));
+  const existing = new Set(previous.map((link) => link.ref));
+  let changed = false;
+  for (const link of previous) {
+    if (desired.has(link.ref)) continue;
+    await exec("DELETE FROM links WHERE source_id = ? AND ref = ?", [
+      zettelId,
+      link.ref,
+    ]);
+    if (link.target_id) affected.add(link.target_id);
+    changed = true;
   }
+  const added = [...desired].filter((ref) => !existing.has(ref));
+  const resolved = await resolveRefs(added);
+  for (const ref of added) {
+    await exec(
+      `INSERT INTO links (source_id, target_id, ref, ref_folded) VALUES (?, ?, ?, ?)`,
+      [zettelId, resolved.get(ref) ?? null, ref, ref.toLowerCase()],
+    );
+    const target = resolved.get(ref);
+    if (target) affected.add(target);
+    changed = true;
+  }
+  return { affected, changed };
 }
 
 /** Resolve forward references when their target is created later. */
 export async function resolveUnresolvedLinks(
   shouldStop = () => false,
-): Promise<void> {
-  if (shouldStop()) return;
+  refs?: string[],
+): Promise<Set<string>> {
+  const affected = new Set<string>();
+  if (shouldStop() || refs?.length === 0) return affected;
+  if (refs && refs.length > 400) {
+    for (let offset = 0; offset < refs.length && !shouldStop(); offset += 400)
+      for (const id of await resolveUnresolvedLinks(
+        shouldStop,
+        refs.slice(offset, offset + 400),
+      ))
+        affected.add(id);
+    return affected;
+  }
+  const folded = refs && [...new Set(refs.map((ref) => ref.toLowerCase()))];
   const rows = await getAll<{ ref: string }>(
-    `SELECT DISTINCT ref FROM links WHERE target_id IS NULL`,
+    `SELECT DISTINCT ref FROM links WHERE target_id IS NULL${folded ? ` AND ref_folded IN (${folded.map(() => "?").join(",")})` : ""}`,
+    folded,
   );
-  if (shouldStop()) return;
+  if (shouldStop()) return affected;
   const resolved = await resolveRefs(
     rows.map((r) => r.ref),
     shouldStop,
   );
   for (const [ref, id] of resolved) {
-    if (shouldStop()) return;
+    if (shouldStop()) return affected;
+    const sources = await getAll<{ source_id: string }>(
+      "SELECT source_id FROM links WHERE ref = ? AND target_id IS NULL",
+      [ref],
+    );
     await exec(
       `UPDATE links SET target_id = ? WHERE ref = ? AND target_id IS NULL`,
       [id, ref],
     );
+    sources.forEach((row) => affected.add(row.source_id));
+    affected.add(id);
   }
+  return affected;
 }
 
 /* ------------------------------------------------------------------ */

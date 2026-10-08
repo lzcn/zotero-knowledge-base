@@ -1,3 +1,4 @@
+import { isAccelKey } from "../ui/platform";
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
  * through `Zotero.ZoteroKnowledgeBase.api.*` - only plain data crosses the boundary.
@@ -10,6 +11,7 @@ import {
   discardEditorDraft,
 } from "./editor-drafts";
 import {
+  auditNativeNotes,
   acquireNativeNote,
   projectNativeNote,
   getMarkdownDocument,
@@ -34,6 +36,7 @@ import { getNoteReferences, withNoteReferences } from "./note-references";
 import { config } from "../../package.json";
 import {
   openWorkbench,
+  openWorkbenchWindow,
   mountEditor,
   clearEditor,
   getViewArguments,
@@ -64,11 +67,21 @@ import { getGraphData } from "./graph";
 import {
   getGraphOptions,
   setGraphOption,
+  getGraphLabelLength,
+  setGraphLabelLength,
   getPanelWidth,
   setPanelWidth,
   onGraphOptionsChange,
+  getWorkbenchMode,
+  setWorkbenchMode,
+  getTagInheritance,
+  setTagInheritance,
+  getGraphGroups,
+  setGraphGroups,
 } from "./preferences";
 import { onDataChange } from "./events";
+import { onNativeNoteChange } from "./note-sessions";
+import { mergeMarkdownDocuments } from "./document-merge";
 import {
   createCardsFromAnnotations,
   type CreateCardsResult,
@@ -83,6 +96,7 @@ import {
   getZettel,
   listByItem,
   listZettels,
+  searchZettels,
   resolveRefs,
   parseLinks,
   saveZettel,
@@ -111,6 +125,7 @@ export interface EditorArgs {
   window?: boolean;
   embedded?: boolean;
   onClose?: () => void;
+  onNavigate?: (args: EditorArgs) => void;
   kind?: import("./db").NoteKind;
   zettelId?: string | null;
   draftId?: string;
@@ -229,6 +244,9 @@ export const api = {
     Zotero.Utilities.Internal.copyTextToClipboard(`[[${reference}]]`);
   },
   onDataChange,
+  onNativeNoteChange,
+  mergeMarkdownDocuments,
+  isAccelKey,
   mountEditor,
   clearEditor,
   getViewArguments,
@@ -239,9 +257,21 @@ export const api = {
   onSourceStyleChange,
   getGraphOptions,
   setGraphOption,
+  getGraphLabelLength,
+  setGraphLabelLength,
   getPanelWidth,
   setPanelWidth,
   onGraphOptionsChange,
+  getTagInheritance,
+  setTagInheritance,
+  getGraphGroups,
+  setGraphGroups,
+  async getGraphTags(): Promise<string[]> {
+    const graph = await getGraphData();
+    return [...new Set(graph.nodes.flatMap((node) => node.tags || []))].sort(
+      (a, b) => a.localeCompare(b),
+    );
+  },
 
   openImage(url: string): void {
     if (
@@ -323,12 +353,38 @@ export const api = {
 
   /* ---------------- data ---------------- */
 
+  auditNativeNotes,
+
   async listZettels(
     query = "",
     entriesOnly = false,
     kind?: import("./db").NoteKind,
   ): Promise<Zettel[]> {
     return withNoteReferences(await listZettels(query, entriesOnly, kind));
+  },
+  async searchZettels(
+    query = "",
+    options: Parameters<typeof searchZettels>[1] = {},
+  ) {
+    const page = await searchZettels(query, options);
+    return { ...page, items: await withNoteReferences(page.items) };
+  },
+
+  async searchZettelSummaries(
+    query = "",
+    options: Parameters<typeof searchZettels>[1] = {},
+    references?: Map<string, string>,
+  ) {
+    const page = await searchZettels(query, { ...options, summary: true });
+    references ??= (await getNoteReferences()).byID;
+    return {
+      ...page,
+      references,
+      items: page.items.map((row) => ({
+        ...row,
+        reference: references!.get(row.id) || row.id,
+      })),
+    };
   },
 
   async listByItem(itemKey: string): Promise<Zettel[]> {
@@ -424,15 +480,21 @@ export const api = {
 
   /* ---------------- windows ---------------- */
 
+  openWorkbenchWindow,
+  getWorkbenchMode,
+  setWorkbenchMode,
+
   openManager(args: ManagerArgs = {}): void {
-    if (!args.window) return openWorkbench(args);
+    if (!args.window)
+      return getWorkbenchMode() === "window"
+        ? openWorkbenchWindow(args)
+        : openWorkbench(args);
     const existing = Services.wm.getMostRecentWindow(
       "knowledge-base:manager",
-    ) as
-      | (Window & { ZoteroKnowledgeBase_selectZettel?: (id: string) => void })
-      | null;
+    ) as Window | null;
     if (existing) {
       existing.focus();
+      existing.knowledgeBaseRefreshNotes?.();
       if (args.selectId)
         existing.ZoteroKnowledgeBase_selectZettel?.(args.selectId);
       return;
@@ -447,7 +509,7 @@ export const api = {
 
   openEditor(args: EditorArgs = {}): void {
     if (!args.window)
-      return openWorkbench({
+      return api.openManager({
         editor: args,
         selectId: args.zettelId || undefined,
       });

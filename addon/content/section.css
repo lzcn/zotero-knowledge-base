@@ -1,5 +1,13 @@
 /* Styles for the Zettel item pane section (injected into the main window) */
 
+#knowledge-base-toolbar-button {
+  list-style-image: url("chrome://knowledge-base/content/icons/icon-20.svg");
+}
+#knowledge-base-toolbar-button .toolbarbutton-icon {
+  width: 20px;
+  height: 20px;
+}
+
 /* Long card titles must not set the native sidebar's minimum width. */
 .knowledge-base-section {
   contain: inline-size;

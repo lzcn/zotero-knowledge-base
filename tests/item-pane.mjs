@@ -123,6 +123,36 @@ check("Saving refreshes the source's visible card list", () => {
   assert.equal(refreshes, 1);
   assert.equal(body.querySelectorAll("li").length, 2);
 });
+for (const listener of state.listeners)
+  listener({
+    all: false,
+    cardIDs: ["elsewhere"],
+    itemKeys: ["B"],
+    fields: ["identity"],
+  });
+for (const listener of state.listeners)
+  listener({
+    all: false,
+    cardIDs: ["card-a"],
+    itemKeys: ["A"],
+    fields: ["content"],
+  });
+await settle();
+check(
+  "Unrelated changes and body-only edits do not rebuild the source sidebar",
+  () => assert.equal(refreshes, 1),
+);
+for (const listener of state.listeners)
+  listener({
+    all: false,
+    cardIDs: ["card-a"],
+    itemKeys: ["A"],
+    fields: ["identity"],
+  });
+await settle();
+check("A title change refreshes only the matching source sidebar", () =>
+  assert.equal(refreshes, 2),
+);
 state.section.onDestroy({ body });
 check("Closing the section removes its refresh listener", () =>
   assert.equal(state.listeners.size, 0),

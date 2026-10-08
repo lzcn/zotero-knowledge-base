@@ -1,5 +1,6 @@
 import { exec, getAll, getOne, transaction, type NoteKind } from "./db";
 import { notifyDataChange } from "./events";
+import { getTagInheritance } from "./preferences";
 import { getFamily } from "./hierarchy";
 import { richTextToMarkdown } from "./rich-text";
 import { renderMarkdown } from "./markdown";
@@ -7,11 +8,20 @@ import { getCitation, prepareCitations, resolveCitation } from "./references";
 import { resolveAssetURL } from "./assets";
 import { getCitationKey } from "./zotero";
 import { getString } from "../utils/locale";
+import { writeNativeNote } from "./note-sessions";
+import {
+  prepareNoteOperation,
+  completeNoteOperation,
+  abandonNoteOperation,
+  listNoteOperations,
+} from "./note-operations";
 import {
   getZettel,
+  deleteZettel,
   saveEditorCard,
   refreshItemCount,
   type SaveCardInput,
+  resolveUnresolvedLinks,
 } from "./zettel";
 
 interface NoteMapping {
@@ -27,12 +37,18 @@ export interface NativeCardInput extends SaveCardInput {
   sourceMode?: boolean;
   sourceDocument?: string;
   restoreDraft?: boolean;
+  isCurrent?: () => boolean;
 }
 
 const activeNotes = new Set<number>();
 let observerID: string | undefined;
 let pending = Promise.resolve();
+const refreshIDs = new Set<number>();
+let refreshQueued = false;
 let stopping = false;
+let auditing: Promise<void> | undefined;
+let auditRequested = false;
+const indexedHTML = new Map<number, string>();
 const previewImages = new Map<string, string>();
 
 function parse(html: string): Document {
@@ -389,6 +405,61 @@ export interface NoteHealth {
   editable: boolean;
 }
 
+/** Keep Trash mappings; remove cards only after confirming their original no longer exists. */
+export function auditNativeNotes(): Promise<void> {
+  auditRequested = true;
+  if (auditing) return auditing;
+  auditing = (async () => {
+    while (auditRequested && !stopping) {
+      auditRequested = false;
+      const changed: string[] = [];
+      const rows = await getAll<NoteMapping>("SELECT * FROM card_notes");
+      for (let index = 0; index < rows.length && !stopping; index++) {
+        const row = rows[index];
+        const note =
+          (await Zotero.Items.getByLibraryAndKeyAsync(
+            row.library_id,
+            row.note_key,
+          )) || null;
+        if (!note?.isNote()) {
+          // A transient Items-cache miss must not destroy a recoverable association.
+          const exists = await Zotero.DB.valueQueryAsync(
+            "SELECT itemID FROM items WHERE libraryID = ? AND key = ?",
+            [row.library_id, row.note_key],
+          );
+          if (!exists && !stopping) await deleteZettel(row.card_id);
+          continue;
+        }
+        const state = note.isInTrash() ? "trashed" : null;
+        const previous = await getOne<{ state: string }>(
+          "SELECT state FROM unavailable_notes WHERE card_id = ?",
+          [row.card_id],
+        );
+        if ((previous?.state ?? null) !== state) {
+          if (state)
+            await exec(
+              "INSERT OR REPLACE INTO unavailable_notes(card_id, state) VALUES (?, ?)",
+              [row.card_id, state],
+            );
+          else
+            await exec("DELETE FROM unavailable_notes WHERE card_id = ?", [
+              row.card_id,
+            ]);
+          changed.push(row.card_id);
+        }
+        if (!state && note && !activeNotes.has(note.id))
+          await refreshNote(note);
+        if (index % 20 === 19) await Zotero.Promise.delay(0);
+      }
+      if (changed.length && !stopping)
+        notifyDataChange({ cardIDs: changed, fields: ["availability"] });
+    }
+  })().finally(() => {
+    auditing = undefined;
+  });
+  return auditing;
+}
+
 export async function getNoteHealth(id: string): Promise<NoteHealth> {
   const card = await getZettel(id);
   const mapping = await getOne<NoteMapping>(
@@ -471,16 +542,16 @@ export async function restoreNote(id: string): Promise<void> {
     await restore(source);
     await restore(note);
   });
-  notifyDataChange();
+  await auditNativeNotes();
+  notifyDataChange({
+    cardIDs: [id],
+    noteIDs: note ? [note.id] : [],
+    itemKeys: source ? [source.key] : [],
+    fields: ["availability"],
+  });
 }
 
-export async function getNoteTags(noteID: number | null): Promise<string[]> {
-  if (!noteID) return [];
-  const note = await Zotero.Items.getAsync(noteID);
-  if (!note || !note.isNote() || note.isInTrash()) return [];
-  await Zotero.Items.loadDataTypes([note], ["tags"]);
-  return note.getTags().map(({ tag }) => tag);
-}
+export { getEffectiveNoteTags as getNoteTags } from "./note-tags";
 
 async function mappedNote(id: string): Promise<Zotero.Item | null> {
   const row = await getOne<NoteMapping>(
@@ -694,41 +765,146 @@ export async function saveNativeCard(
             )
     : null;
   const projection = projectNativeNote(preparedHTML ?? note.getNote());
-  const result = await saveEditorCard(
-    { ...input, ...projection, draftRevision: undefined },
-    async () => {
-      await Zotero.DB.executeTransaction(async () => {
-        if (preparedHTML !== null && input.expectedNoteHTML !== note.getNote())
-          throw new Error("CARD_CONFLICT: note changed");
-        const changed = preparedHTML !== null && note.setNote(preparedHTML);
-        if (changed) await note.save();
-      });
-      await organizeNativeNote(
-        note,
-        input,
-        !!input.itemKey ||
-          (!!previous &&
-            (previous.item_key !== (input.itemKey ?? null) ||
-              previous.library_id !== (input.libraryID ?? null))),
-      );
-    },
+  const operation = await prepareNoteOperation(
+    { ...input, ...projection },
+    note,
+    preparedHTML ?? note.getNote(),
+    previous?.updated_at ?? null,
   );
-  const html = note.getNote();
-  await exec(
-    "INSERT OR IGNORE INTO card_notes (card_id, note_key, library_id, original_body) VALUES (?, ?, ?, ?)",
-    [result.id, note.key, note.libraryID, input.body],
-  );
-  if (input.draftId && input.draftRevision !== undefined)
-    await exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
-      input.draftId,
-      input.draftRevision,
-    ]);
+  input = { ...input, id: operation.input.id };
+  let nativeCommitted = false;
+  let result;
+  try {
+    result = await saveEditorCard(
+      {
+        ...input,
+        ...projection,
+        expectedUpdatedAt: operation.expectedVersion,
+        draftRevision: undefined,
+      },
+      async () => {
+        if (input.isCurrent && !input.isCurrent())
+          throw new Error("NOTE_SESSION_CLOSED");
+        nativeCommitted = preparedHTML === null;
+        if (preparedHTML !== null) {
+          try {
+            const committed = await writeNativeNote(
+              note,
+              input.expectedNoteHTML || "",
+              preparedHTML,
+              undefined,
+              input.isCurrent,
+            );
+            operation.intendedHTML = committed.html;
+            nativeCommitted = true;
+          } catch (error) {
+            if (String(error).includes("NOTE_CONFLICT"))
+              throw new Error("CARD_CONFLICT: note changed");
+            throw error;
+          }
+        }
+        await organizeNativeNote(
+          note,
+          input,
+          !!input.itemKey ||
+            (!!previous &&
+              (previous.item_key !== (input.itemKey ?? null) ||
+                previous.library_id !== (input.libraryID ?? null))),
+        );
+        await exec(
+          "INSERT OR IGNORE INTO card_notes (card_id, note_key, library_id, original_body) VALUES (?, ?, ?, ?)",
+          [operation.input.id!, note.key, note.libraryID, input.body],
+        );
+        await completeNoteOperation(operation);
+      },
+    );
+  } catch (error) {
+    if (!nativeCommitted) await abandonNoteOperation(operation);
+    throw error;
+  }
+  const html = operation.intendedHTML;
   return { ...result, html, noteID: note.id };
+}
+
+/** Reconcile interrupted cross-database saves without overwriting an intervening edit. */
+export async function recoverNativeSaves(
+  shouldStop = () => false,
+): Promise<void> {
+  for (const operation of await listNoteOperations()) {
+    if (shouldStop()) return;
+    try {
+      const note = await Zotero.Items.getByLibraryAndKeyAsync(
+        operation.libraryID,
+        operation.noteKey,
+      );
+      if (!note || !note.isNote() || note.isInTrash() || !note.isEditable())
+        continue;
+      await Zotero.Items.loadDataTypes([note], ["note"]);
+      const html = note.getNote();
+      if (
+        getMarkdownDocument(html) !==
+        getMarkdownDocument(operation.intendedHTML)
+      ) {
+        if (html === operation.expectedHTML)
+          await abandonNoteOperation(operation);
+        continue;
+      }
+      const card = await getZettel(operation.input.id!);
+      if ((card?.updated_at ?? null) !== operation.expectedVersion) continue;
+      const mapping = await getOne<NoteMapping>(
+        "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
+        [note.key, note.libraryID],
+      );
+      if (mapping && mapping.card_id !== operation.input.id) continue;
+      await saveEditorCard(
+        {
+          ...operation.input,
+          ...projectNativeNote(html),
+          expectedUpdatedAt: operation.expectedVersion,
+        },
+        async () => {
+          if (shouldStop()) throw new Error("NOTE_SESSION_CLOSED");
+          // Compare inside Zotero's transaction; recovery never writes old note content.
+          await writeNativeNote(
+            note,
+            html,
+            html,
+            undefined,
+            () => !shouldStop(),
+          );
+          if (shouldStop()) throw new Error("NOTE_SESSION_CLOSED");
+          await organizeNativeNote(
+            note,
+            operation.input,
+            !!operation.input.itemKey || !!card?.item_key,
+          );
+          await exec(
+            "INSERT OR IGNORE INTO card_notes (card_id, note_key, library_id, original_body) VALUES (?, ?, ?, ?)",
+            [
+              operation.input.id!,
+              note.key,
+              note.libraryID,
+              operation.input.body,
+            ],
+          );
+          await completeNoteOperation(operation);
+        },
+      );
+    } catch (error) {
+      Zotero.logError(
+        new Error(
+          `Knowledge Base interrupted save ${operation.id}: ${String(error)}`,
+        ),
+      );
+    }
+  }
 }
 
 async function refreshNote(note: Zotero.Item): Promise<void> {
   if (!note.isNote() || note.isInTrash()) return;
   await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
+  const html = note.getNote();
+  if (indexedHTML.get(note.id) === html) return;
   const row = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
     [note.key, note.libraryID],
@@ -737,8 +913,11 @@ async function refreshNote(note: Zotero.Item): Promise<void> {
   const card = await getZettel(row.card_id);
   if (!card) return;
   await prepareCitations(card.body);
-  const projection = projectNativeNote(note.getNote());
-  if (card.title === projection.title && card.body === projection.body) return;
+  const projection = projectNativeNote(html);
+  if (card.title === projection.title && card.body === projection.body) {
+    indexedHTML.set(note.id, html);
+    return;
+  }
   await saveEditorCard({
     id: card.id,
     ...projection,
@@ -747,6 +926,7 @@ async function refreshNote(note: Zotero.Item): Promise<void> {
     parentId: (await getFamily(card.id)).parent?.id ?? null,
     expectedUpdatedAt: card.updated_at,
   });
+  indexedHTML.set(note.id, html);
 }
 
 export function releaseNativeNote(noteID: number): Promise<void> {
@@ -774,12 +954,21 @@ export function releaseNativeNote(noteID: number): Promise<void> {
   return pending;
 }
 
+function reportAuditError(error: unknown): void {
+  Zotero.logError(error instanceof Error ? error : new Error(String(error)));
+}
+
 export async function initNativeNotes(): Promise<void> {
   if (observerID) return;
   stopping = false;
   observerID = Zotero.Notifier.registerObserver(
     {
       notify(event: string, _type: string, ids: number[] | string[]) {
+        if (!stopping && _type === "trash" && event === "refresh") {
+          // Zotero restores emit refresh/trash rather than a restore/item event.
+          void auditNativeNotes().catch(reportAuditError);
+          return;
+        }
         if (
           stopping ||
           !["modify", "add", "delete", "remove", "trash", "restore"].includes(
@@ -787,27 +976,92 @@ export async function initNativeNotes(): Promise<void> {
           )
         )
           return;
-        previewImages.clear();
-        notifyDataChange();
-        if (_type === "setting" || _type === "item-tag") return;
+        if (_type === "setting") {
+          notifyDataChange({ all: true, fields: ["tags"] });
+          return;
+        }
+        const noteIDs = ids
+          .map((id) => Number(String(id).split("-")[0]))
+          .filter(Number.isSafeInteger);
+        if (["delete", "trash", "restore"].includes(event)) {
+          void auditNativeNotes().catch(reportAuditError);
+          notifyDataChange({ noteIDs, fields: ["availability"] });
+        }
+        if (_type === "item-tag") {
+          if (getTagInheritance()) {
+            notifyDataChange({ all: true, fields: ["tags"] });
+            return;
+          }
+          pending = pending
+            .catch((error) => Zotero.logError(error))
+            .then(async () => {
+              for (const id of noteIDs) {
+                if (stopping) return;
+                const note = await Zotero.Items.getAsync(id);
+                if (!note?.isNote()) continue;
+                const row = await getOne<NoteMapping>(
+                  "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
+                  [note.key, note.libraryID],
+                );
+                if (row)
+                  notifyDataChange({
+                    cardIDs: [row.card_id],
+                    noteIDs: [id],
+                    fields: ["tags"],
+                  });
+              }
+            })
+            .catch((error) => Zotero.logError(error));
+          return;
+        }
         const eligibleIDs = ids.filter((id) => !activeNotes.has(Number(id)));
         if (!eligibleIDs.length) return;
+        eligibleIDs.forEach((id) => refreshIDs.add(Number(id)));
+        if (refreshQueued) return;
+        refreshQueued = true;
         pending = pending
+          .catch((error) => Zotero.logError(error))
           .then(async () => {
-            for (const rawID of eligibleIDs) {
-              const id = Number(rawID);
-              if (activeNotes.has(id)) continue;
-              const note = await Zotero.Items.getAsync(id);
-              if (note) await refreshNote(note);
+            try {
+              while (refreshIDs.size && !stopping) {
+                const batch = [...refreshIDs];
+                refreshIDs.clear();
+                for (const id of batch) {
+                  if (stopping) return;
+                  if (activeNotes.has(id)) continue;
+                  const note = await Zotero.Items.getAsync(id);
+                  if (!note) continue;
+                  previewImages.delete(note.key);
+                  if (note.isRegularItem()) {
+                    const key = getCitationKey(note);
+                    const affected = key
+                      ? await resolveUnresolvedLinks(
+                          () => stopping,
+                          [`@${key}`],
+                        )
+                      : new Set<string>();
+                    notifyDataChange({
+                      cardIDs: [...affected],
+                      itemKeys: [note.key],
+                      fields: affected.size
+                        ? ["source", "identity", "links"]
+                        : ["source", "identity"],
+                    });
+                  } else await refreshNote(note);
+                }
+              }
+            } finally {
+              refreshQueued = false;
             }
           })
           .catch((error) => Zotero.logError(error));
         // Do not await another Zotero transaction from within its notifier.
       },
     },
-    ["item", "item-tag", "setting"],
+    ["item", "item-tag", "setting", "trash"],
     "knowledge-base-notes",
   );
+  await auditNativeNotes();
   for (const row of await getAll<NoteMapping>("SELECT * FROM card_notes")) {
     const note = await Zotero.Items.getByLibraryAndKeyAsync(
       row.library_id,
@@ -838,12 +1092,15 @@ export async function initNativeNotes(): Promise<void> {
 
 export function stopNativeNotes(): void {
   stopping = true;
+  refreshIDs.clear();
   if (observerID) Zotero.Notifier.unregisterObserver(observerID);
   observerID = undefined;
 }
 
 export async function closeNativeNotes(): Promise<void> {
   stopNativeNotes();
+  await auditing;
+  indexedHTML.clear();
   if (observerID) Zotero.Notifier.unregisterObserver(observerID);
   observerID = undefined;
   await pending;
@@ -959,8 +1216,16 @@ export async function ensureLiteratureNote(
     const id = `literature-${libraryID}-${itemKey}`;
     const now = Date.now();
     await exec(
-      "INSERT INTO zettels (id, title, body, item_key, library_id, kind, created_at, updated_at) VALUES (?, ?, '', ?, ?, 'literature', ?, ?)",
-      [id, source.getField("title"), itemKey, libraryID, now, now],
+      "INSERT INTO zettels (id, title, title_folded, body, item_key, library_id, kind, created_at, updated_at) VALUES (?, ?, ?, '', ?, ?, 'literature', ?, ?)",
+      [
+        id,
+        source.getField("title"),
+        source.getField("title").toLowerCase(),
+        itemKey,
+        libraryID,
+        now,
+        now,
+      ],
     );
     await exec(
       "INSERT INTO card_parents (card_id, parent_id) VALUES (?, NULL)",
@@ -969,6 +1234,10 @@ export async function ensureLiteratureNote(
     return id;
   });
   await refreshItemCount(itemKey);
-  notifyDataChange();
+  notifyDataChange({
+    cardIDs: [id],
+    itemKeys: [itemKey],
+    fields: ["availability", "identity", "source"],
+  });
   return id;
 }

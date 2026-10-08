@@ -40,7 +40,11 @@ await build({
       export const initNativeMarkdown = () => run("nativeMarkdown");
       export const stopNativeMarkdown = () => run("stopNativeMarkdown");
       export const closeNativeMarkdown = () => run("closeNativeMarkdown");
+      export const initNoteSessions = () => run("noteSessions");
+      export const stopNoteSessions = () => run("stopNoteSessions");
+      export const closeNoteSessions = () => run("closeNoteSessions");
       export const initNativeNotes = () => run("nativeNotes");
+      export const recoverNativeSaves = () => run("recoverNativeSaves");
       export const stopNativeNotes = () => run("stopNativeNotes");
       export const closeNativeNotes = () => run("closeNativeNotes");
       export const initAssets = () => run("initAssets");
@@ -73,7 +77,7 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
   const doms = [0, 1].map(
     () =>
       new JSDOM(
-        '<main><div id="menu_ToolsPopup"></div><div id="zotero-itemmenu"></div></main>',
+        '<main><div id="menu_ToolsPopup"></div><div id="zotero-itemmenu"></div><div id="zotero-items-toolbar"><spacer></spacer></div></main>',
       ),
   );
   for (const dom of doms) {
@@ -106,6 +110,7 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
     data: { alive: true },
     api: {
       openManager: () => state.calls.push("openManager"),
+      openWorkbenchWindow: () => state.calls.push("openWorkbenchWindow"),
       openEditor: () => {},
     },
   };
@@ -151,10 +156,28 @@ test("two windows retain independent resources; duplicate registration and shutd
       .getElementById("knowledge-base-menu-open-manager")
       .dispatchEvent(new h.doms[1].window.Event("command"));
     assert.ok(h.state.calls.includes("openManager"));
+    h.doms[1].window.document
+      .getElementById("knowledge-base-toolbar-button")
+      .dispatchEvent(new h.doms[1].window.Event("command"));
+    assert.equal(
+      h.state.calls.filter((name) => name === "openManager").length,
+      2,
+    );
+    assert.equal(
+      h.doms[1].window.document.querySelectorAll("toolbarbutton").length,
+      1,
+    );
+    assert.equal(
+      h.doms[1].window.document.getElementById("knowledge-base-toolbar-button")
+        .nextElementSibling.localName,
+      "spacer",
+    );
     await Promise.all([h.hooks.onShutdown(), h.hooks.onShutdown()]);
     assert.equal(h.state.calls.filter((name) => name === "closeDB").length, 1);
     assert.equal(
-      h.doms[1].window.document.querySelectorAll("menuitem, link").length,
+      h.doms[1].window.document.querySelectorAll(
+        "menuitem, toolbarbutton, link",
+      ).length,
       0,
     );
   } finally {

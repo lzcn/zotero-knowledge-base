@@ -6,6 +6,13 @@ let selectedId = null;
 let searchTimer = null;
 let detailVersion = 0;
 let listVersion = 0;
+let nextCursor = null;
+let pageTimer = null;
+let renderTimer = null;
+const ROW_HEIGHT = 126;
+const rowIndices = new Map();
+let listScope = "";
+let listReferences;
 let navigationVersion = 0;
 let managerLoaded = false;
 const history = [];
@@ -100,18 +107,56 @@ const load = wrap(async function () {
     if (args.editor.zettelId) select(args.editor.zettelId, true, true);
   } else if (wanted) select(wanted);
   else if (zettels.length) select(zettels[0].id);
-  const unsubscribe = api.onDataChange(() =>
-    safeCall(async () => {
-      await refresh();
-      if (selectedId && !args.embedded) await renderDetail(selectedId);
-    }),
+  let changeRefresh = Promise.resolve();
+  const unsubscribe = api.onDataChange(
+    (change) =>
+      (changeRefresh = changeRefresh.then(() =>
+        safeCall(async () => {
+          if (window.closed) return;
+          const all = !change || change.all;
+          if (
+            !change ||
+            !change.fields.length ||
+            change.fields.some((field) => field !== "tags")
+          ) {
+            if (
+              !all &&
+              change.cardIDs.length &&
+              change.cardIDs.length <= 500 &&
+              !change.fields.includes("hierarchy") &&
+              !change.fields.includes("source") &&
+              $("knowledge-base-list").getAttribute("aria-busy") === "false" &&
+              listScope === currentScope()
+            )
+              await refreshChanged(
+                change.cardIDs,
+                change.fields.includes("identity") ||
+                  change.fields.includes("availability"),
+              );
+            else await refresh();
+          }
+          if (
+            selectedId &&
+            !args.embedded &&
+            (all ||
+              change.cardIDs.includes(selectedId) ||
+              change.fields.includes("source"))
+          )
+            await renderDetail(selectedId);
+        }),
+      )),
   );
   window.addEventListener("unload", unsubscribe, { once: true });
   const unsubscribeStyle = api.onSourceStyleChange(() => {
     if (selectedId && !args.embedded) safeCall(() => renderDetail(selectedId));
   });
   window.addEventListener("unload", unsubscribeStyle, { once: true });
+  window.knowledgeBaseRefreshNotes();
 });
+
+window.knowledgeBaseRefreshNotes = () => {
+  if (managerLoaded) safeCall(() => api.auditNativeNotes());
+};
 
 /**
  * Called from the reader / item pane when the window is already open, so that
@@ -155,7 +200,11 @@ function applyLocale() {
     Array.from($("knowledge-base-kind").options)
   ))
     option.textContent = api.loc(
-      option.value ? "note-kind-" + option.value : "note-kind-all",
+      option.value === "deleted"
+        ? "manager-deleted-notes"
+        : option.value
+          ? "note-kind-" + option.value
+          : "note-kind-all",
     );
   for (const [id, key] of [
     ["knowledge-base-back", "manager-back"],
@@ -199,7 +248,23 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  $("knowledge-base-list").setAttribute("role", "listbox");
+  $("knowledge-base-list").tabIndex = 0;
+  $("knowledge-base-list-pane").addEventListener("scroll", scheduleListRender, {
+    passive: true,
+  });
+  window.addEventListener("resize", scheduleListRender);
+  window.addEventListener(
+    "unload",
+    () => {
+      invalidatePages();
+      clearTimeout(searchTimer);
+      clearTimeout(renderTimer);
+    },
+    { once: true },
+  );
   $("knowledge-base-kind").addEventListener("change", () => {
+    invalidatePages();
     if (!args.embedded) selectedId = null;
     updateActions();
     safeCall(refresh);
@@ -207,7 +272,11 @@ function bindEvents() {
     $("knowledge-base-detail-empty").hidden = false;
   });
   window.addEventListener("keydown", (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+    if (
+      !event.defaultPrevented &&
+      api.isAccelKey(event) &&
+      event.key.toLowerCase() === "w"
+    ) {
       event.preventDefault();
       if (args.embedded) args.onClose?.();
       else window.close();
@@ -231,26 +300,55 @@ function bindEvents() {
           document.getElementById("knowledge-base-draft-list")
         )
       );
-      if (menu.value) api.openEditor({ draftId: menu.value });
+      if (menu.value) {
+        if (args.embedded)
+          safeCall(() => showInlineEditor({ draftId: menu.value }));
+        else api.openEditor({ draftId: menu.value });
+      }
     });
   window.addEventListener("focus", () => safeCall(refreshDrafts));
   $("knowledge-base-list").addEventListener("keydown", (event) => {
-    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
-    const rows = /** @type {HTMLLIElement[]} */ (
-      Array.from($("knowledge-base-list").querySelectorAll("li"))
+    if (
+      event.isComposing ||
+      !["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp"].includes(
+        event.key,
+      )
+    )
+      return;
+    const focused = /** @type {HTMLElement} */ (document.activeElement);
+    let index = zettels.findIndex(
+      (row) => row.id === (focused?.dataset?.id || selectedId),
     );
-    const index = rows.indexOf(
-      /** @type {HTMLLIElement} */ (document.activeElement),
+    const pageSize = Math.max(
+      1,
+      Math.floor($("knowledge-base-list-pane").clientHeight / ROW_HEIGHT),
     );
-    const next = rows[index + (event.key === "ArrowDown" ? 1 : -1)];
+    index =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? zettels.length - 1
+          : index +
+            ({
+              ArrowDown: 1,
+              ArrowUp: -1,
+              PageDown: pageSize,
+              PageUp: -pageSize,
+            }[event.key] || 0);
+    const next = zettels[Math.max(0, Math.min(index, zettels.length - 1))];
     if (next) {
       event.preventDefault();
-      next.focus();
-      select(next.dataset.id);
+      revealRow(next.id);
+      getRenderedRow(next.id)?.focus();
+      select(next.id);
     }
   });
   $("knowledge-base-btn-child").addEventListener("click", () => {
     if (!selectedId) return;
+    if (args.embedded) {
+      safeCall(() => showInlineEditor({ prefillParentId: selectedId }));
+      return;
+    }
     api.openEditor({
       prefillParentId: selectedId,
       onSaved: (id) =>
@@ -263,6 +361,7 @@ function bindEvents() {
     });
   });
   $("knowledge-base-entries").addEventListener("change", () => {
+    invalidatePages();
     selectedId = null;
     updateActions();
     $("knowledge-base-detail").hidden = true;
@@ -297,6 +396,7 @@ function bindEvents() {
   });
   $("knowledge-base-btn-new").addEventListener("click", () => newZettel());
   $("knowledge-base-search").addEventListener("input", () => {
+    invalidatePages();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(wrap(refresh), 200);
   });
@@ -308,31 +408,238 @@ function bindEvents() {
   });
 }
 
-const refresh = wrap(async function () {
-  const version = ++listVersion;
-  const q = $("knowledge-base-search").value || "";
-  const rows = await api.listZettels(
-    q,
+function invalidatePages() {
+  listVersion++;
+  clearTimeout(pageTimer);
+  pageTimer = null;
+  nextCursor = null;
+  $("knowledge-base-list").setAttribute("aria-busy", "false");
+}
+
+function currentScope() {
+  return JSON.stringify([
+    $("knowledge-base-search").value,
+    $("knowledge-base-kind").value,
     $("knowledge-base-entries").checked,
-    /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
-      $("knowledge-base-kind").value || undefined
-    ),
+  ]);
+}
+
+async function refreshChanged(cardIDs, referencesChanged) {
+  const version = ++listVersion;
+  const query = $("knowledge-base-search").value || "";
+  const page = await api.searchZettelSummaries(
+    query,
+    {
+      cardIDs,
+      limit: 500,
+      entriesOnly: $("knowledge-base-entries").checked,
+      kind: /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
+        $("knowledge-base-kind").value === "deleted"
+          ? undefined
+          : $("knowledge-base-kind").value || undefined
+      ),
+      availability:
+        $("knowledge-base-kind").value === "deleted" ? "deleted" : "active",
+    },
+    referencesChanged ? undefined : listReferences,
   );
   if (version !== listVersion || window.closed) return;
-  zettels = rows;
-  if (selectedId && !rows.some((row) => row.id === selectedId)) {
+  listReferences = page.references;
+  const changed = new Set(cardIDs);
+  zettels = zettels
+    .filter((row) => !changed.has(row.id))
+    .concat(
+      page.items.map((row) => ({
+        ...row,
+        body: "",
+        snippet: summarize(row.body, query),
+      })),
+    );
+  zettels.sort(
+    (a, b) =>
+      (a.searchRank || 0) - (b.searchRank || 0) ||
+      b.updated_at - a.updated_at ||
+      (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+  );
+  rowIndices.clear();
+  zettels.forEach((row, index) => rowIndices.set(row.id, index));
+  renderList();
+  $("knowledge-base-stats").textContent = api.loc("manager-count", {
+    count: zettels.length,
+  });
+  if (selectedId && !rowIndices.has(selectedId)) {
     selectedId = null;
     updateActions();
     $("knowledge-base-detail").hidden = true;
     $("knowledge-base-detail-empty").hidden = false;
   }
+  await refreshUnresolved();
+}
+
+const refresh = wrap(async function () {
+  invalidatePages();
+  const version = listVersion;
+  listScope = currentScope();
+  listReferences = undefined;
+  const options = {
+    entriesOnly: $("knowledge-base-entries").checked,
+    kind: /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
+      $("knowledge-base-kind").value === "deleted"
+        ? undefined
+        : $("knowledge-base-kind").value || undefined
+    ),
+    availability:
+      $("knowledge-base-kind").value === "deleted" ? "deleted" : "active",
+    limit: 100,
+  };
+  const query = $("knowledge-base-search").value || "";
+  $("knowledge-base-list").setAttribute("aria-busy", "true");
+  await loadPage(version, query, options, false);
+  if (version === listVersion) await refreshUnresolved();
+});
+
+async function loadPage(version, query, options, append) {
+  try {
+    const page = await api.searchZettelSummaries(
+      query,
+      {
+        ...options,
+        cursor: append ? nextCursor : null,
+      },
+      listReferences,
+    );
+    if (version !== listVersion || window.closed) return;
+    listReferences = page.references;
+    const rows = page.items.map((row) => ({
+      ...row,
+      body: "",
+      snippet: summarize(row.body, query),
+    }));
+    if (!append) {
+      zettels = [];
+      rowIndices.clear();
+    }
+    for (const row of rows) {
+      const index = rowIndices.get(row.id);
+      if (index !== undefined) zettels[index] = row;
+      else {
+        rowIndices.set(row.id, zettels.length);
+        zettels.push(row);
+      }
+    }
+    nextCursor = page.cursor;
+    if (!append) $("knowledge-base-list-pane").scrollTop = 0;
+    renderList();
+    $("knowledge-base-stats").textContent = api.loc("manager-count", {
+      count: zettels.length,
+    });
+    $("knowledge-base-list").setAttribute("aria-busy", String(!!nextCursor));
+    if (nextCursor) {
+      pageTimer = setTimeout(() => {
+        pageTimer = null;
+        safeCall(loadPage, version, query, options, true);
+      }, 16);
+    } else if (selectedId && !zettels.some((row) => row.id === selectedId)) {
+      selectedId = null;
+      updateActions();
+      $("knowledge-base-detail").hidden = true;
+      $("knowledge-base-detail-empty").hidden = false;
+    }
+  } catch (error) {
+    if (version !== listVersion || window.closed) return;
+    $("knowledge-base-list").setAttribute("aria-busy", "false");
+    throw error;
+  }
+}
+
+function summarize(body, query) {
+  const summary = new window.DOMParser().parseFromString(
+    body || "",
+    "text/html",
+  );
+  for (const node of summary.querySelectorAll("script, style"))
+    node.parentNode?.removeChild(node);
+  const plain = (summary.body.textContent || "")
+    .replace(
+      /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
+      (_match, id, alias) => alias || `[[${id}]]`,
+    )
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[#*`>_$]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const match = query
+    ? plain.toLocaleLowerCase().indexOf(query.toLocaleLowerCase())
+    : 0;
+  const start = Math.max(0, match - 30);
+  return (
+    (start ? "…" : "") +
+    plain.slice(start, start + 110) +
+    (plain.length > start + 110 ? "…" : "")
+  );
+}
+
+function scheduleListRender() {
+  if (renderTimer !== null) return;
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    renderList();
+  }, 16);
+}
+
+function revealRow(id) {
+  const index = zettels.findIndex((row) => row.id === id);
+  if (index < 0) return;
+  const pane = $("knowledge-base-list-pane");
+  const top = index * ROW_HEIGHT;
+  const height = pane.clientHeight || 600;
+  if (top < pane.scrollTop) pane.scrollTop = top;
+  else if (top + ROW_HEIGHT > pane.scrollTop + height)
+    pane.scrollTop = top + ROW_HEIGHT - height;
+  renderList();
+}
+
+function getRenderedRow(id) {
+  return /** @type {HTMLLIElement[]} */ (
+    Array.from($("knowledge-base-list").querySelectorAll("li.zettel-row"))
+  ).find((row) => row.dataset.id === id);
+}
+
+function renderList() {
   const list = $("knowledge-base-list");
+  const pane = $("knowledge-base-list-pane");
+  const focusedID = /** @type {HTMLElement} */ (document.activeElement)?.dataset
+    ?.id;
+  const maxScroll = Math.max(
+    0,
+    zettels.length * ROW_HEIGHT - (pane.clientHeight || 600) + 8,
+  );
+  if (pane.scrollTop > maxScroll) pane.scrollTop = maxScroll;
+  const start = Math.max(0, Math.floor(pane.scrollTop / ROW_HEIGHT) - 4);
+  const end = Math.min(
+    zettels.length,
+    start + Math.ceil((pane.clientHeight || 600) / ROW_HEIGHT) + 8,
+  );
   list.textContent = "";
-  for (const z of zettels) {
+  const spacer = (height) => {
+    if (!height) return;
+    const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+    li.className = "list-spacer";
+    li.style.height = height + "px";
+    li.setAttribute("aria-hidden", "true");
+    list.appendChild(li);
+  };
+  spacer(start * ROW_HEIGHT);
+  for (const [offset, z] of zettels.slice(start, end).entries()) {
     const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
     li.className = "zettel-row" + (z.id === selectedId ? " active" : "");
     li.dataset.id = z.id;
     li.tabIndex = 0;
+    li.setAttribute("role", "option");
+    li.setAttribute("aria-posinset", String(start + offset + 1));
+    li.setAttribute("aria-setsize", String(zettels.length));
+    li.setAttribute("aria-selected", String(z.id === selectedId));
+    li.title = z.title;
     li.setAttribute("aria-current", z.id === selectedId ? "true" : "false");
     li.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
@@ -353,29 +660,7 @@ const refresh = wrap(async function () {
       "span",
     );
     snippet.className = "card-snippet";
-    const summary = new window.DOMParser().parseFromString(
-      z.body || "",
-      "text/html",
-    );
-    for (const node of summary.querySelectorAll("script, style"))
-      node.parentNode?.removeChild(node);
-    const plain = (summary.body.textContent || "")
-      .replace(
-        /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-        (_match, id, alias) => alias || `[[${id}]]`,
-      )
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-      .replace(/[#*`>_$]/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    const match = q
-      ? plain.toLocaleLowerCase().indexOf(q.toLocaleLowerCase())
-      : 0;
-    const start = Math.max(0, match - 30);
-    snippet.textContent =
-      (start ? "…" : "") +
-      plain.slice(start, start + 110) +
-      (plain.length > start + 110 ? "…" : "");
+    snippet.textContent = z.snippet;
     li.appendChild(snippet);
 
     const badges = document.createElementNS(
@@ -398,14 +683,12 @@ const refresh = wrap(async function () {
     li.addEventListener("dblclick", () => safeCall(openEditor, z.id));
     list.appendChild(li);
   }
-  $("knowledge-base-stats").textContent = api.loc("manager-count", {
-    count: zettels.length,
-  });
-  await refreshUnresolved();
-});
+  spacer((zettels.length - end) * ROW_HEIGHT);
+  if (focusedID) getRenderedRow(focusedID)?.focus({ preventScroll: true });
+}
 
 function safeCall(fn, ...args) {
-  Promise.resolve(fn.apply(null, args)).catch((e) => {
+  return Promise.resolve(fn.apply(null, args)).catch((e) => {
     showError(e);
   });
 }
@@ -444,12 +727,14 @@ function select(id, record = true, mounted = false) {
     .getElementById("knowledge-base-forward")
     .toggleAttribute("disabled", historyIndex >= history.length - 1);
   selectedId = id;
+  revealRow(id);
   updateActions();
   for (const li of /** @type {HTMLLIElement[]} */ (
     Array.from($("knowledge-base-list").children)
   )) {
     li.classList.toggle("active", li.dataset.id === id);
     li.setAttribute("aria-current", li.dataset.id === id ? "true" : "false");
+    li.setAttribute("aria-selected", String(li.dataset.id === id));
   }
   safeCall(async () => {
     if (!args.embedded) await renderDetail(id);
@@ -628,6 +913,11 @@ async function showInlineEditor(options) {
     !(await api.mountEditor(frame, {
       ...options,
       onClose: args.onClose,
+      onNavigate: (note) => {
+        if (note.zettelId)
+          window.ZoteroKnowledgeBase_selectZettel(note.zettelId);
+        else window.ZoteroKnowledgeBase_editNote(note);
+      },
       onSaved: (id) =>
         safeCall(async () => {
           selectedId = id;
@@ -723,6 +1013,7 @@ function renderHealth(box, health, id) {
       : `health-source-${health.source}`,
   );
   box.appendChild(label);
+  if (health.note === "missing") return;
   const action = document.createXULElement("button");
   if (health.note === "trashed" || health.source === "trashed") {
     action.setAttribute("label", api.loc("health-restore"));
@@ -731,10 +1022,7 @@ function renderHealth(box, health, id) {
       safeCall(() => api.restoreNote(id)),
     );
   } else {
-    action.setAttribute(
-      "label",
-      api.loc(unavailable ? "health-open-cache" : "editor-src-pick"),
-    );
+    action.setAttribute("label", api.loc("editor-src-pick"));
     action.addEventListener("command", () => api.openEditor({ zettelId: id }));
   }
   box.appendChild(action);

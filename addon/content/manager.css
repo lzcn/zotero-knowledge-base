@@ -13,6 +13,7 @@
   --muted: #6e6e73;
   --source: #268572;
   --danger: #bc404b;
+  --graph-link: #929daa;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -26,6 +27,7 @@
     --muted: #b0b0b8;
     --source: #66bdae;
     --danger: #ed8f8f;
+    --graph-link: #778492;
   }
 }
 
@@ -849,6 +851,7 @@ html|button[disabled] {
 }
 #graph-legend {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   padding: 8px 12px;
   border-top: 1px solid var(--border);
@@ -866,20 +869,22 @@ html|button[disabled] {
   color: var(--danger);
 }
 .graph-edge {
-  stroke: #b7c2cf;
-  stroke-width: 1px;
-  opacity: 0.5;
+  stroke: var(--graph-link);
+  stroke-width: 1.1px;
+  opacity: 0.65;
   vector-effect: non-scaling-stroke;
 }
 .graph-edge.source {
-  stroke: var(--source);
   stroke-dasharray: 5 4;
+}
+.graph-edge.parent {
+  stroke-width: 1.2px;
 }
 .graph-node {
   cursor: pointer;
 }
 .graph-node circle {
-  fill: var(--accent);
+  fill: var(--node-color, var(--accent));
   stroke: var(--bg);
   stroke-width: 1.5px;
   vector-effect: non-scaling-stroke;
@@ -892,23 +897,27 @@ html|button[disabled] {
   stroke: var(--muted);
   stroke-dasharray: 3 2;
 }
-.graph-node.selected circle {
+.graph-node circle.graph-node-ring {
+  fill: none;
   stroke: var(--accent);
-  stroke-width: 3px;
+  stroke-width: 2px;
+  visibility: hidden;
+  pointer-events: none;
 }
 .graph-edge.highlighted {
   stroke: var(--accent);
-  opacity: 0.85;
-  stroke-width: 1.5px;
+  opacity: 1;
+  stroke-width: 2.4px;
 }
 .graph-edge.source.highlighted {
   stroke: var(--source);
 }
-.graph-node.hovered circle,
-.graph-node:focus-visible circle {
-  stroke: var(--accent);
-  stroke-width: 3px;
+.graph-node.selected circle.graph-node-ring,
+.graph-node.hovered circle.graph-node-ring,
+.graph-node:focus-visible circle.graph-node-ring {
+  visibility: visible;
 }
+.graph-node.hub text,
 .graph-node.highlighted text {
   font-weight: 500;
 }
@@ -916,10 +925,6 @@ html|button[disabled] {
   fill: var(--fg);
   font-size: 12px;
   user-select: none;
-}
-.graph-node.dimmed,
-.graph-edge.dimmed {
-  opacity: 0.12;
 }
 
 /* Header and actions stay visible as the writing panes scroll. */
@@ -1102,9 +1107,6 @@ html|button[disabled] {
 #knowledge-base-family h3 {
   font-size: 12px;
   color: var(--muted);
-}
-.graph-edge.parent {
-  stroke-width: 1.2px;
 }
 .graph-edge.link {
   stroke-dasharray: 4 4;
@@ -1602,6 +1604,9 @@ summary {
 }
 #knowledge-base-forward {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/forward.svg");
+}
+#knowledge-base-open-window {
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/open.svg");
 }
 .kb-native-tool[disabled] {
   opacity: 0.4;
@@ -2333,32 +2338,6 @@ summary {
   overflow: hidden;
   clip-path: inset(50%);
 }
-.graph-node.card circle {
-  fill: var(--node-color, #8e969f);
-}
-.graph-node.source circle {
-  fill: #a5afbd;
-}
-.graph-node text {
-  fill: var(--muted);
-  font-size: 11px;
-}
-.graph-edge,
-.graph-edge.parent,
-.graph-edge.link,
-.graph-edge.source {
-  stroke: var(--border);
-  stroke-width: 0.8px;
-  opacity: 0.65;
-}
-.graph-edge.source {
-  stroke-dasharray: none;
-}
-.graph-node.selected text,
-.graph-node.hovered text {
-  fill: var(--fg);
-}
-
 #graph-legend-cards,
 #graph-legend-sources {
   color: var(--muted);
@@ -2516,4 +2495,52 @@ summary {
   font-size: 11px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+
+/* Keep row geometry stable while recycling the visible list window. */
+#knowledge-base-list .zettel-row {
+  height: 126px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+#knowledge-base-list .zettel-row .title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#knowledge-base-list .list-spacer {
+  padding: 0;
+  margin: 0;
+  pointer-events: none;
+}
+#knowledge-base-list .zid {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+#graph-groups-legend {
+  display: inline-flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.graph-group-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.graph-group-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }

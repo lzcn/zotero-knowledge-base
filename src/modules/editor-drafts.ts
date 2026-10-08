@@ -52,6 +52,16 @@ export async function listEditorDrafts(): Promise<EditorDraft[]> {
     .filter((draft) => !draft.nativeDocument);
 }
 
-export async function discardEditorDraft(id: string): Promise<void> {
-  await transaction(() => exec("DELETE FROM editor_drafts WHERE id = ?", [id]));
+export async function discardEditorDraft(
+  id: string,
+  throughRevision?: number,
+): Promise<void> {
+  await transaction(() =>
+    throughRevision === undefined
+      ? exec("DELETE FROM editor_drafts WHERE id = ?", [id])
+      : exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
+          id,
+          throughRevision,
+        ]),
+  );
 }

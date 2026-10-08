@@ -1,4 +1,12 @@
-import { attachMarkdownToggle } from "../ui/native-markdown-toolbar";
+import { isAccelKey } from "../ui/platform";
+import {
+  attachMarkdownToggle,
+  getNativeTypography,
+} from "../ui/native-markdown-toolbar";
+import { attachReadingView } from "../ui/native-reading-view";
+import { api } from "./api";
+import { onNativeNoteChange, writeNativeNote } from "./note-sessions";
+import { mergeMarkdownDocuments } from "./document-merge";
 import { getString } from "../utils/locale";
 import { getMarkdownDocument, markdownDocumentHTML } from "./native-notes";
 import {
@@ -108,7 +116,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     );
     sourceTextarea.spellcheck = false;
     sourceTextarea.style.cssText =
-      "flex: 1; min-height: 100px; box-sizing: border-box; width: 100%; resize: none; border: 0; outline: none; padding: 24px; color: var(--fill-primary, #252a34); background: var(--material-background, #fff); font: 14px/1.7 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 4;";
+      "flex: 1; min-height: 100px; box-sizing: border-box; width: 100%; resize: none; border: 0; outline: none; padding: 0; color: var(--fill-primary, #252a34); background: var(--material-background, #fff);";
     sourceTextarea.hidden = true;
     const previousPosition = container.style.position;
     container.style.position = "relative";
@@ -123,40 +131,52 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     bar.style.cssText += `position: absolute; top: ${toolbarHeight}px; left: 0; right: 0; z-index: 2;`;
     container.insertBefore(bar, frame);
     container.insertBefore(sourceTextarea, frame.nextSibling);
-    if (!sourceWindows.has(win)) {
-      Services.scriptloader.loadSubScript(
-        "chrome://knowledge-base/content/markdown-source.js",
-        win,
-      );
-      sourceWindows.add(win);
-    }
-    const source = await (
-      win as Window & {
-        KnowledgeBaseMarkdownSource: {
-          create(
-            input: HTMLTextAreaElement,
-            labels?: Record<string, string>,
-          ): Promise<import("../ui/markdown-source").MarkdownSource>;
-        };
+    // Allocate the HTML/CodeMirror editor only when Markdown is first requested.
+    // Ordinary native editing should not load another frame or alter focus.
+    let source: import("../ui/markdown-source").MarkdownSource | undefined;
+    const ensureSource = async () => {
+      if (source) return;
+      if (!sourceWindows.has(win)) {
+        Services.scriptloader.loadSubScript(
+          "chrome://knowledge-base/content/markdown-source.js",
+          win,
+        );
+        sourceWindows.add(win);
       }
-    ).KnowledgeBaseMarkdownSource.create(sourceTextarea, {
-      citation: getString("markdown-node-citation"),
-      annotation: getString("markdown-node-annotation"),
-      notelink: getString("markdown-node-note-link"),
-      image: getString("markdown-node-image"),
-    });
-    if (
-      stopped ||
-      token !== generation ||
-      !notes()._editorInstances.includes(instance)
-    ) {
-      source.destroy();
-      source.remove();
-      bar.remove();
-      container.style.position = previousPosition;
-      return;
-    }
+      source = await (
+        win as Window & {
+          KnowledgeBaseMarkdownSource: {
+            create(
+              input: HTMLTextAreaElement,
+              labels?: Record<string, string>,
+            ): Promise<import("../ui/markdown-source").MarkdownSource>;
+          };
+        }
+      ).KnowledgeBaseMarkdownSource.create(sourceTextarea, {
+        citation: getString("markdown-node-citation"),
+        annotation: getString("markdown-node-annotation"),
+        notelink: getString("markdown-node-note-link"),
+        image: getString("markdown-node-image"),
+      });
+      if (
+        stopped ||
+        closed ||
+        token !== generation ||
+        !notes()._editorInstances.includes(instance)
+      ) {
+        source.destroy();
+        source.remove();
+        source = undefined;
+        return;
+      }
+      source.addEventListener("input", changed);
+      source.addEventListener("compositionstart", clearTimer);
+      source.addEventListener("compositionend", changed);
+      source.setTypography(getNativeTypography(instance._iframeWindow));
+    };
     let sourceMode = false;
+    let readingMode = false;
+    let readingVersion = 0;
     let closed = false;
     let baseline = "";
     let original = "";
@@ -172,15 +192,45 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       preserveSelection: boolean,
     ) {
       if (sourceMode) {
+        // The native element also echoes our own HTML-only saves here. Note sessions
+        // carry the writer identity and are the single source of external updates.
         pendingNativeUpdate = true;
-        if (dirty() && item.getNote() !== original)
-          show("native-markdown-conflict", true);
       } else nativeUpdate.call(instance, data, preserveSelection);
     };
     instance.applyIncrementalUpdate = heldUpdate;
     const previousDisableSaving = instance._disableSaving;
     const draftID = () => `native-document:${item.libraryID}:${item.key}`;
-    const dirty = () => sourceMode && source.value !== baseline;
+    const dirty = () => sourceMode && source!.value !== baseline;
+    const syncNote = () => {
+      const html = item.getNote();
+      if (html === original) return true;
+      const document = getMarkdownDocument(html);
+      const previousDocument = getMarkdownDocument(original);
+      const merged = mergeMarkdownDocuments(
+        previousDocument,
+        source!.value,
+        document,
+      );
+      if (merged === null) return false;
+      original = html;
+      baseline =
+        mergeMarkdownDocuments(previousDocument, baseline, document) ??
+        document;
+      source!.value = merged;
+      if (readingMode) void refreshReading().catch(report);
+      return true;
+    };
+    const unsubscribeNote = onNativeNoteChange(item.id, (change) => {
+      if (!sourceMode || closed || change.origin === instance.instanceID)
+        return;
+      pendingNativeUpdate = true;
+      if (!syncNote()) show("native-markdown-conflict", true);
+      else if (!dirty()) {
+        status.textContent = "";
+        bar.hidden = true;
+        reload.hidden = true;
+      }
+    });
     const show = (key: string, conflict = false) => {
       bar.hidden = !sourceMode;
       status.textContent = getString(key);
@@ -194,7 +244,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           draftRevision: ++revision,
           nativeDocument: true,
           title: item.getDisplayTitle(),
-          body: source.value,
+          body: source!.value,
           noteID: item.id,
           expectedNoteHTML: original,
           sourceMode: true,
@@ -209,42 +259,35 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       if (operation) return operation;
       operation = (async () => {
         clearTimer();
-        if (closed || stopped || !sourceMode) return false;
+        if (closed || stopped || !sourceMode || source!.isComposing)
+          return false;
         if (!dirty()) return true;
-        const value = source.value;
         try {
           await persist();
           if (closed || stopped) return false;
-          if (
-            item.getNote() !== original ||
-            !item.isEditable() ||
-            item.isInTrash()
-          ) {
+          if (!syncNote() || !item.isEditable() || item.isInTrash()) {
             show("native-markdown-conflict", true);
             return false;
           }
-          const html = await markdownDocumentHTML(value, original);
+          const value = source!.value;
+          const expectedHTML = original;
+          const html = await markdownDocumentHTML(value, expectedHTML);
           if (closed || stopped) return false;
-          let committedHTML = "";
-          await Zotero.DB.executeTransaction(async () => {
-            if (
-              closed ||
-              stopped ||
-              item.getNote() !== original ||
-              !item.isEditable() ||
-              item.isInTrash()
-            )
-              throw new Error("NOTE_CONFLICT");
-            item.setNote(html);
-            committedHTML = item.getNote();
-            await item.save({
-              notifierData: { noteEditorID: instance.instanceID },
-            });
-          });
-          original = committedHTML;
+          const committed = await writeNativeNote(
+            item,
+            expectedHTML,
+            html,
+            instance.instanceID,
+            () => !closed && !stopped && sourceMode,
+          );
+          original = committed.html;
           baseline = value;
-          if (item.getNote() === original)
-            instance.applyIncrementalUpdate({ html: original }, true);
+          instance.applyIncrementalUpdate({ html: item.getNote() }, true);
+          if (item.getNote() !== original) {
+            await persist();
+            show("native-markdown-conflict", true);
+            return false;
+          }
           if (!dirty()) await discardEditorDraft(draftID());
           else await persist();
           show("editor-saved");
@@ -252,7 +295,9 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         } catch (error) {
           report(error);
           show(
-            item.getNote() !== original || item.isInTrash()
+            String(error).includes("NOTE_CONFLICT") ||
+              item.getNote() !== original ||
+              item.isInTrash()
               ? "native-markdown-conflict"
               : "native-markdown-failed",
             true,
@@ -281,6 +326,10 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       changingMode = true;
       removeMarkdownToggle.setDisabled(true);
       try {
+        readingMode = false;
+        ++readingVersion;
+        readingView.show(false);
+        if (sourceMode) source!.hidden = false;
         if (sourceMode) {
           if (!(await save()) || dirty()) return;
           sourceMode = false;
@@ -290,7 +339,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
             return;
           }
           instance._disableSaving = previousDisableSaving;
-          source.hidden = true;
+          source!.hidden = true;
           frame.hidden = false;
           bar.hidden = true;
           removeMarkdownToggle.setMode(false);
@@ -298,6 +347,8 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           reload.hidden = true;
           element.focus();
         } else {
+          await ensureSource();
+          if (!source || closed || stopped) return;
           const data = instance._iframeWindow.wrappedJSObject.getDataSync(true);
           if (data) await instance._save(JSON.parse(JSON.stringify(data)));
           if (closed || stopped || !item.id) return;
@@ -305,25 +356,28 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           baseline = getMarkdownDocument(original);
           const draft = await getEditorDraft(draftID());
           if (closed || stopped) return;
-          source.value = draft?.body ?? baseline;
+          source!.value = draft?.body ?? baseline;
           revision = draft?.draftRevision ?? 0;
-          if (draft?.expectedNoteHTML) original = draft.expectedNoteHTML;
+          if (draft?.expectedNoteHTML) {
+            original = draft.expectedNoteHTML;
+            baseline = getMarkdownDocument(original);
+          }
           instance._disableSaving = true;
           sourceMode = true;
           bar.hidden = true;
           frame.hidden = false;
           removeMarkdownToggle.setMode(true);
-          source.hidden = false;
+          source!.hidden = false;
+          source!.setTypography(getNativeTypography(instance._iframeWindow));
 
-          if (draft)
+          if (draft) {
+            const synced = syncNote();
             show(
-              original === item.getNote()
-                ? "native-markdown-draft"
-                : "native-markdown-conflict",
-              original !== item.getNote(),
+              synced ? "native-markdown-draft" : "native-markdown-conflict",
+              !synced,
             );
-          else status.textContent = "";
-          source.focus();
+          } else status.textContent = "";
+          source!.focus();
         }
       } catch (error) {
         report(error);
@@ -336,10 +390,44 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     const changed = () => {
       clearTimer();
       show("editor-unsaved");
-      timer = win.setTimeout(() => {
-        void track(save());
-      }, 500);
+      if (!source!.isComposing)
+        timer = win.setTimeout(() => {
+          void track(save());
+        }, 500);
       void persist().catch(report);
+    };
+    const refreshReading = async () => {
+      const version = ++readingVersion;
+      if (!readingMode) return;
+      let html: string | undefined;
+      if (sourceMode) {
+        const body = source!.value;
+        await api.prepareMarkdown(body);
+        html = api.renderMarkdown(body);
+      }
+      if (closed || stopped || !readingMode || version !== readingVersion)
+        return;
+      readingView.show(true, html);
+    };
+    const toggleReading = async () => {
+      if (closed || stopped || changingMode) return;
+      readingMode = !readingMode;
+      ++readingVersion;
+      if (sourceMode) source!.hidden = readingMode;
+      if (readingMode) {
+        try {
+          await refreshReading();
+          if (readingMode) readingView.focus();
+        } catch (error) {
+          readingMode = false;
+          if (sourceMode) source!.hidden = false;
+          report(error);
+        }
+      } else {
+        readingView.show(false);
+        if (sourceMode) source!.focus();
+        else element.focus();
+      }
     };
     const reloadSource = async () => {
       if (operation || stopped || closed) return;
@@ -355,10 +443,11 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       clearTimer();
       await discardEditorDraft(draftID());
       original = item.getNote();
-      baseline = source.value = getMarkdownDocument(original);
+      baseline = source!.value = getMarkdownDocument(original);
       revision = 0;
       status.textContent = "";
       reload.hidden = true;
+      if (readingMode) await refreshReading();
     };
     const requestClose = async () => {
       if (closing) return;
@@ -396,8 +485,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       }
     };
     const keydown = (event: KeyboardEvent) => {
-      if (!sourceMode || !(event.metaKey || event.ctrlKey) || event.altKey)
-        return;
+      if (!sourceMode || !isAccelKey(event)) return;
       const key = event.key.toLowerCase();
       if (windowType !== "zotero:note" && !element.contains(doc.activeElement))
         return;
@@ -431,12 +519,23 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         void changeMode();
       },
     );
+    const readingView = attachReadingView(
+      instance._iframeWindow,
+      getString("editor-reading"),
+      () => {
+        void toggleReading().catch(report);
+      },
+      (href) => {
+        void api.openLink(href).catch(report);
+      },
+    );
     const controller: Controller = {
       stop() {
         if (closed) return;
         clearTimer();
         void persist().catch(report);
         closed = true;
+        ++readingVersion;
       },
       async restore() {
         // Rebuild an open native editor before re-enabling its writer on plugin disable.
@@ -454,6 +553,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       },
       dispose() {
         controller.stop();
+        unsubscribeNote();
         // uninit() has already skipped its hidden stale document before unregistering.
         if (instance.applyIncrementalUpdate === heldUpdate)
           instance.applyIncrementalUpdate = nativeUpdate;
@@ -461,9 +561,11 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         frame.hidden = false;
         container.style.position = previousPosition;
         removeMarkdownToggle();
+        readingView.destroy();
         bar.remove();
-        source.destroy();
-        source.remove();
+        source?.destroy();
+        source?.remove();
+        sourceTextarea.remove();
         win.removeEventListener("keydown", keydown, true);
         win.removeEventListener("close", onClose, true);
         win.removeEventListener("unload", unload);
@@ -473,7 +575,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     reload.addEventListener("command", () => {
       void reloadSource().catch(report);
     });
-    source.addEventListener("input", changed);
     win.addEventListener("keydown", keydown, true);
     win.addEventListener("close", onClose, true);
     win.addEventListener("unload", unload);

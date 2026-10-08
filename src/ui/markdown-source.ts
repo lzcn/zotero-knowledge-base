@@ -2,23 +2,35 @@ import { EditorState, Transaction, Compartment } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import {
-  defaultHighlightStyle,
-  syntaxHighlighting,
-} from "@codemirror/language";
+import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { configureNodeLabels, zNodeField } from "./markdown-nodes";
+import { markdownMath } from "./markdown-math";
+import { tags } from "@lezer/highlight";
+
+// Markdown punctuation is syntax, not an error. Keep prose/math in the host text color.
+const sourceHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading1, fontWeight: "bold", fontSize: "1.2em" },
+  { tag: tags.heading2, fontWeight: "bold", fontSize: "1.1em" },
+  { tag: tags.heading, fontWeight: "bold" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "bold" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+  { tag: tags.link, textDecoration: "underline" },
+]);
 
 /** The source surface keeps the existing editor's selection and insertion contract. */
 export interface MarkdownSource extends HTMLElement {
   value: string;
   selectionStart: number;
   selectionEnd: number;
+  readonly isComposing: boolean;
   readOnly: boolean;
   disabled: boolean;
   spellcheck: boolean;
   placeholder: string;
   setSelectionRange(start: number, end: number): void;
   setRangeText(text: string, start?: number, end?: number, mode?: string): void;
+  setTypography(properties: Record<string, string>): void;
   destroy(): void;
 }
 
@@ -91,9 +103,9 @@ function mount(
           spellcheck: "false",
         }),
         history(),
-        markdown(),
+        markdown({ extensions: [markdownMath] }),
         EditorView.lineWrapping,
-        syntaxHighlighting(defaultHighlightStyle),
+        syntaxHighlighting(sourceHighlightStyle),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         zNodeField,
         editable.of([
@@ -107,22 +119,24 @@ function mount(
         EditorView.theme({
           "&": {
             height: "100%",
-            color: "inherit",
-            backgroundColor: "inherit",
+            color: "var(--knowledge-base-color, inherit)",
+            backgroundColor: "var(--knowledge-base-background, inherit)",
           },
           ".cm-scroller": {
             overflow: "auto",
             fontFamily:
-              '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            fontSize: "16px",
-            lineHeight: "1.7",
-            letterSpacing: "normal",
+              'var(--knowledge-base-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif)',
+            fontSize: "var(--knowledge-base-font-size, 16px)",
+            lineHeight: "var(--knowledge-base-line-height, 1.7)",
+            letterSpacing: "var(--knowledge-base-letter-spacing, normal)",
+            fontVariantLigatures: "none",
           },
           ".cm-content": {
-            maxWidth: "820px",
+            maxWidth: "var(--knowledge-base-max-width, calc(70ch + 60px))",
             width: "100%",
             margin: "0 auto",
-            padding: "28px 36px 48px",
+            padding:
+              "var(--knowledge-base-padding-block, 20px) var(--knowledge-base-padding-inline, 30px) max(var(--knowledge-base-padding-block, 20px), 50vh)",
             boxSizing: "border-box",
           },
           "&.cm-focused": { outline: "none" },
@@ -142,6 +156,26 @@ function mount(
       ],
     }),
   });
+  let composing = false;
+  view.dom.addEventListener(
+    "compositionstart",
+    () => {
+      composing = true;
+      root.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+    },
+    true,
+  );
+  view.dom.addEventListener(
+    "compositionend",
+    () => {
+      composing = false;
+      window.setTimeout(() => {
+        if (!destroyed)
+          root.dispatchEvent(new Event("compositionend", { bubbles: true }));
+      }, 0);
+    },
+    true,
+  );
   // CodeMirror owns DOM input; publish one document change through the surface.
   view.dom.addEventListener("input", (event) => event.stopPropagation());
   const write = (action: () => void) => {
@@ -162,13 +196,39 @@ function mount(
       ]),
     });
   Object.defineProperties(root, {
+    isComposing: { get: () => composing || view.composing },
     value: {
       get: () => view.state.doc.toString(),
       set: (value: string) => {
         if (value === root.value) return;
+        // Rebase just the changed span, as Better Notes does, so saves and external
+        // updates map the existing cursor instead of replacing the whole document.
+        const previous = root.value;
+        let from = 0,
+          oldEnd = previous.length,
+          newEnd = value.length;
+        while (
+          from < Math.min(oldEnd, newEnd) &&
+          previous[from] === value[from]
+        )
+          from++;
+        while (
+          oldEnd > from &&
+          newEnd > from &&
+          previous[oldEnd - 1] === value[newEnd - 1]
+        ) {
+          oldEnd--;
+          newEnd--;
+        }
+        const changes = view.state.changes({
+          from,
+          to: oldEnd,
+          insert: value.slice(from, newEnd),
+        });
         write(() =>
           view.dispatch({
-            changes: { from: 0, to: view.state.doc.length, insert: value },
+            changes,
+            effects: view.scrollSnapshot().map(changes),
             annotations: Transaction.addToHistory.of(false),
           }),
         );
@@ -260,6 +320,11 @@ function mount(
   root.focus = () => {
     window.focus();
     view.focus();
+  };
+  root.setTypography = (properties) => {
+    for (const [name, value] of Object.entries(properties))
+      if (value) view.dom.style.setProperty(`--knowledge-base-${name}`, value);
+    view.requestMeasure();
   };
   root.destroy = () => {
     if (destroyed) return;
