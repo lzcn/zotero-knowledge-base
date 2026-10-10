@@ -33,7 +33,7 @@ section-count =
     }
 section-no-item = Select an item to see its notes
 section-loading = Loading…
-section-new = ＋ New card
+section-new = ＋ New Note
 
 manager-title = Knowledge Base
 manager-new = New Note
@@ -60,7 +60,6 @@ manager-confirm-delete = Delete "{ $title }"? Links to this note will remain but
 
 editor-title-new = New Note
 editor-title-edit = Edit Note
-editor-title-placeholder = Note title
 editor-source-label = Source:
 editor-src-none = No source
 editor-src-pick = Choose source
@@ -320,3 +319,7 @@ graph-group-tag = Choose tag
 graph-group-color = Group color
 graph-group-up = Move up
 graph-group-remove = Remove group
+
+graph-global = Global Graph
+graph-local = Local Graph
+pref-graph-local-depth = Local graph hops

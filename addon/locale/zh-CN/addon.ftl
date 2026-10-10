@@ -30,7 +30,7 @@ section-count =
     { $count } 篇笔记
 section-no-item = 选中文献条目后显示其笔记
 section-loading = 加载中…
-section-new = ＋ 新建卡片
+section-new = ＋ 新建笔记
 
 manager-title = 知识库
 manager-new = 新建笔记
@@ -54,7 +54,6 @@ manager-confirm-delete = 确定删除「{ $title }」吗？指向此笔记的链
 
 editor-title-new = 新建笔记
 editor-title-edit = 编辑笔记
-editor-title-placeholder = 笔记标题
 editor-source-label = 来源：
 editor-src-none = 未关联来源
 editor-src-pick = 选择来源
@@ -294,3 +293,7 @@ graph-group-tag = 选择标签
 graph-group-color = 分组颜色
 graph-group-up = 上移
 graph-group-remove = 移除分组
+
+graph-global = 全局图谱
+graph-local = 局部图谱
+pref-graph-local-depth = 局部图跳数

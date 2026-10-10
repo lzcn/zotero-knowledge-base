@@ -11,6 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import os from "node:os";
+import { performance } from "node:perf_hooks";
 import path from "node:path";
 import { JSDOM } from "jsdom";
 
@@ -112,6 +113,7 @@ let failStatement;
 const zoteroStub = {
   DataDirectory: { dir: "" },
   Items: {
+    getIDFromLibraryAndKey: () => false,
     getByLibraryAndKeyAsync: async () => false,
     loadDataTypes: async () => {},
   },
@@ -1234,10 +1236,54 @@ if (currentSchema) {
       isInTrash: () => sourceDeleted,
       isRegularItem: () => true,
       getField: (field) =>
-        field === "extra" ? `Citation Key: ${keys.get(id) || ""}` : "",
+        field === "extra"
+          ? `Citation Key: ${keys.get(id) || ""}`
+          : field === "firstCreator"
+            ? "Smith et al."
+            : field === "date"
+              ? "2026-10-08"
+              : field === "title"
+                ? "A full paper title"
+                : "",
     }),
     loadDataTypes: async () => {},
   };
+  noteRefs.invalidateNoteReferences();
+  const referencesRead = executedStatements.length;
+  await Promise.all(
+    Array.from({ length: 12 }, () => noteRefs.getNoteReferences()),
+  );
+  check(
+    "Concurrent reference lookups share one metadata scan",
+    executedStatements
+      .slice(referencesRead)
+      .filter((sql) =>
+        sql.includes("SELECT id, item_key, library_id FROM zettels"),
+      ).length === 1,
+  );
+  const referencesCached = executedStatements.length;
+  events.notifyDataChange({ fields: ["content"] });
+  await noteRefs.getNoteReferences();
+  check(
+    "Body-only notifications retain the reference cache",
+    executedStatements.length === referencesCached,
+  );
+  check(
+    "Literature link labels share source metadata and use author-year independently of the key",
+    (await noteRefs.getNoteReferences()).literature.get(literature)?.label ===
+      "Smith et al. 2026",
+  );
+  const titleOnlyRead = executedStatements.length;
+  await zettel.saveZettel({ id: thought, title: "Survey renamed", body: "" });
+  await noteRefs.getNoteReferences();
+  check(
+    "Title-only edits do not rescan source metadata or note aliases",
+    !executedStatements
+      .slice(titleOnlyRead)
+      .some((sql) =>
+        sql.includes("SELECT id, item_key, library_id FROM zettels"),
+      ),
+  );
   check(
     "Literature references use source keys while Zettels keep their unique IDs",
     (
@@ -1268,6 +1314,7 @@ if (currentSchema) {
       (await zettel.getBacklinks(literature))[0].sourceId === thought,
   );
   keys.set(1, "Renamed2026");
+  events.notifyDataChange({ fields: ["source", "identity"] });
   check(
     "Changing a citation key preserves the internal ID and indexed links",
     (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
@@ -1277,6 +1324,7 @@ if (currentSchema) {
       (await zettel.getOutgoing(thought))[0].targetId === literature,
   );
   keys.set(2, "Renamed2026");
+  events.notifyDataChange({ fields: ["source", "identity"] });
   await zettel.saveZettel({
     id: firstCard,
     title: "@Renamed2026",
@@ -1296,6 +1344,7 @@ if (currentSchema) {
   );
   keys.set(2, "Group2026");
   keys.set(1, "invalid key");
+  events.notifyDataChange({ fields: ["source", "identity"] });
   check(
     "Missing and unsafe citation keys keep a usable internal reference",
     (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
@@ -1304,6 +1353,7 @@ if (currentSchema) {
   );
   keys.set(1, "Renamed2026");
   sourceDeleted = true;
+  events.notifyDataChange({ fields: ["availability"] });
   check(
     "Trashed sources fall back without changing or deleting managed notes",
     (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
@@ -1316,6 +1366,110 @@ if (currentSchema) {
     "INSERT INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, 'NOTE0001', 1, '', 1)",
     [literature],
   );
+  const linksDOM = new JSDOM("<!doctype html><body></body>");
+  const priorWindow = zoteroStub.getMainWindow;
+  zoteroStub.getMainWindow = () => linksDOM.window;
+  const stableURL = "zotero://select/library/items/NOTE0001";
+  const oldHTML = `<div data-schema-version="9"><p><a href="knowledge-base://card/${literature}">Survey</a> <a href="knowledge-base://card/${literature}">My words</a></p><pre class="math">$$x^2$$</pre></div>`;
+  const legacyHTML = await nativeNotes.normalizeNoteLinks(
+    oldHTML.replace(
+      ">Survey</a>",
+      `>${(await zettel.getZettel(literature)).title}</a>`,
+    ),
+  );
+  check(
+    "Legacy note links become native URLs without changing formulas or explicit aliases",
+    legacyHTML.includes(`href="${stableURL}" title="[[${literature}]]"`) &&
+      legacyHTML.includes(`title="[[${literature}|My words]]"`) &&
+      legacyHTML.includes('class="math">$$x^2$$'),
+  );
+  await zettel.saveZettel({
+    id: literature,
+    kind: "literature",
+    title: "Renamed literature",
+    body: "",
+    itemKey: "READING1",
+    libraryID: 1,
+  });
+  const renamedHTML = await nativeNotes.normalizeNoteLinks(legacyHTML);
+  check(
+    "Title changes leave default key labels, native targets and custom labels unchanged",
+    renamedHTML.includes(
+      `href="${stableURL}" title="[[${literature}]]">${literature}</a>`,
+    ) &&
+      renamedHTML.includes(`title="[[${literature}|My words]]">My words</a>`),
+  );
+  const beforeRollback = (await noteRefs.getNoteLinkTargets()).get(
+    literature,
+  ).title;
+  const priorLabels = new Map([
+    [stableURL + "\n[[" + literature + "]]", new Set([literature])],
+  ]);
+  const nativeRenamedLabel = await nativeNotes.normalizeNoteLinks(
+    renamedHTML.replace(`>${literature}</a>`, ">My native wording</a>"),
+    priorLabels,
+  );
+  check(
+    "Editing default link text in the native editor creates an alias instead of reverting the edit",
+    nativeRenamedLabel.includes(
+      `title="[[${literature}|My native wording]]">My native wording</a>`,
+    ),
+  );
+  try {
+    await db.transaction(async () => {
+      await db.exec("UPDATE zettels SET title='Rolled back' WHERE id=?", [
+        literature,
+      ]);
+      await noteRefs.getNoteLinkTargets();
+      throw new Error("test rollback");
+    });
+  } catch (error) {
+    if (error.message !== "test rollback") throw error;
+  }
+  check(
+    "A rolled-back transaction cannot leave a stale link label cache",
+    (await noteRefs.getNoteLinkTargets()).get(literature).title ===
+      beforeRollback,
+  );
+  try {
+    await db.transaction(async () => {
+      await db.exec(
+        "INSERT INTO note_keys(key,card_id) VALUES('RollbackAlias',?)",
+        [thought],
+      );
+      noteRefs.invalidateNoteReferences();
+      await noteRefs.getNoteReferences();
+      throw new Error("test alias rollback");
+    });
+  } catch (error) {
+    if (error.message !== "test alias rollback") throw error;
+  }
+  check(
+    "Rolling back an alias change invalidates the reference cache without a body-edit scan",
+    !(await noteRefs.getNoteReferences()).byAlias.has("RollbackAlias"),
+  );
+  const syncedOriginal =
+    '<div data-schema-version="9"><p><a href="zotero://select/library/items/SYNC0001" title="[[other-profile-id]]">Synced target</a></p></div>';
+  const syncedHTML = await nativeNotes.markdownDocumentHTML(
+    nativeNotes.getMarkdownDocument(syncedOriginal) + "\n\nEdited here",
+    syncedOriginal,
+  );
+  check(
+    "Markdown saves retain native targets from another profile without a local card mapping",
+    syncedHTML.includes('href="zotero://select/library/items/SYNC0001"') &&
+      syncedHTML.includes('title="[[other-profile-id]]"') &&
+      syncedHTML.includes(">Synced target</a>"),
+  );
+  const changedURL = await nativeNotes.normalizeNoteLinks(
+    renamedHTML.replaceAll(stableURL, "zotero://select/library/items/SYNC0001"),
+  );
+  check(
+    "Changing a native link URL is not redirected back by stale wiki metadata",
+    changedURL.includes('href="zotero://select/library/items/SYNC0001"') &&
+      !changedURL.includes('title="[['),
+  );
+  zoteroStub.getMainWindow = priorWindow;
+  linksDOM.window.close();
   await zettel.saveZettel({
     id: thought,
     title: "Survey edited",
@@ -1617,6 +1771,26 @@ if (currentSchema) {
     (await graph.getGraphData()).nodes.filter((node) =>
       node.id.startsWith("isolated-"),
     ).length === 505,
+  );
+  const coldStarted = performance.now();
+  const lookupTargets = await noteRefs.getNoteLinkTargets();
+  const coldLookupMs = performance.now() - coldStarted;
+  const warmRead = executedStatements.length;
+  const warmStarted = performance.now();
+  for (let i = 0; i < 10000; i++)
+    (await noteRefs.getNoteLinkTargets()).get("isolated-" + (i % 505));
+  const warmLookupMs = performance.now() - warmStarted;
+  check(
+    "Ten thousand reference lookups share one index without additional database reads",
+    executedStatements.length === warmRead && lookupTargets.has("isolated-504"),
+  );
+  console.log(
+    "   Reference lookup timing: " +
+      JSON.stringify({
+        targets: lookupTargets.size,
+        coldMs: coldLookupMs,
+        warm10000Ms: warmLookupMs,
+      }),
   );
   await db.closeDB();
   await db.initDB();

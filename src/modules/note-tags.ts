@@ -81,7 +81,7 @@ export async function getEffectiveNoteTags(
 ): Promise<string[]> {
   if (!noteID) return [];
   const note = await Zotero.Items.getAsync(noteID);
-  if (!note?.isNote() || note.isInTrash()) return [];
+  if (!note || !note.isNote() || note.isInTrash()) return [];
   const inherit = getTagInheritance();
   const notes = [note];
   if (inherit && cardID) {

@@ -1,9 +1,19 @@
 import { exec, getAll, getOne, transaction, type NoteKind } from "./db";
-import { notifyDataChange } from "./events";
+import { notifyDataChange, onDataChange } from "./events";
 import { getTagInheritance } from "./preferences";
 import { getFamily } from "./hierarchy";
 import { richTextToMarkdown } from "./rich-text";
-import { renderMarkdown } from "./markdown";
+import {
+  renderMarkdown,
+  cardRefFromURL,
+  managedWikiReference,
+  type CardReference,
+} from "./markdown";
+import {
+  getNoteLinkTargets,
+  getCachedNoteTarget,
+  invalidateNoteReferences,
+} from "./note-references";
 import { getCitation, prepareCitations, resolveCitation } from "./references";
 import { resolveAssetURL } from "./assets";
 import { getCitationKey } from "./zotero";
@@ -50,12 +60,201 @@ let auditing: Promise<void> | undefined;
 let auditRequested = false;
 const indexedHTML = new Map<number, string>();
 const previewImages = new Map<string, string>();
+const deferredLinkRepairs = new Set<number>();
+let linkLabels = new WeakMap<Zotero.Item, Map<string, Set<string>>>();
+let unsubscribeLinks: (() => void) | undefined;
+const targetLabels = new Map<string, string>();
 
 function parse(html: string): Document {
   const win = Zotero.getMainWindow() as Window & {
     DOMParser: typeof DOMParser;
   };
   return new win.DOMParser().parseFromString(html, "text/html");
+}
+
+/** Canonical note keys survive renames and are handled by Zotero without this plugin. */
+export async function normalizeNoteLinks(
+  html: string,
+  previousLabels?: Map<string, Set<string>>,
+): Promise<string> {
+  const doc = parse(html);
+  const candidates = (
+    Array.from(doc.querySelectorAll("a[href]")) as Element[]
+  ).filter(
+    (link) =>
+      cardRefFromURL(link.getAttribute("href") || "") ||
+      managedWikiReference(
+        link.getAttribute("title") || "",
+        link.getAttribute("href") || "",
+      ),
+  );
+  if (!candidates.length) return html;
+  await getNoteLinkTargets();
+  let changed = false;
+  for (const link of candidates) {
+    const href = link.getAttribute("href") || "";
+    const wiki = managedWikiReference(link.getAttribute("title") || "", href);
+    const parts = wiki?.slice(2, -2).split("|");
+    const ref = parts?.[0] || cardRefFromURL(href)!;
+    const referenced = getCachedNoteTarget(ref);
+    const target =
+      wiki && !cardRefFromURL(href) ? getCachedNoteTarget(href) : referenced;
+    if (
+      !target &&
+      wiki &&
+      referenced?.id === ref &&
+      referenced.href &&
+      referenced.href !== href
+    ) {
+      // A user changed the native URL to an unmanaged note: preserve that edit.
+      link.removeAttribute("title");
+      changed = true;
+      continue;
+    }
+    if (!target?.href) continue;
+    const text = link.textContent || "";
+    const label = target.label || target.title || target.reference;
+    const previous = previousLabels?.get(href + "\n" + wiki);
+    const automatic = wiki
+      ? parts!.length === 1 &&
+        (!previous || previous.has(text) || text === label)
+      : [
+          ref,
+          ref.replace(/^@/, ""),
+          `[[${ref}]]`,
+          target.id,
+          target.reference,
+          target.reference.replace(/^@/, ""),
+          target.title,
+          target.label,
+          target.sourceTitle,
+        ].includes(text);
+    const alias = automatic ? "" : text.replace(/[\][\n]/g, " ");
+    const title = `[[${target.id}${alias ? `|${alias}` : ""}]]`;
+    if (
+      href !== target.href ||
+      link.getAttribute("title") !== title ||
+      (automatic && text !== label)
+    ) {
+      link.setAttribute("href", target.href);
+      link.setAttribute("title", title);
+      if (automatic) link.textContent = label;
+      changed = true;
+    }
+  }
+  if (!changed) return html;
+  return (
+    doc.querySelector("div[data-schema-version]")?.outerHTML ||
+    doc.body.innerHTML
+  );
+}
+
+function noteLinkLabels(html: string): Map<string, Set<string>> {
+  const result = new Map<string, Set<string>>();
+  for (const link of Array.from(
+    parse(html).querySelectorAll("a[href]"),
+  ) as Element[]) {
+    const href = link.getAttribute("href") || "";
+    const wiki = link.getAttribute("title") || "";
+    const key = href + "\n" + wiki;
+    if (!result.has(key)) result.set(key, new Set());
+    result.get(key)!.add(link.textContent || "");
+  }
+  return result;
+}
+function linkSignature(html: string): string {
+  return JSON.stringify(
+    [...noteLinkLabels(html)]
+      .map(([key, labels]) => [key, [...labels].sort()])
+      .sort(([a], [b]) => String(a).localeCompare(String(b))),
+  );
+}
+
+export async function repairNativeNoteLinks(note: Zotero.Item): Promise<void> {
+  if (stopping || !note.isNote() || note.isInTrash()) return;
+  await Zotero.Items.loadDataTypes([note], ["note"]);
+  const original = note.getNote();
+  if (!/knowledge-base:\/\/card\/|title=["']\[\[/.test(original)) {
+    deferredLinkRepairs.delete(note.id);
+    return;
+  }
+  if (!note.isEditable()) return;
+  const html = await normalizeNoteLinks(original, linkLabels.get(note));
+  if (stopping) return;
+  if (html === original) {
+    linkLabels.set(note, noteLinkLabels(original));
+    deferredLinkRepairs.delete(note.id);
+    return;
+  }
+  // A native editor may hold a keystroke that has not reached storage yet.
+  const instances =
+    (
+      Zotero.Notes as unknown as {
+        _editorInstances?: {
+          _item: Zotero.Item;
+          _iframeWindow: Window & {
+            wrappedJSObject: {
+              getDataSync(force: boolean): { html: string } | null;
+            };
+          };
+        }[];
+      }
+    )._editorInstances || [];
+  for (const instance of instances) {
+    if (instance._item?.id !== note.id) continue;
+    if (
+      instance._iframeWindow.closed ||
+      typeof instance._iframeWindow.wrappedJSObject.getDataSync !== "function"
+    ) {
+      deferredLinkRepairs.add(note.id);
+      return;
+    }
+    const current = instance._iframeWindow.wrappedJSObject.getDataSync(false);
+    if (
+      current &&
+      (getMarkdownDocument(current.html) !== getMarkdownDocument(original) ||
+        linkSignature(current.html) !== linkSignature(original))
+    ) {
+      deferredLinkRepairs.add(note.id);
+      return;
+    }
+  }
+  try {
+    await writeNativeNote(note, original, html, undefined, () => !stopping);
+    linkLabels.set(note, noteLinkLabels(html));
+    deferredLinkRepairs.delete(note.id);
+  } catch (error) {
+    if (!String(error).includes("NOTE_CONFLICT")) throw error;
+    deferredLinkRepairs.add(note.id);
+  }
+}
+
+async function refreshLinkLabels(ids: string[]): Promise<void> {
+  const targets = await getNoteLinkTargets();
+  const updated = new Map<string, string>();
+  ids = ids.filter((id) => {
+    const target = targets.get(id);
+    const label = target ? JSON.stringify([target.label, target.href]) : "";
+    const changed = targetLabels.get(id) !== label;
+    updated.set(id, label);
+    return changed;
+  });
+  for (let start = 0; start < ids.length && !stopping; start += 400) {
+    const batch = ids.slice(start, start + 400);
+    const rows = await getAll<{ library_id: number; note_key: string }>(
+      `SELECT DISTINCT n.library_id,n.note_key FROM links l JOIN card_notes n ON n.card_id=l.source_id WHERE l.target_id IN (${batch.map(() => "?").join(",")})`,
+      batch,
+    );
+    for (const row of rows) {
+      if (stopping) return;
+      const note = await Zotero.Items.getByLibraryAndKeyAsync(
+        row.library_id,
+        row.note_key,
+      );
+      if (note) await repairNativeNoteLinks(note);
+    }
+  }
+  for (const [id, label] of updated) targetLabels.set(id, label);
 }
 
 function replaceSimpleCitations(doc: Document, root: Element): void {
@@ -143,8 +342,10 @@ export function projectNativeNote(html: string): {
 export async function nativeNoteHTML(
   title: string | null,
   body: string,
+  fallbackLinks = new Map<string, CardReference>(),
 ): Promise<string> {
   await prepareCitations(body);
+  if (/\[\[|knowledge-base:\/\/card\//.test(body)) await getNoteLinkTargets();
   const win = Zotero.getMainWindow();
   const doc = parse(
     renderMarkdown(
@@ -152,6 +353,13 @@ export async function nativeNoteHTML(
       win as unknown as Parameters<typeof renderMarkdown>[1],
       resolveAssetURL,
       getCitation,
+      (ref) => {
+        const cached = getCachedNoteTarget(ref);
+        const fallback = fallbackLinks.get(ref);
+        return !fallback || cached?.href === fallback.href
+          ? cached || fallback
+          : fallback;
+      },
     ),
   );
   for (const image of Array.from(
@@ -372,9 +580,34 @@ export async function markdownNoteHTML(
   original: string,
 ): Promise<string> {
   return restoreMarkdownFragments(
-    await nativeNoteHTML(title, protectNativePayloads(body, original)),
+    await nativeNoteHTML(
+      title,
+      protectNativePayloads(body, original),
+      nativeLinkFallbacks(original),
+    ),
     original,
   );
+}
+
+/** Synced notes retain working native links even without this profile's card index. */
+function nativeLinkFallbacks(original: string): Map<string, CardReference> {
+  const result = new Map<string, CardReference>();
+  for (const link of Array.from(
+    parse(original).querySelectorAll("a[href]"),
+  ) as Element[]) {
+    const href = link.getAttribute("href") || "";
+    const wiki = managedWikiReference(link.getAttribute("title") || "", href);
+    if (!wiki || cardRefFromURL(href)) continue;
+    const [id, ...alias] = wiki.slice(2, -2).split("|");
+    if (!result.has(id) || !alias.length)
+      result.set(id, {
+        id,
+        href,
+        reference: id,
+        title: alias.length ? id : link.textContent || id,
+      });
+  }
+  return result;
 }
 
 /** One complete Markdown document for ordinary Zotero notes, without a separate title. */
@@ -393,7 +626,11 @@ export async function markdownDocumentHTML(
   original: string,
 ): Promise<string> {
   return restoreMarkdownFragments(
-    await nativeNoteHTML(null, protectNativePayloads(source, original)),
+    await nativeNoteHTML(
+      null,
+      protectNativePayloads(source, original),
+      nativeLinkFallbacks(original),
+    ),
     original,
     true,
   );
@@ -634,10 +871,12 @@ async function organizeNativeNote(
   });
 }
 
-/** Create the native note on first edit and retain its initial body snapshot. */
+/** Open a native note and retain its initial body snapshot. */
 export async function acquireNativeNote(
   input: NativeCardInput,
 ): Promise<{ noteID: number; html: string }> {
+  if (input.isCurrent && !input.isCurrent())
+    throw new Error("NOTE_SESSION_CLOSED");
   if (input.id && !(await getZettel(input.id)))
     throw new Error("CARD_CONFLICT");
   let note = input.id ? await mappedNote(input.id) : null;
@@ -659,11 +898,15 @@ export async function acquireNativeNote(
           Zotero.Libraries.userLibraryID)
         : Zotero.Libraries.userLibraryID;
     note.setNote(
-      await nativeNoteHTML(
-        original?.title ?? input.title,
-        original?.body ?? input.body,
-      ),
+      !original && !input.title.trim() && !input.body.trim()
+        ? '<div data-schema-version="2"><p></p></div>'
+        : await nativeNoteHTML(
+            original?.title ?? input.title,
+            original?.body ?? input.body,
+          ),
     );
+    if (input.isCurrent && !input.isCurrent())
+      throw new Error("NOTE_SESSION_CLOSED");
     // Avoid opening a second native editor while legacy images are imported.
     await note.saveTx({ skipSelect: true });
     if (input.id)
@@ -672,6 +915,9 @@ export async function acquireNativeNote(
         [input.id, note.key, note.libraryID, original?.body ?? input.body],
       );
   }
+  if (input.isCurrent && !input.isCurrent())
+    throw new Error("NOTE_SESSION_CLOSED");
+  await repairNativeNoteLinks(note);
   activeNotes.add(note.id);
   try {
     await organizeNativeNote(
@@ -903,13 +1149,14 @@ export async function recoverNativeSaves(
 async function refreshNote(note: Zotero.Item): Promise<void> {
   if (!note.isNote() || note.isInTrash()) return;
   await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
-  const html = note.getNote();
-  if (indexedHTML.get(note.id) === html) return;
   const row = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
     [note.key, note.libraryID],
   );
   if (!row) return;
+  await repairNativeNoteLinks(note);
+  const html = note.getNote();
+  if (indexedHTML.get(note.id) === html) return;
   const card = await getZettel(row.card_id);
   if (!card) return;
   await prepareCitations(card.body);
@@ -961,6 +1208,21 @@ function reportAuditError(error: unknown): void {
 export async function initNativeNotes(): Promise<void> {
   if (observerID) return;
   stopping = false;
+  for (const [id, target] of await getNoteLinkTargets())
+    if (id === target.id)
+      targetLabels.set(id, JSON.stringify([target.label, target.href]));
+  unsubscribeLinks = onDataChange((change) => {
+    if (
+      stopping ||
+      !change.cardIDs.length ||
+      !change.fields.includes("identity")
+    )
+      return;
+    pending = pending
+      .catch(reportAuditError)
+      .then(() => refreshLinkLabels(change.cardIDs))
+      .catch(reportAuditError);
+  });
   observerID = Zotero.Notifier.registerObserver(
     {
       notify(event: string, _type: string, ids: number[] | string[]) {
@@ -1014,6 +1276,23 @@ export async function initNativeNotes(): Promise<void> {
             .catch((error) => Zotero.logError(error));
           return;
         }
+        if (
+          _type === "item" &&
+          noteIDs.some((id) => deferredLinkRepairs.has(id))
+        ) {
+          pending = pending
+            .catch(reportAuditError)
+            .then(async () => {
+              for (const id of noteIDs) {
+                if (stopping) return;
+                if (!deferredLinkRepairs.has(id)) continue;
+                const note = await Zotero.Items.getAsync(id);
+                if (note) await repairNativeNoteLinks(note);
+                else deferredLinkRepairs.delete(id);
+              }
+            })
+            .catch(reportAuditError);
+        }
         const eligibleIDs = ids.filter((id) => !activeNotes.has(Number(id)));
         if (!eligibleIDs.length) return;
         eligibleIDs.forEach((id) => refreshIDs.add(Number(id)));
@@ -1033,6 +1312,11 @@ export async function initNativeNotes(): Promise<void> {
                   if (!note) continue;
                   previewImages.delete(note.key);
                   if (note.isRegularItem()) {
+                    invalidateNoteReferences();
+                    const literature = await getAll<{ id: string }>(
+                      "SELECT id FROM zettels WHERE kind='literature' AND item_key=? AND library_id=?",
+                      [note.key, note.libraryID],
+                    );
                     const key = getCitationKey(note);
                     const affected = key
                       ? await resolveUnresolvedLinks(
@@ -1041,7 +1325,12 @@ export async function initNativeNotes(): Promise<void> {
                         )
                       : new Set<string>();
                     notifyDataChange({
-                      cardIDs: [...affected],
+                      cardIDs: [
+                        ...new Set([
+                          ...affected,
+                          ...literature.map((card) => card.id),
+                        ]),
+                      ],
                       itemKeys: [note.key],
                       fields: affected.size
                         ? ["source", "identity", "links"]
@@ -1092,6 +1381,8 @@ export async function initNativeNotes(): Promise<void> {
 
 export function stopNativeNotes(): void {
   stopping = true;
+  unsubscribeLinks?.();
+  unsubscribeLinks = undefined;
   refreshIDs.clear();
   if (observerID) Zotero.Notifier.unregisterObserver(observerID);
   observerID = undefined;
@@ -1106,6 +1397,9 @@ export async function closeNativeNotes(): Promise<void> {
   await pending;
   activeNotes.clear();
   previewImages.clear();
+  deferredLinkRepairs.clear();
+  linkLabels = new WeakMap();
+  targetLabels.clear();
 }
 
 export async function trashNativeNote(id: string): Promise<void> {

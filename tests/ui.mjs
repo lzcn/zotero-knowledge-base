@@ -29,6 +29,7 @@ await writeFile(
     )
     .join("\n") +
     `\nexport * as platform from ${JSON.stringify(path.join(ROOT, "src/ui/platform.ts"))};` +
+    `\nexport * as graph_canvas from ${JSON.stringify(path.join(ROOT, "src/ui/graph-canvas.ts"))};` +
     `\nexport * as graph_layout from ${JSON.stringify(path.join(ROOT, "src/ui/graph-layout.ts"))};` +
     `\nexport * as native_reading_view from ${JSON.stringify(path.join(ROOT, "src/ui/native-reading-view.ts"))};` +
     `\nexport * as native_markdown_toolbar from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-toolbar.ts"))};` +
@@ -61,6 +62,7 @@ const {
   native_reading_view,
   preferences,
   graph_layout,
+  graph_canvas,
   platform,
   document_merge,
   note_tags,
@@ -336,6 +338,73 @@ check("Card links retain their Markdown IDs and manually chosen labels", () => {
   assert.equal(link.textContent, "[[stable-id]]");
   assert.equal(link.getAttribute("href"), "knowledge-base://card/stable-id");
 });
+check(
+  "Managed wiki links render native URLs and round-trip stable IDs and aliases",
+  () => {
+    const target = {
+      id: "stable-id",
+      title: "Renamed note",
+      reference: "@NewKey",
+      href: "zotero://select/library/items/NOTE1234",
+    };
+    const html = markdown.renderMarkdown(
+      "[[@OldKey]] [[stable-id|My label]] [OldKey](knowledge-base://card/%40OldKey)",
+      htmlWindow,
+      undefined,
+      undefined,
+      () => target,
+    );
+    const links = [...new JSDOM(html).window.document.querySelectorAll("a")];
+    assert.deepEqual(
+      links.map((link) => link.getAttribute("href")),
+      Array(3).fill(target.href),
+    );
+    assert.deepEqual(
+      links.map((link) => link.textContent),
+      [target.title, "My label", target.title],
+    );
+    assert.equal(
+      rich_text.richTextToMarkdown(html),
+      "[[stable-id]] [[stable-id|My label]] [[stable-id]]",
+    );
+    assert.equal(
+      rich_text.richTextToMarkdown(
+        '<p><a href="zotero://select/library/items/NOTE1234" title="Ordinary tooltip">Ordinary link</a></p>',
+      ),
+      '[Ordinary link](zotero://select/library/items/NOTE1234 "Ordinary tooltip")',
+    );
+  },
+);
+check(
+  "Literature links use author-year while citation-key titles and custom aliases remain distinct",
+  () => {
+    const target = {
+      id: "literature-1-SOURCE01",
+      title: "Smith2026",
+      label: "Smith et al. 2026",
+      sourceTitle: "A very long literature title",
+      reference: "@Smith2026",
+      href: "zotero://select/library/items/NOTE1234",
+    };
+    const html = markdown.renderMarkdown(
+      "[[literature-1-SOURCE01]] [[@Smith2026|My reading]] [A very long literature title](knowledge-base://card/literature-1-SOURCE01)",
+      htmlWindow,
+      undefined,
+      undefined,
+      () => target,
+    );
+    const links = [...new JSDOM(html).window.document.querySelectorAll("a")];
+    assert.deepEqual(
+      links.map((link) => link.textContent),
+      [target.label, "My reading", target.label],
+    );
+    assert.ok(links.every((link) => link.getAttribute("href") === target.href));
+    assert.equal(
+      rich_text.richTextToMarkdown(html),
+      "[[literature-1-SOURCE01]] [[literature-1-SOURCE01|My reading]] [[literature-1-SOURCE01]]",
+    );
+  },
+);
 check(
   "Markdown headings, emphasis, task lists, quotes, code and tables",
   () => {
@@ -811,6 +880,7 @@ assert.deepEqual(await native_notes.getNoteTags(72), [
   "Machine learning",
   "中文 标签",
 ]);
+assert.deepEqual(await native_notes.getNoteTags(999), []);
 preferences.setTagInheritance(false);
 assert.deepEqual(await native_notes.getNoteTags(72), [
   "Own tag",
@@ -937,6 +1007,16 @@ assert.equal(titleLengthControl.value, "20");
 titleLengthControl.value = "12";
 titleLengthControl.dispatchEvent(new prefsWin.Event("change"));
 assert.equal(preferences.getGraphLabelLength(), 12);
+const depthControl = prefsWin.document.getElementById(
+  "knowledge-base-graph-local-depth",
+);
+assert.equal(depthControl.value, "1");
+depthControl.value = "2";
+depthControl.dispatchEvent(new prefsWin.Event("change"));
+assert.equal(preferences.getGraphLocalDepth(), 2);
+assert.throws(() => preferences.setGraphLocalDepth(0));
+assert.throws(() => preferences.setGraphLocalDepth(1.5));
+preferences.setGraphLocalDepth(1);
 for (const invalid of ["0", "81", "12.5", ""]) {
   titleLengthControl.value = invalid;
   titleLengthControl.dispatchEvent(new prefsWin.Event("change"));
@@ -1166,6 +1246,9 @@ async function editor(args = {}, overrides = {}) {
     editorScript + "\nwindow.__editorEval = (expression) => eval(expression);",
   );
   await dom.window.__editorEval("load()");
+  const initialSourceAllocated = !!dom.window.document
+    .getElementById("knowledge-base-editor-body")
+    .querySelector("iframe");
   const initialMode = dom.window.document.getElementById(
     "knowledge-base-editor-root",
   ).dataset.mode;
@@ -1173,6 +1256,7 @@ async function editor(args = {}, overrides = {}) {
     await dom.window.__editorEval('setEditorMode("source", false)');
   return {
     initialMode,
+    initialSourceAllocated,
     win: dom.window,
     $: (id) => dom.window.document.getElementById(id),
     calls,
@@ -1333,7 +1417,7 @@ check(
 );
 
 check("Editor prefills concept titles in its real XML document", () =>
-  assert.equal(ed.$("knowledge-base-editor-title").value, "New concept"),
+  assert.equal(ed.win.__editorEval("noteTitle"), "New concept"),
 );
 let unavailableAcquisitions = 0;
 const unavailableEditor = await editor(
@@ -2244,8 +2328,9 @@ check(
 );
 check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.initialMode, "visual");
+  assert.equal(ed.initialSourceAllocated, false);
   assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
-  assert.equal(ed.$("knowledge-base-editor-title").hidden, true);
+  assert.equal(ed.$("knowledge-base-editor-title"), null);
   assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
 });
 ed.$("knowledge-base-editor-format").dispatchEvent(
@@ -2284,7 +2369,7 @@ check(
         .querySelector("iframe")
         .contentDocument.querySelector(".cm-editor"),
     );
-    assert.equal(ed.$("knowledge-base-editor-title").hidden, true);
+    assert.equal(ed.$("knowledge-base-editor-title"), null);
   },
 );
 check(
@@ -2694,6 +2779,12 @@ check("Zotero note references use ordinary editable Markdown link text", () => {
     rich_text.richTextToMarkdown(html),
     "[My note title](zotero://select/library/items/NOTE1234)",
   );
+  assert.equal(
+    rich_text.richTextToMarkdown(
+      '<p><a href="zotero://select/library/items/NOTE1234" title="[[stable-id|Old label]]">New label</a></p>',
+    ),
+    "[[stable-id|New label]]",
+  );
 });
 const literaturePicker = await editor(
   {},
@@ -2715,7 +2806,7 @@ const literaturePickerRow = literaturePicker.$(
   "knowledge-base-link-results",
 ).firstElementChild;
 check(
-  "Literature picker shows and inserts its citation-key note reference",
+  "Literature picker shows the citation key and inserts the stable note ID",
   () => {
     assert.equal(
       literaturePickerRow.querySelector(".relation-id").textContent,
@@ -2724,7 +2815,7 @@ check(
     literaturePickerRow.click();
     assert.equal(
       literaturePicker.$("knowledge-base-editor-body").value,
-      "[[@Author2026]]",
+      "[[note-1-UNIQUE01]]",
     );
   },
 );
@@ -2749,7 +2840,7 @@ const childDraft = await editor(
     getZettel: async (id) => ({ id, title: "Parent concept" }),
   },
 );
-childDraft.$("knowledge-base-editor-title").value = "Child concept";
+childDraft.$("knowledge-base-editor-body").value = "# Child concept\n\n";
 await childDraft.win.__editorEval("save(false)");
 check(
   "New child drafts save their explicitly prefilled parent without adding a reference",
@@ -2988,6 +3079,118 @@ check(
     layout.stop();
   },
 );
+check(
+  "Canvas draws curved directed relations, tag colors and readable titles; hit testing follows pan and zoom",
+  () => {
+    const calls = [];
+    const context = new Proxy(
+      {},
+      {
+        get:
+          (_, method) =>
+          (...args) => {
+            assert.ok(
+              args
+                .filter((value) => typeof value === "number")
+                .every(Number.isFinite),
+            );
+            calls.push([method, ...args]);
+          },
+        set: (_, name, value) => {
+          calls.push([name, value]);
+          return true;
+        },
+      },
+    );
+    const canvas = {
+      getContext: () => context,
+      getBoundingClientRect: () => ({ width: 500, height: 300 }),
+      ownerDocument: { defaultView: { devicePixelRatio: 2 } },
+    };
+    const style = {
+      getPropertyValue: (name) => (name === "--bg" ? "#fff" : "#123456"),
+      fontFamily: "system-ui",
+    };
+    const renderer = graph_canvas.createGraphCanvas(canvas, style);
+    const nodes = [
+      { id: "a", x: 0, y: 0, radius: 6, kind: "card", color: "#30a46c" },
+      { id: "b", x: 100, y: 80, radius: 8, kind: "source" },
+    ];
+    const edges = [
+      { source: nodes[0], target: nodes[1], kind: "link" },
+      { source: nodes[1], target: nodes[0], kind: "parent" },
+      { source: nodes[0], target: nodes[0], kind: "link" },
+    ];
+    renderer.draw(
+      nodes,
+      edges,
+      { x: 50, y: 30, k: 2 },
+      new Map([["a", { text: "A", visible: true }]]),
+      "a",
+      "a",
+    );
+    assert.ok(calls.some(([method]) => method === "quadraticCurveTo"));
+    assert.ok(calls.some(([method]) => method === "bezierCurveTo"));
+    assert.ok(
+      calls.some(
+        ([method, color]) => method === "fillStyle" && color === "#30a46c",
+      ),
+    );
+    assert.ok(
+      calls.some(([method, text]) => method === "fillText" && text === "A"),
+    );
+    assert.equal(canvas.width, 1000);
+    assert.equal(canvas.height, 600);
+    renderer.draw(
+      nodes,
+      edges,
+      { x: 50, y: 30, k: 2 },
+      new Map(),
+      undefined,
+      undefined,
+      new Set(),
+      true,
+    );
+    assert.equal(canvas.width, 500);
+    assert.equal(canvas.height, 300);
+    renderer.draw(nodes, edges, { x: 50, y: 30, k: 2 }, new Map());
+    assert.equal(canvas.width, 1000);
+    assert.equal(canvas.height, 600);
+    assert.equal(
+      graph_canvas.hitGraphNode(nodes, { x: 50, y: 30, k: 2 }, 250, 190)?.id,
+      "b",
+    );
+    assert.equal(
+      graph_canvas.hitGraphNode(nodes, { x: 50, y: 30, k: 2 }, 400, 270),
+      undefined,
+    );
+    calls.length = 0;
+    renderer.draw(
+      Array.from({ length: 1000 }, (_, i) => ({
+        id: String(i),
+        x: i % 100,
+        y: Math.floor(i / 100),
+        radius: 6,
+        kind: "card",
+        color: i % 2 ? "#30a46c" : "#2469c9",
+      })),
+      [],
+      { x: 0, y: 0, k: 1 },
+      new Map(),
+    );
+    assert.equal(calls.filter(([method]) => method === "arc").length, 1000);
+    assert.equal(calls.filter(([method]) => method === "fill").length, 2);
+    assert.ok(calls.filter(([method]) => method === "stroke").length <= 3);
+    const deniedGPU = { getContext: () => null, hidden: false };
+    const fallback = graph_canvas.createGraphCanvas(canvas, style, deniedGPU);
+    assert.equal(fallback.backend, "canvas");
+    assert.equal(deniedGPU.hidden, true);
+    calls.length = 0;
+    fallback.draw(nodes, edges, { x: 0, y: 0, k: 1 }, new Map());
+    assert.ok(calls.some(([method]) => method === "quadraticCurveTo"));
+    fallback.dispose();
+  },
+);
 const graphData = {
   nodes: [
     {
@@ -3045,6 +3248,7 @@ await new Promise((resolve) =>
   graphDom.window.addEventListener("load", resolve, { once: true }),
 );
 let graphLabelLength = 20;
+let graphLocalDepth = 1;
 const graphOptions = {
   outline: true,
   references: true,
@@ -3071,6 +3275,7 @@ graphDom.window.Zotero = {
       getGraph: async () => graphData,
       getGraphOptions: () => graphOptions,
       getGraphLabelLength: () => graphLabelLength,
+      getGraphLocalDepth: () => graphLocalDepth,
       setGraphOption: (name, enabled) => {
         graphOptions[name] = enabled;
         optionsChanged?.();
@@ -3087,6 +3292,13 @@ graphDom.window.Zotero = {
     },
   },
 };
+graphDom.window.requestAnimationFrame = (callback) =>
+  graphDom.window.setTimeout(
+    () => callback(graphDom.window.performance.now()),
+    0,
+  );
+graphDom.window.cancelAnimationFrame = (frame) =>
+  graphDom.window.clearTimeout(frame);
 graphDom.window.arguments = [];
 const graphBundle = path.join(workspace, "graph.js");
 await build({
@@ -3471,6 +3683,112 @@ check("Disabling isolation restores all nodes and the untouched graph", () => {
   );
   assert.deepEqual(graphData, originalGraphData);
 });
+// The same window switches scope without writing or trimming the underlying graph.
+const graphIDs = () => graphPositions().map(([id]) => id);
+graphDom.window.ZoteroKnowledgeBase_showGraph("A");
+await wait();
+await wait();
+check(
+  "Local graph uses the configured one-hop neighborhood without another toolbar control",
+  () => {
+    assert.deepEqual(graphIDs(), ["A", "B", "S"]);
+    assert.equal(
+      graphDom.window.document.getElementById("graph-depth-control"),
+      null,
+    );
+    assert.equal(
+      graphDom.window.document.getElementById("graph-svg").dataset.scope,
+      "local",
+    );
+    assert.equal(
+      graphDom.window.document
+        .getElementById("graph-local")
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+  },
+);
+const setHop = (depth) => {
+  graphLocalDepth = depth;
+  optionsChanged();
+};
+setHop(2);
+await wait();
+check(
+  "Two hops includes a neighbor's neighbor but excludes an unrelated note",
+  () => assert.deepEqual(graphIDs(), ["A", "B", "C", "S"]),
+);
+toggleIsolated(true);
+await wait();
+graphOptions.references = false;
+optionsChanged();
+await wait();
+check("Hidden relationships do not count toward local hops", () =>
+  assert.deepEqual(graphIDs(), ["A", "S"]),
+);
+graphOptions.references = true;
+optionsChanged();
+await wait();
+graphDom.window.ZoteroKnowledgeBase_showGraph("S");
+setHop(1);
+await wait();
+await wait();
+check("A paper can be the center of a local graph", () =>
+  assert.deepEqual(graphIDs(), ["A", "S"]),
+);
+graphDom.window.ZoteroKnowledgeBase_showGraph("missing");
+await wait();
+await wait();
+check(
+  "A removed local center shows an empty state instead of falling back to the full graph",
+  () => assert.deepEqual(graphIDs(), []),
+);
+toggleIsolated(false);
+graphDom.window.ZoteroKnowledgeBase_showGraph();
+await wait();
+await wait();
+check("Global entry restores the full graph without a hop selector", () => {
+  assert.deepEqual(graphIDs(), ["A", "B", "C", "I", "S"]);
+  assert.equal(
+    graphDom.window.document.getElementById("graph-depth-control"),
+    null,
+  );
+  assert.equal(
+    graphDom.window.document
+      .getElementById("graph-local")
+      .hasAttribute("disabled"),
+    true,
+  );
+  assert.deepEqual(graphData, originalGraphData);
+});
+graphDom.window.document
+  .querySelector('[data-node-id="B"]')
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
+graphDom.window.document
+  .getElementById("graph-local")
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
+await wait();
+check("Local toolbar action uses the selected note as its center", () =>
+  assert.deepEqual(graphIDs(), ["A", "B", "C"]),
+);
+graphDom.window.document
+  .getElementById("graph-global")
+  .dispatchEvent(new graphDom.window.MouseEvent("click", { bubbles: true }));
+await wait();
+await wait();
+check(
+  "Global retains the selected note and its strengthened connections",
+  () => {
+    assert.deepEqual(graphIDs(), ["A", "B", "C", "I", "S"]);
+    assert.ok(
+      graphDom.window.document.querySelector('[data-node-id="B"].selected'),
+    );
+    assert.equal(
+      graphDom.window.document.querySelector(".graph-node.dimmed"),
+      null,
+    );
+  },
+);
 // Replace the entire API object as a plugin reload does, rather than mutating
 // one method on the old object. Open windows must call the new instance.
 let latestApiCalled = false;

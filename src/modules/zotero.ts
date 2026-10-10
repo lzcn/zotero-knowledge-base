@@ -45,7 +45,7 @@ function selectURL(item: Zotero.Item): string {
   return `zotero://select/library/items/${item.key}`;
 }
 
-function creatorYear(item: Zotero.Item): string {
+export function creatorYear(item: Zotero.Item): string {
   const creator = item.getField("firstCreator", false, true) || "";
   const date = String(item.getField("date", false, true) || "");
   const year = date.match(/\d{4}/)?.[0] ?? "";

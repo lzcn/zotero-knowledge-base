@@ -8,7 +8,11 @@ import { api } from "./api";
 import { onNativeNoteChange, writeNativeNote } from "./note-sessions";
 import { mergeMarkdownDocuments } from "./document-merge";
 import { getString } from "../utils/locale";
-import { getMarkdownDocument, markdownDocumentHTML } from "./native-notes";
+import {
+  getMarkdownDocument,
+  markdownDocumentHTML,
+  repairNativeNoteLinks,
+} from "./native-notes";
 import {
   getEditorDraft,
   saveEditorDraft,
@@ -90,6 +94,13 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     if (windowType.startsWith("knowledge-base:")) return;
     const item = instance._item;
     if (!item?.isNote()) return;
+    await repairNativeNoteLinks(item);
+    if (
+      stopped ||
+      token !== generation ||
+      !notes()._editorInstances.includes(instance)
+    )
+      return;
     const container = frame.parentElement!;
     const bar = doc.createXULElement("hbox") as HTMLElement;
     bar.classList.add("knowledge-base-native-markdown");
@@ -221,6 +232,10 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       return true;
     };
     const unsubscribeNote = onNativeNoteChange(item.id, (change) => {
+      if (!sourceMode && !closed) {
+        void track(repairNativeNoteLinks(item)).catch(report);
+        return;
+      }
       if (!sourceMode || closed || change.origin === instance.instanceID)
         return;
       pendingNativeUpdate = true;

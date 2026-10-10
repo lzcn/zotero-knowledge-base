@@ -8,5 +8,5 @@
     "types": ["zotero-types"]
   },
   "include": ["src", "typings", "addon/content/*.js"],
-  "exclude": ["build", "dist", "src/ui/markdown-editor"]
+  "exclude": ["build", "dist"]
 }

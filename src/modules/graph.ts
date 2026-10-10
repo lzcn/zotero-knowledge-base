@@ -237,20 +237,28 @@ export function filterGraph(
     const visited = new Set<string>(
       ids.has(options.centerId) ? [options.centerId] : [],
     );
-    let frontier = new Set(visited);
-    for (
-      let hop = 0;
-      hop < Math.max(1, Math.min(options.depth || 1, 4));
-      hop++
-    ) {
-      const next = new Set<string>();
-      for (const edge of edges) {
-        if (frontier.has(edge.source) && !visited.has(edge.target))
-          next.add(edge.target);
-        if (frontier.has(edge.target) && !visited.has(edge.source))
-          next.add(edge.source);
+    const adjacency = new Map<string, string[]>();
+    for (const edge of edges) {
+      for (const [id, peer] of [
+        [edge.source, edge.target],
+        [edge.target, edge.source],
+      ]) {
+        if (!adjacency.has(id)) adjacency.set(id, []);
+        adjacency.get(id)!.push(peer);
       }
-      next.forEach((id) => visited.add(id));
+    }
+    let frontier = [...visited];
+    const depth = Number.isFinite(options.depth)
+      ? Math.max(0, Math.min(Math.floor(options.depth!), 6))
+      : 1;
+    for (let hop = 0; hop < depth && frontier.length; hop++) {
+      const next: string[] = [];
+      for (const id of frontier)
+        for (const peer of adjacency.get(id) || []) {
+          if (visited.has(peer)) continue;
+          visited.add(peer);
+          next.push(peer);
+        }
       frontier = next;
     }
     ids = visited;

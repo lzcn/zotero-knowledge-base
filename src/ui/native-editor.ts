@@ -6,6 +6,49 @@ import {
 import { attachReadingView } from "./native-reading-view";
 import type { NativeNoteChange } from "../modules/note-sessions";
 
+interface NoteLinkTarget {
+  id: string;
+  href: string;
+  label: string;
+}
+interface NativeEditorView {
+  state: {
+    doc: unknown;
+    selection: {
+      empty: boolean;
+      from: number;
+      to: number;
+      $from: {
+        parentOffset: number;
+        parent: {
+          type: { name: string };
+          textBetween(
+            from: number,
+            to: number,
+            separator: string,
+            leaf: string,
+          ): string;
+        };
+        marks(): { type: { name: string } }[];
+      };
+    };
+    schema: {
+      marks: {
+        link: {
+          create(attrs: { href: string; title: string }): {
+            type: { name: string };
+          };
+        };
+      };
+      text(text: string, marks: unknown[]): unknown;
+    };
+    tr: { replaceWith(from: number, to: number, node: unknown): unknown };
+  };
+  dispatch(transaction: unknown): void;
+}
+
+const NOTE_LINK_URL = /^(?:knowledge-base:\/\/|zotero:\/\/(?:select\/|note\/))/;
+
 /** Thin adapter around Zotero's editor; the host owns editing and note storage. */
 export interface NativeEditorInstance {
   instanceID: string;
@@ -14,6 +57,10 @@ export interface NativeEditorInstance {
   _iframeWindow: Window & {
     wrappedJSObject: {
       getDataSync(force: boolean): { html: string; state?: unknown } | null;
+      JSON: { parse(text: string): { href: string; title: string } };
+      _currentEditorInstance?: {
+        _editorCore?: { view?: NativeEditorView; getHTML?(): string };
+      };
     };
   };
   _postMessage(message: Record<string, unknown>): void;
@@ -47,6 +94,7 @@ export interface NativeEditorOptions {
   onReading(): void;
   noteLinkLabel: string;
   onNoteLink(): void;
+  resolveNoteLink(ref: string): Promise<NoteLinkTarget | null>;
 }
 export interface NativeEditorController {
   getHTML(): string;
@@ -91,9 +139,13 @@ async function create(
       ? (JSON.parse(JSON.stringify(data)) as { html: string; state?: unknown })
       : null;
   };
-  const changed = () => {
+  const getHTML = () => {
+    const core = frame?.wrappedJSObject._currentEditorInstance?._editorCore;
+    return core?.getHTML?.() ?? frame?.wrappedJSObject.getDataSync(false)?.html;
+  };
+  const changed = (html?: string) => {
     if (destroyed || readOnly) return;
-    const html = getData()?.html;
+    html ??= getHTML();
     if (html && html !== lastHTML) {
       lastHTML = html;
       // Native refresh messages also report HTML saved by another editor.
@@ -102,8 +154,69 @@ async function create(
       else options.onChange(html);
     }
   };
-  const input = () => {
-    queueMicrotask(changed);
+  const insertWikiLink = async () => {
+    if (destroyed || readOnly || sourceMode) return;
+    const view =
+      frame.wrappedJSObject._currentEditorInstance?._editorCore?.view;
+    if (!view) return;
+    const { state } = view;
+    const { selection } = state;
+    if (!selection.empty || selection.$from.parent.type.name !== "paragraph")
+      return;
+    const marks = selection.$from.marks();
+    if (marks.some((mark) => ["code", "link"].includes(mark.type.name))) return;
+    const before = selection.$from.parent.textBetween(
+      0,
+      selection.$from.parentOffset,
+      "\n",
+      "\ufffc",
+    );
+    const match = /\[\[([^\][\n]+)\]\]$/.exec(before);
+    if (!match || before[match.index - 1] === "\\") return;
+    const [ref, ...alias] = match[1].split("|");
+    const target = await options.resolveNoteLink(ref.trim());
+    if (
+      !target ||
+      destroyed ||
+      readOnly ||
+      sourceMode ||
+      view !==
+        frame.wrappedJSObject._currentEditorInstance?._editorCore?.view ||
+      view.state.doc !== state.doc ||
+      view.state.selection.from !== selection.from ||
+      view.state.selection.to !== selection.to
+    )
+      return;
+    const label = alias.join("|").trim();
+    // The content compartment cannot read objects allocated by a chrome window.
+    const attributes = frame.wrappedJSObject.JSON.parse(
+      JSON.stringify({
+        href: target.href,
+        title: `[[${target.id}${label ? `|${label}` : ""}]]`,
+      }),
+    );
+    const link = state.schema.marks.link.create(attributes);
+    // A native transaction preserves cursor mapping, undo and Zotero's autosave.
+    view.dispatch(
+      state.tr.replaceWith(
+        selection.from - match[0].length,
+        selection.from,
+        state.schema.text(label || target.label, marks.concat(link)),
+      ),
+    );
+    changed();
+  };
+  const input = (event: Event) => {
+    queueMicrotask(() => {
+      changed();
+      if (
+        !(event as InputEvent).isComposing &&
+        !["historyUndo", "historyRedo"].includes(
+          (event as InputEvent).inputType,
+        )
+      )
+        void insertWikiLink().catch((error) => Zotero.logError(error));
+    });
   };
   const keydown = (event: KeyboardEvent) => {
     if (!isAccelKey(event)) return;
@@ -121,14 +234,25 @@ async function create(
       event.data?.instanceID !== element.getCurrentInstance().instanceID
     )
       return;
-    if (event.data.message?.action === "update") changed();
+    if (event.data.message?.action === "update")
+      changed(event.data.message.noteData?.html);
     if (
       event.data.message?.action === "openURL" &&
-      /^knowledge-base:\/\//.test(event.data.message.url)
+      NOTE_LINK_URL.test(event.data.message.url)
     ) {
       event.stopImmediatePropagation();
       options.onOpenLink(event.data.message.url);
     }
+  };
+  const click = (event: MouseEvent) => {
+    if (event.button !== 0 || !isAccelKey(event)) return;
+    const link = (event.target as Element | null)?.closest?.("a[href]");
+    const href = link?.getAttribute("href") || "";
+    if (!link?.closest(".primary-editor") || !NOTE_LINK_URL.test(href)) return;
+    // Resolve the actual anchor; native coordinate lookup can miss short labels.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    options.onOpenLink(href);
   };
   const stopEscape = (event: KeyboardEvent) => {
     if (event.key === "Escape") event.stopPropagation();
@@ -141,6 +265,7 @@ async function create(
     frame.document.removeEventListener("input", input, true);
     frame.document.removeEventListener("keydown", keydown, true);
     frame.document.removeEventListener("keydown", stopEscape);
+    frame.document.removeEventListener("click", click, true);
     frame.removeEventListener("message", message, true);
   };
   const attach = () => {
@@ -193,8 +318,9 @@ async function create(
     frame.document.addEventListener("input", input, true);
     frame.document.addEventListener("keydown", keydown, true);
     frame.document.addEventListener("keydown", stopEscape);
+    frame.document.addEventListener("click", click, true);
     frame.addEventListener("message", message, true);
-    lastHTML = getData()?.html || options.item.getNote();
+    lastHTML = getHTML() || options.item.getNote();
   };
   attach();
   const flush = async () => {
@@ -208,7 +334,7 @@ async function create(
     }
   };
   return {
-    getHTML: () => getData()?.html || lastHTML,
+    getHTML: () => getHTML() || lastHTML,
     getSavedHTML: () => options.item.getNote(),
     flush,
     setSourceMode(value) {

@@ -32,7 +32,12 @@ import {
   markdownDocumentHTML,
 } from "./native-notes";
 import { richTextToMarkdown } from "./rich-text";
-import { getNoteReferences, withNoteReferences } from "./note-references";
+import {
+  getNoteReferences,
+  withNoteReferences,
+  getNoteLinkTargets,
+  getCachedNoteTarget,
+} from "./note-references";
 import { config } from "../../package.json";
 import {
   openWorkbench,
@@ -69,6 +74,8 @@ import {
   setGraphOption,
   getGraphLabelLength,
   setGraphLabelLength,
+  getGraphLocalDepth,
+  setGraphLocalDepth,
   getPanelWidth,
   setPanelWidth,
   onGraphOptionsChange,
@@ -189,12 +196,29 @@ export const api = {
         mainWindow() as unknown as Parameters<typeof renderMarkdown>[1],
         resolveAssetURL,
         getCitation,
+        getCachedNoteTarget,
       ),
     );
   },
 
   async prepareMarkdown(body: string): Promise<void> {
-    await Promise.all([prepareCitations(body), prepareNativePreview(body)]);
+    await Promise.all([
+      prepareCitations(body),
+      prepareNativePreview(body),
+      getNoteLinkTargets(),
+    ]);
+  },
+
+  async getNoteLink(ref: string) {
+    await getNoteLinkTargets();
+    const target = getCachedNoteTarget(ref);
+    return target?.href
+      ? {
+          id: target.id,
+          href: target.href,
+          label: target.label || target.reference,
+        }
+      : null;
   },
 
   saveEditorDraft,
@@ -259,6 +283,8 @@ export const api = {
   setGraphOption,
   getGraphLabelLength,
   setGraphLabelLength,
+  getGraphLocalDepth,
+  setGraphLocalDepth,
   getPanelWidth,
   setPanelWidth,
   onGraphOptionsChange,

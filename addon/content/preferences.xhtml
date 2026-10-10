@@ -69,6 +69,22 @@
       <label data-l10n-id="knowledge-base-pref-graph-label-length-unit" />
     </hbox>
     <description data-l10n-id="knowledge-base-pref-groups-help" />
+    <hbox align="center">
+      <label
+        id="knowledge-base-graph-local-depth-label"
+        control="knowledge-base-graph-local-depth"
+        data-l10n-id="knowledge-base-pref-graph-local-depth"
+      />
+      <html:input
+        id="knowledge-base-graph-local-depth"
+        type="number"
+        min="1"
+        max="6"
+        step="1"
+        style="width: 5em"
+        aria-labelledby="knowledge-base-graph-local-depth-label"
+      />
+    </hbox>
     <vbox id="knowledge-base-graph-groups" />
     <hbox
       ><button

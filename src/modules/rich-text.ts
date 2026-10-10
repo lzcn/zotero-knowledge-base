@@ -1,6 +1,6 @@
 import TurndownService from "turndown";
 import { gfm } from "turndown-plugin-gfm";
-import { cardRefFromURL } from "./markdown";
+import { cardRefFromURL, managedWikiReference } from "./markdown";
 
 function mathMarkdown(element: HTMLElement): string | undefined {
   const kind = element.getAttribute("data-type");
@@ -82,9 +82,23 @@ export function richTextToMarkdown(html: string | HTMLElement): string {
   converter.addRule("cardReference", {
     filter: (node) =>
       node.nodeName === "A" &&
-      !!cardRefFromURL(node.getAttribute("href") || ""),
+      !!(
+        cardRefFromURL(node.getAttribute("href") || "") ||
+        managedWikiReference(
+          node.getAttribute("title") || "",
+          node.getAttribute("href") || "",
+        )
+      ),
     replacement: (_content, node) => {
       const link = node as HTMLElement;
+      const wiki = managedWikiReference(
+        link.getAttribute("title") || "",
+        link.getAttribute("href") || "",
+      );
+      if (wiki) {
+        if (!wiki.includes("|")) return wiki;
+        return `[[${wiki.slice(2, -2).split("|")[0]}|${(link.textContent || "").replace(/[\][\n]/g, " ")}]]`;
+      }
       const id = cardRefFromURL(link.getAttribute("href") || "");
       const alias = link.getAttribute("data-card-alias");
       if (alias) return `[[${id}|${alias.replace(/[[\]\n]/g, " ")}]]`;

@@ -85,6 +85,17 @@ export function setGraphLabelLength(value: number): void {
     throw new Error("Graph title length must be between 8 and 80");
   Zotero.Prefs.set(preferenceKey("labelLength"), value, true);
 }
+export function getGraphLocalDepth(): number {
+  const value = Zotero.Prefs.get(preferenceKey("localDepth"), true);
+  return typeof value === "number" && Number.isInteger(value)
+    ? Math.max(1, Math.min(6, value))
+    : 1;
+}
+export function setGraphLocalDepth(value: number): void {
+  if (!Number.isInteger(value) || value < 1 || value > 6)
+    throw new Error("Local graph hops must be between 1 and 6");
+  Zotero.Prefs.set(preferenceKey("localDepth"), value, true);
+}
 export function getWorkbenchMode(): "tab" | "window" {
   return Zotero.Prefs.get(`${config.prefsPrefix}.workbenchMode`, true) ===
     "window"
@@ -130,7 +141,7 @@ export function getGraphOptions(): GraphOptions {
 }
 
 export function onGraphOptionsChange(listener: () => void): () => void {
-  const observers = [...optionNames, "labelLength"].map((name) =>
+  const observers = [...optionNames, "labelLength", "localDepth"].map((name) =>
     Zotero.Prefs.registerObserver(preferenceKey(name), listener, true),
   );
   return () =>

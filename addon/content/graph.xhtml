@@ -19,6 +19,8 @@ type="text/css"?>
   <script src="chrome://knowledge-base/content/graph.js" />
   <html:div id="knowledge-base-graph-root">
     <html:header id="knowledge-base-graph-toolbar">
+      <toolbarbutton id="graph-global" class="kb-native-tool" />
+      <toolbarbutton id="graph-local" class="kb-native-tool" />
       <html:input id="graph-search" type="search" />
       <checkbox id="graph-outline" />
       <checkbox id="graph-references" />
@@ -31,6 +33,8 @@ type="text/css"?>
     </html:header>
     <html:main id="knowledge-base-graph-main">
       <html:div id="graph-canvas">
+        <html:canvas id="graph-gpu" hidden="hidden" aria-hidden="true" />
+        <html:canvas id="graph-paint" hidden="hidden" aria-hidden="true" />
         <svg:svg id="graph-svg" aria-label="Card graph" />
         <html:div id="graph-empty" class="muted" hidden="hidden" />
       </html:div>

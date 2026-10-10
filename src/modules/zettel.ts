@@ -14,7 +14,7 @@ import { saveParent, removeParent } from "./hierarchy";
 import { parseCardLinks } from "./markdown";
 import { notifyDataChange, type DataField } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
-import { getNoteReferences } from "./note-references";
+import { getNoteReferences, invalidateNoteReferences } from "./note-references";
 import { searchRows, type SearchOptions } from "./search";
 
 export interface Zettel extends ZettelRow {
@@ -568,6 +568,13 @@ export async function saveEditorCard(
         [customKey, id],
       );
     if (fields.has("hierarchy")) await saveParent(id, input.parentId);
+    if (
+      !previous ||
+      kind !== previous.kind ||
+      customKey !== previous.custom_key ||
+      fields.has("source")
+    )
+      invalidateNoteReferences();
     if (!previous || body !== previous.body) {
       const links = await reindexLinks(id, body);
       if (links.changed) fields.add("links");

@@ -23,18 +23,30 @@ scope.onmessage = ({ data }) => {
   let ticks = 0;
   const step = () => {
     if (token !== generation) return;
-    simulation.tick(8);
-    ticks += 8;
+    // Bound each batch so new drag jobs can interrupt even a large graph.
+    const until = performance.now() + 8;
+    let batch = 0;
+    do {
+      simulation.tick(1);
+      ticks++;
+      batch++;
+    } while (batch < 4 && performance.now() < until);
     const nodes = simulation.nodes();
     const buffer = new Float64Array(nodes.length * 4);
     nodes.forEach((node, index) =>
       buffer.set([node.x, node.y, node.vx ?? 0, node.vy ?? 0], index * 4),
     );
     const done = ticks >= (data.target ? 360 : 180);
-    scope.postMessage({ revision: data.revision, positions: buffer, done }, [
-      buffer.buffer,
-    ]);
-    if (!done) scope.setTimeout(step, 0);
+    scope.postMessage(
+      {
+        revision: data.revision,
+        positions: buffer,
+        alpha: simulation.alpha(),
+        done,
+      },
+      [buffer.buffer],
+    );
+    if (!done) scope.setTimeout(step, 16);
   };
   step();
 };

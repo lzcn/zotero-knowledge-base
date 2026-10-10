@@ -234,9 +234,9 @@ function applyLocale() {
   $("knowledge-base-btn-child").textContent = api.loc("new-child");
   for (const [id, key] of [
     ["knowledge-base-btn-new", "manager-new"],
-    ["knowledge-base-btn-graph", "graph-title"],
+    ["knowledge-base-btn-graph", "graph-global"],
     ["knowledge-base-btn-edit", "manager-edit"],
-    ["knowledge-base-btn-local-graph", "manager-show-graph"],
+    ["knowledge-base-btn-local-graph", "graph-local"],
     ["knowledge-base-btn-delete", "manager-delete"],
   ]) {
     const button = document.getElementById(id);

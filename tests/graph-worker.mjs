@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import { Worker } from "node:worker_threads";
 import { build } from "esbuild";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
@@ -51,7 +52,14 @@ try {
   }
   const errors = [];
   globalThis.Zotero = { logError: (error) => errors.push(error) };
-  globalThis.window = { Worker: BackgroundWorker, setTimeout, clearTimeout };
+  globalThis.window = {
+    Worker: BackgroundWorker,
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (callback) =>
+      setTimeout(() => callback(performance.now()), 16),
+    cancelAnimationFrame: clearTimeout,
+  };
   const { createAsyncGraphLayout } = await import(pathToFileURL(controller));
   const data = {
     nodes: Array.from({ length: 1000 }, (_, i) => ({
@@ -132,7 +140,7 @@ try {
     new Map(),
     true,
   );
-  const wait = () => new Promise((resolve) => setTimeout(resolve, 5));
+  const wait = () => new Promise((resolve) => setTimeout(resolve, 25));
   await wait();
   const fake = fakeWorkers[0];
   const first = fake.messages[0].revision;
@@ -143,6 +151,26 @@ try {
     data: { revision: first, positions: new Float64Array([900, 900, 0, 0]) },
   });
   assert.equal(single.nodes()[0].x, initial);
+  let smoothTicks = 0,
+    smoothEnds = 0;
+  single.on("tick", () => smoothTicks++).on("end", () => smoothEnds++);
+  const currentRevision = fake.messages.at(-1).revision;
+  fake.onmessage({
+    data: {
+      revision: currentRevision,
+      positions: new Float64Array([100, 100, 0, 0]),
+      done: true,
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.ok(
+    single.nodes()[0].x > initial && single.nodes()[0].x < 100,
+    "Worker snapshots must interpolate instead of jumping",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  assert.equal(single.nodes()[0].x, 100);
+  assert.ok(smoothTicks >= 2 && smoothEnds === 1);
+  const framesBeforeStop = smoothTicks;
   single.nodes()[0].fx = 25;
   single.nodes()[0].x = 25;
   fake.onmessage({
@@ -161,6 +189,36 @@ try {
   });
   assert.equal(single.nodes()[0].x, 25);
   assert.ok(fake.terminated);
+  await new Promise((resolve) => setTimeout(resolve, 70));
+  assert.equal(smoothTicks, framesBeforeStop);
+  globalThis.window.matchMedia = () => ({ matches: true });
+  const reduced = createAsyncGraphLayout(
+    { nodes: data.nodes.slice(0, 1), edges: [] },
+    new Map(),
+    true,
+  );
+  await wait();
+  const reducedWorker = fakeWorkers.at(-1),
+    reducedStart = reduced.nodes()[0].x;
+  reducedWorker.onmessage({
+    data: {
+      revision: reducedWorker.messages.at(-1).revision,
+      positions: new Float64Array([200, 200, 0, 0]),
+      done: false,
+    },
+  });
+  await wait();
+  assert.equal(reduced.nodes()[0].x, reducedStart);
+  reducedWorker.onmessage({
+    data: {
+      revision: reducedWorker.messages.at(-1).revision,
+      positions: new Float64Array([200, 200, 0, 0]),
+      done: true,
+    },
+  });
+  await wait();
+  assert.equal(reduced.nodes()[0].x, 200);
+  reduced.stop();
   assert.deepEqual(errors, []);
   console.log(
     "PASS Stale layouts, pinned drag positions and late results after close cannot replace current geometry",

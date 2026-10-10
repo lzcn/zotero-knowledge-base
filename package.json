@@ -27,6 +27,7 @@
     "test:ui": "node tests/ui.mjs",
     "test:pane": "node tests/item-pane.mjs",
     "test:host": "node scripts/test-zotero-quit.mjs",
+    "benchmark:graph": "node scripts/benchmark-graph.mjs",
     "test:cursor": "node scripts/test-native-cursor.mjs",
     "check": "npm run lint:check && node scripts/build.mjs --check && npm test",
     "lint": "npm run lint:check",

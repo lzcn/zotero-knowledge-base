@@ -16,6 +16,18 @@ window.KnowledgeBasePreferences = (() => {
         const labelLength = /** @type {HTMLInputElement} */ (
           doc.getElementById("knowledge-base-graph-label-length")
         );
+        const depth = /** @type {HTMLInputElement} */ (
+          doc.getElementById("knowledge-base-graph-local-depth")
+        );
+        depth.value = String(api.getGraphLocalDepth());
+        if (!menus.has(depth)) {
+          menus.add(depth);
+          depth.addEventListener("change", () => {
+            if (depth.checkValidity() && depth.value)
+              api.setGraphLocalDepth(Number(depth.value));
+            depth.value = String(api.getGraphLocalDepth());
+          });
+        }
         labelLength.value = String(api.getGraphLabelLength());
         if (!menus.has(labelLength)) {
           menus.add(labelLength);

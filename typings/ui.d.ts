@@ -120,7 +120,6 @@ export interface EditorElements {
   "knowledge-base-src-selected": HTMLElementTagNameMap["button"];
   "knowledge-base-src-status": HTMLElementTagNameMap["div"];
   "knowledge-base-src-results": HTMLElementTagNameMap["ul"];
-  "knowledge-base-editor-title": HTMLElementTagNameMap["input"];
   "knowledge-base-markdown-toolbar": HTMLElementTagNameMap["div"];
   "knowledge-base-link-pick": HTMLElementTagNameMap["button"];
   "knowledge-base-url-insert": HTMLElementTagNameMap["button"];
@@ -211,6 +210,8 @@ export interface AnnotationsElements {
 }
 
 export interface GraphElements {
+  "graph-global": HTMLButtonElement;
+  "graph-local": HTMLButtonElement;
   "graph-node-tags": HTMLDivElement;
   "graph-display-menu": XULMenuPopupElement;
   "knowledge-base-graph": Element;
@@ -223,6 +224,8 @@ export interface GraphElements {
   "knowledge-base-graph-main": HTMLElementTagNameMap["main"];
   "graph-canvas": HTMLElementTagNameMap["div"];
   "graph-svg": SVGSVGElement;
+  "graph-paint": HTMLCanvasElement;
+  "graph-gpu": HTMLCanvasElement;
   "graph-empty": HTMLElementTagNameMap["div"];
   "graph-inspector": HTMLElementTagNameMap["aside"];
   "graph-selection": HTMLElementTagNameMap["div"];

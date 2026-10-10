@@ -2,6 +2,7 @@ import { isAccelKey } from "./platform";
 import { select as d3Select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
 import { edgePath, filterGraph } from "../modules/graph";
+import { createGraphCanvas, hitGraphNode } from "./graph-canvas";
 import { createAsyncGraphLayout } from "./graph-layout-controller";
 
 const api = /** @type {import("../modules/api").KnowledgeBaseAPI} */ (
@@ -17,10 +18,26 @@ const svgNS = "http://www.w3.org/2000/svg";
 let graph = { nodes: [], edges: [] };
 let graphNodes = new Map();
 let refreshVersion = 0;
-const centerId = /** @type {{ centerId?: string }} */ (
-  window.arguments[0] || {}
-).centerId;
+let centerId = /** @type {{ centerId?: string }} */ (window.arguments[0] || {})
+  .centerId;
 let selectedId = centerId;
+let localDepth = api.getGraphLocalDepth();
+let scopeChanged = true;
+let visibleData = { nodes: [], edges: [] };
+let viewport;
+let paintFrame = 0;
+let nodeViews = new Map();
+let labelNodes = [];
+let labelTime = 0;
+let labelScale = 0;
+let labelLength = 0;
+let geometryScale = 0;
+let canvasRenderer;
+let rendererStyle = "";
+let canvasEdges = [];
+let resizeObserver;
+let matchedNodes = new Set();
+let paintLabels = new Map();
 
 let layoutNodes = [];
 let updatePositions = () => {};
@@ -75,7 +92,14 @@ function visibleGraph() {
         ? options.references
         : options.sources,
   );
-  if (options.hideIsolated) {
+  const scoped = filterGraph(data, {
+    includeSources: options.sources,
+    centerId,
+    depth: localDepth,
+  });
+  data.nodes = scoped.nodes;
+  data.edges = scoped.edges;
+  if (options.hideIsolated && !centerId) {
     const connected = new Set();
     for (const edge of data.edges) {
       if (edge.source === edge.target) continue;
@@ -90,18 +114,71 @@ function visibleGraph() {
   return data;
 }
 function size() {
-  const rect = $("graph-canvas").getBoundingClientRect();
-  return {
-    width: Math.max(300, rect.width),
-    height: Math.max(240, rect.height),
-  };
+  if (!viewport) {
+    const rect = $("graph-canvas").getBoundingClientRect();
+    viewport = {
+      width: Math.max(300, rect.width),
+      height: Math.max(240, rect.height),
+    };
+  }
+  return viewport;
 }
 function applyTransform() {
-  updatePositions();
-  scene?.setAttribute(
-    "transform",
-    `translate(${transform.x},${transform.y}) scale(${transform.k})`,
+  if (paintFrame) return;
+  paintFrame = window.requestAnimationFrame(() => {
+    paintFrame = 0;
+    if (!canvasRenderer && geometryScale !== transform.k) updatePositions();
+    scene?.setAttribute(
+      "transform",
+      `translate(${transform.x},${transform.y}) scale(${transform.k})`,
+    );
+    updateLabels();
+    drawCanvas();
+  });
+}
+function drawCanvas() {
+  canvasRenderer?.draw(
+    layoutNodes,
+    canvasEdges,
+    transform,
+    paintLabels,
+    hoveredId || selectedId,
+    selectedId,
+    matchedNodes,
+    $("graph-svg").dataset.layoutState === "running" || !!drag,
   );
+  if (canvasRenderer) $("graph-svg").dataset.renderer = canvasRenderer.backend;
+}
+function gpuChanged() {
+  applyTransform();
+}
+function nodeAt(event) {
+  const rect = $("graph-svg").getBoundingClientRect();
+  return hitGraphNode(
+    layoutNodes,
+    transform,
+    event.clientX - rect.left,
+    event.clientY - rect.top,
+  );
+}
+function syncScope() {
+  document.title = api.loc(centerId ? "graph-local" : "graph-global");
+  $("graph-global").setAttribute("aria-pressed", String(!centerId));
+  $("graph-local").setAttribute("aria-pressed", String(!!centerId));
+  $("graph-local").disabled = !centerId && !selectedId;
+  $("graph-local").toggleAttribute("disabled", !centerId && !selectedId);
+  $("graph-svg").dataset.scope = centerId ? "local" : "global";
+  $("graph-svg").dataset.centerId = centerId || "";
+  $("graph-svg").dataset.depth = String(localDepth);
+}
+function showScope(id, reload = false) {
+  scopeChanged = centerId !== id;
+  centerId = id;
+  if (id) selectedId = id;
+  if (scopeChanged) viewMoved = false;
+  syncScope();
+  if (reload) run(refresh);
+  else render();
 }
 /** @param {import("./graph-layout").LayoutNode} node */
 function displayRadius(node) {
@@ -114,90 +191,126 @@ function titleLabel(title) {
 }
 // Keep visible labels compact at every zoom; tooltips and details retain full titles.
 function updateLabels() {
+  labelTime = window.performance.now();
   const { width: viewportWidth, height: viewportHeight } = size();
   const labelLimit = Math.max(
     24,
     Math.min(160, Math.floor((viewportWidth * viewportHeight) / 6500)),
   );
-  for (const node of $("graph-svg").querySelectorAll("marker")) {
-    const marker = /** @type {SVGMarkerElement} */ (node);
-    marker.setAttribute("markerWidth", String(5 / transform.k));
-    marker.setAttribute("markerHeight", String(5 / transform.k));
+  const scaleChanged = labelScale !== transform.k;
+  const lengthChanged = labelLength !== api.getGraphLabelLength();
+  labelScale = transform.k;
+  labelLength = api.getGraphLabelLength();
+  if (scaleChanged)
+    for (const element of $("graph-svg").querySelectorAll("marker")) {
+      const marker = /** @type {SVGMarkerElement} */ (element);
+      marker.setAttribute("markerWidth", String(5 / transform.k));
+      marker.setAttribute("markerHeight", String(5 / transform.k));
+    }
+  // Screen-space cells keep collision checks local instead of scanning every node per label.
+  const cells = new Map();
+  const eachCell = (rect, fn) => {
+    for (let x = Math.floor(rect.x / 64); x <= Math.floor(rect.right / 64); x++)
+      for (
+        let y = Math.floor(rect.y / 64);
+        y <= Math.floor(rect.bottom / 64);
+        y++
+      )
+        fn(x + ":" + y);
+  };
+  const insert = (rect) =>
+    eachCell(rect, (key) => {
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(rect);
+    });
+  for (const node of layoutNodes) {
+    const radius = displayRadius(node) * transform.k + 3;
+    const x = node.x * transform.k + transform.x,
+      y = node.y * transform.k + transform.y;
+    if (
+      x + radius < 0 ||
+      y + radius < 0 ||
+      x - radius > viewportWidth ||
+      y - radius > viewportHeight
+    )
+      continue;
+    insert({
+      id: node.id,
+      circle: true,
+      x: x - radius,
+      y: y - radius,
+      right: x + radius,
+      bottom: y + radius,
+    });
   }
-  const occupied = [];
-  const circles = layoutNodes.map((node) => ({
-    id: node.id,
-    x: node.x * transform.k + transform.x,
-    y: node.y * transform.k + transform.y,
-    radius: displayRadius(node) * transform.k + 3,
-  }));
-  const nodes = [...layoutNodes].sort(
-    (a, b) =>
-      Number(b.id === hoveredId) - Number(a.id === hoveredId) ||
-      Number(b.id === selectedId) - Number(a.id === selectedId) ||
-      b.radius - a.radius ||
-      Number(b.kind === "card") - Number(a.kind === "card"),
+  let count = 0;
+  const focusedNodes = labelNodes.filter(
+    (node) => node.id === hoveredId || node.id === selectedId,
   );
-  for (const node of nodes) {
-    const group = nodeElements.get(node.id);
-    if (!group) continue;
+  for (const node of [
+    ...focusedNodes,
+    ...labelNodes.filter((node) => !focusedNodes.includes(node)),
+  ]) {
+    const view = nodeViews.get(node.id);
+    if (!view) continue;
+    const { group, dot, ring, label } = view;
     const focused = node.id === selectedId || node.id === hoveredId;
     const hub = node.radius >= 12;
-    group.classList.toggle("hub", hub);
     const radius = displayRadius(node);
-    group.querySelector(".graph-node-dot").setAttribute("r", String(radius));
-    group
-      .querySelector(".graph-node-ring")
-      .setAttribute("r", String(radius + 4 / transform.k));
-    const label = group.querySelector("text");
-    label.textContent = titleLabel(node.title);
-    label.style.fontSize = `${12 / transform.k}px`;
-    label.style.strokeWidth = `${4 / transform.k}px`;
-    label.setAttribute("y", String(radius + 16 / transform.k));
-    if (
-      !focused &&
-      (occupied.length >= labelLimit ||
-        (transform.k < 0.18 && !group.classList.contains("highlighted")))
-    ) {
-      group.classList.add("label-hidden");
-      continue;
+    if (scaleChanged && !canvasRenderer) {
+      dot.setAttribute("r", String(radius));
+      ring.setAttribute("r", String(radius + 4 / transform.k));
+      label.style.fontSize = `${12 / transform.k}px`;
+      label.style.strokeWidth = `${4 / transform.k}px`;
+      label.setAttribute("y", String(radius + 16 / transform.k));
     }
-    const width = Array.from(label.textContent).reduce(
-      (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
-      0,
-    );
-    const x = node.x * transform.k + transform.x - width / 2;
-    const y = (node.y + radius) * transform.k + transform.y + 4;
-    const rect = { x, y, right: x + width + 8, bottom: y + 22 };
-    const overlaps = occupied.some(
-      (other) =>
-        rect.x < other.right &&
-        rect.right > other.x &&
-        rect.y < other.bottom &&
-        rect.bottom > other.y,
-    );
-    const coversNode =
-      !overlaps &&
-      circles.some(
-        (circle) =>
-          circle.id !== node.id &&
-          rect.x < circle.x + circle.radius &&
-          rect.right > circle.x - circle.radius &&
-          rect.y < circle.y + circle.radius &&
-          rect.bottom > circle.y - circle.radius,
+    if (lengthChanged || view.width === undefined) {
+      label.textContent = titleLabel(node.title);
+      view.width = Array.from(label.textContent).reduce(
+        (sum, char) => sum + (char.charCodeAt(0) > 255 ? 12 : 7),
+        0,
       );
-    const visible =
+    }
+    const x = node.x * transform.k + transform.x - view.width / 2;
+    const y = (node.y + radius) * transform.k + transform.y + 4;
+    const rect = {
+      id: node.id,
+      circle: false,
+      x,
+      y,
+      right: x + view.width + 8,
+      bottom: y + 22,
+    };
+    let visible =
       focused ||
       ((transform.k >= 0.18 || group.classList.contains("highlighted")) &&
-        occupied.length < labelLimit &&
+        count < labelLimit &&
         rect.right > 0 &&
         rect.x < viewportWidth &&
         rect.bottom > 0 &&
-        rect.y < viewportHeight &&
-        !overlaps &&
-        (hub || !coversNode));
-    group.classList.toggle("label-hidden", !visible);
-    if (visible) occupied.push(rect);
+        rect.y < viewportHeight);
+    if (visible && !focused)
+      eachCell(rect, (key) => {
+        if (!visible) return;
+        for (const other of cells.get(key) || []) {
+          if (other.id === node.id || (hub && other.circle)) continue;
+          if (
+            rect.x < other.right &&
+            rect.right > other.x &&
+            rect.y < other.bottom &&
+            rect.bottom > other.y
+          ) {
+            visible = false;
+            break;
+          }
+        }
+      });
+    paintLabels.set(node.id, { text: label.textContent, visible });
+    if (!canvasRenderer) group.classList.toggle("label-hidden", !visible);
+    if (visible) {
+      count++;
+      insert(rect);
+    }
   }
 }
 function fit() {
@@ -242,6 +355,8 @@ function fit() {
 function render() {
   $("graph-legend-sources").hidden = !api.getGraphOptions().sources;
   const data = visibleGraph();
+  visibleData = data;
+  syncScope();
   const legend = $("graph-groups-legend");
   legend.replaceChildren();
   const groups = new Map(
@@ -268,22 +383,52 @@ function render() {
   const nextKey = JSON.stringify([
     graph.nodes.map((node) => [node.id, node.group]),
     graph.edges.map(({ source, target, kind }) => [source, target, kind]),
+    centerId,
+    centerId ? localDepth : null,
   ]);
   const retainLayout = nextKey === layoutKey;
   simulation?.stop();
   drag = null;
+  dragMoved = false;
   hoveredId = undefined;
   for (const node of layoutNodes)
     savedPositions.set(node.id, { x: node.x, y: node.y });
   for (const id of savedPositions.keys())
     if (!graphNodes.has(id)) savedPositions.delete(id);
-  const firstLayout = !layoutKey || !layoutNodes.length;
+  const firstLayout = scopeChanged || !layoutKey || !layoutNodes.length;
+  scopeChanged = false;
   layoutKey = nextKey;
   simulation = createAsyncGraphLayout(data, savedPositions, !retainLayout);
   const nodes = simulation.nodes();
+  const paint = $("graph-paint");
+  paint.hidden = nodes.length < 400;
+  if (paint.hidden) {
+    canvasRenderer?.dispose();
+    canvasRenderer = undefined;
+    $("graph-gpu").hidden = true;
+    $("graph-gpu").width = 0;
+    $("graph-gpu").height = 0;
+    paint.width = 0;
+    paint.height = 0;
+  } else {
+    const style = window.getComputedStyle($("knowledge-base-graph-root"));
+    const styleKey =
+      ["--bg", "--fg", "--accent", "--source", "--muted", "--graph-link"]
+        .map((name) => style.getPropertyValue(name))
+        .join(":") + style.fontFamily;
+    if (styleKey !== rendererStyle) {
+      canvasRenderer?.dispose();
+      canvasRenderer = undefined;
+    }
+    canvasRenderer ??= createGraphCanvas(paint, style, $("graph-gpu"));
+    rendererStyle = styleKey;
+  }
+  paintLabels = new Map();
   const edges = data.edges.map((edge) => ({ ...edge }));
   const svg = $("graph-svg");
   const { width, height } = size();
+  svg.dataset.renderer = canvasRenderer?.backend || "svg";
+  svg.dataset.layoutState = retainLayout ? "settled" : "running";
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.replaceChildren();
   const defs = svgElement("defs");
@@ -307,7 +452,9 @@ function render() {
     defs.appendChild(marker);
   }
   svg.appendChild(defs);
-  scene = svgElement("g");
+  scene = svgElement("g", {
+    transform: `translate(${transform.x},${transform.y}) scale(${transform.k})`,
+  });
   svg.appendChild(scene);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   renderedEdges = edges.map((raw) => {
@@ -326,7 +473,10 @@ function render() {
     scene.appendChild(line);
     return { edge, line };
   });
+  canvasEdges = renderedEdges.map(({ edge }) => edge);
   nodeElements = new Map();
+  nodeViews = new Map();
+  labelScale = 0;
   for (const node of nodes) {
     const group = svgElement("g", {
       class: `graph-node ${node.kind}`,
@@ -334,6 +484,7 @@ function render() {
       role: "button",
       "aria-label": node.title,
       "data-node-id": node.id,
+      transform: `translate(${node.x},${node.y})`,
     });
     if (node.color) group.style.setProperty("--node-color", node.color);
     group.appendChild(
@@ -386,28 +537,45 @@ function render() {
       group.setPointerCapture?.(ev.pointerId);
       select(node.id);
     });
+    group.classList.toggle("hub", node.radius >= 12);
     nodeElements.set(node.id, group);
+    nodeViews.set(node.id, {
+      group,
+      dot: group.querySelector(".graph-node-dot"),
+      ring: group.querySelector(".graph-node-ring"),
+      label,
+    });
     scene.appendChild(group);
   }
   layoutNodes = nodes;
+  labelNodes = [...nodes].sort(
+    (a, b) =>
+      b.radius - a.radius ||
+      Number(b.kind === "card") - Number(a.kind === "card"),
+  );
   const tick = () => {
-    for (const { edge, line } of renderedEdges) {
-      line.setAttribute(
-        "d",
-        edgePath(
-          { ...edge.source, radius: displayRadius(edge.source) },
-          { ...edge.target, radius: displayRadius(edge.target) },
-          edge.kind,
-        ),
-      );
-    }
-    for (const node of nodes)
-      nodeElements
-        .get(node.id)
-        .setAttribute("transform", `translate(${node.x},${node.y})`);
-    updateLabels();
+    geometryScale = transform.k;
+    if (!canvasRenderer)
+      for (const { edge, line } of renderedEdges) {
+        line.setAttribute(
+          "d",
+          edgePath(
+            { ...edge.source, radius: displayRadius(edge.source) },
+            { ...edge.target, radius: displayRadius(edge.target) },
+            edge.kind,
+          ),
+        );
+      }
+    if (!canvasRenderer)
+      for (const node of nodes)
+        nodeElements
+          .get(node.id)
+          .setAttribute("transform", `translate(${node.x},${node.y})`);
+    if (window.performance.now() - labelTime >= 80) updateLabels();
+    drawCanvas();
   };
   tick();
+  updateLabels();
   updatePositions = tick;
   const reduceMotion = window.matchMedia?.(
     "(prefers-reduced-motion: reduce)",
@@ -417,9 +585,18 @@ function render() {
   });
   simulation.on("worker", () => {
     svg.dataset.layoutThread = "worker";
+    svg.dataset.layoutState = "running";
   });
   simulation.on("end", () => {
+    svg.dataset.layoutState = "settled";
     tick();
+    updateLabels();
+    if (canvasRenderer)
+      for (const node of nodes)
+        nodeElements
+          .get(node.id)
+          .setAttribute("transform", `translate(${node.x},${node.y})`);
+    drawCanvas();
     if (firstLayout && !viewMoved) fit();
   });
   if (firstLayout) fit();
@@ -442,6 +619,7 @@ function highlight() {
     )
       matched.add(node.id);
   }
+  matchedNodes = matched;
   const active = !!focusId || !!query;
   for (const [id, element] of nodeElements) {
     element.classList.toggle("selected", id === selectedId);
@@ -465,17 +643,20 @@ function highlight() {
   if (activeNode && scene.lastElementChild !== activeNode)
     scene.appendChild(activeNode);
   updateLabels();
+  drawCanvas();
 }
 function select(id) {
   selectedId = id;
+  syncScope();
   const node = graphNodes.get(id);
   if (!node || !nodeElements.has(id)) {
     selectedId = undefined;
+    syncScope();
     $("graph-selection").hidden = true;
     highlight();
     return;
   }
-  const connections = visibleGraph().edges.filter(
+  const connections = visibleData.edges.filter(
     (edge) => edge.source === id || edge.target === id,
   );
   highlight();
@@ -624,11 +805,12 @@ async function openNode(node) {
   else api.openEditor({ prefillTitle: node.title });
 }
 window.ZoteroKnowledgeBase_showGraph = (id) => {
-  selectedId = id;
-  run(refresh);
+  showScope(id, true);
 };
 async function load() {
   document.title = api.loc("graph-title");
+  $("graph-gpu").addEventListener("webglcontextlost", gpuChanged);
+  $("graph-gpu").addEventListener("webglcontextrestored", gpuChanged);
   /** @type {Partial<Record<keyof import("../../typings/ui").GraphElements, string>>} */
   const labels = {
     "graph-connections-title": "graph-connections",
@@ -641,7 +823,12 @@ async function load() {
     $(
       /** @type {keyof import("../../typings/ui").GraphElements} */ (id),
     ).textContent = api.loc(key);
-  for (const id of ["graph-fit", "graph-refresh"]) {
+  for (const id of [
+    "graph-fit",
+    "graph-refresh",
+    "graph-global",
+    "graph-local",
+  ]) {
     const button = document.getElementById(id);
     const label = api.loc(id);
     button.setAttribute("label", label);
@@ -666,6 +853,10 @@ async function load() {
     }
   };
   syncOptions();
+  $("graph-global").addEventListener("click", () => showScope(undefined));
+  $("graph-local").addEventListener("click", () => {
+    if (selectedId) showScope(selectedId);
+  });
   for (const [name, id] of optionControls) {
     const control = /** @type {HTMLElement & {checked: boolean}} */ (
       document.getElementById(id)
@@ -688,6 +879,14 @@ async function load() {
   );
   $("graph-search").addEventListener("input", () => select(undefined));
   $("graph-svg").addEventListener("click", (event) => {
+    if (canvasRenderer && event.target === $("graph-svg")) {
+      if (dragMoved) {
+        dragMoved = false;
+        return;
+      }
+      select(nodeAt(event)?.id);
+      return;
+    }
     if (!(/** @type {Element} */ (event.target).closest(".graph-node")))
       select(undefined);
   });
@@ -701,6 +900,37 @@ async function load() {
       if (card?.targetId) select(card.targetId);
       else await api.openLink(href);
     });
+  });
+  $("graph-svg").addEventListener("dblclick", (event) => {
+    if (!canvasRenderer || event.target !== $("graph-svg")) return;
+    const node = nodeAt(event);
+    if (node) run(() => openNode(node));
+  });
+  $("graph-svg").addEventListener(
+    "pointerdown",
+    (event) => {
+      if (
+        !canvasRenderer ||
+        event.button !== 0 ||
+        (window.Zotero.isMac && event.ctrlKey)
+      )
+        return;
+      const node = nodeAt(event);
+      if (!node) return;
+      event.stopPropagation();
+      drag = node;
+      dragMoved = false;
+      node.fx = node.x;
+      node.fy = node.y;
+      $("graph-svg").setPointerCapture?.(event.pointerId);
+      select(node.id);
+    },
+    true,
+  );
+  $("graph-svg").addEventListener("pointerleave", () => {
+    if (!canvasRenderer || drag) return;
+    hoveredId = undefined;
+    highlight();
   });
   zoomBehavior = zoom()
     .extent(() => {
@@ -754,6 +984,15 @@ async function load() {
   );
   d3Select($("graph-svg")).call(zoomBehavior).on("dblclick.zoom", null);
   $("graph-svg").addEventListener("pointermove", (ev) => {
+    if (canvasRenderer && !drag) {
+      const node = nodeAt(ev);
+      $("graph-svg").style.cursor = node ? "pointer" : "";
+      $("graph-svg").setAttribute("title", node?.title || "");
+      if (hoveredId !== node?.id) {
+        hoveredId = node?.id;
+        highlight();
+      }
+    }
     if (drag) {
       const rect = $("graph-svg").getBoundingClientRect();
       const x = (ev.clientX - rect.left - transform.x) / transform.k;
@@ -772,7 +1011,8 @@ async function load() {
       updatePositions();
     }
   });
-  const release = () => {
+  const release = (event) => {
+    if (event.type !== "pointerup") dragMoved = false;
     if (drag) {
       drag.fx = null;
       drag.fy = null;
@@ -794,10 +1034,17 @@ async function load() {
       window.close();
     }
   });
-  window.addEventListener("resize", () => {
+  const resize = () => {
+    viewport = undefined;
     const { width, height } = size();
     $("graph-svg").setAttribute("viewBox", `0 0 ${width} ${height}`);
-  });
+    applyTransform();
+  };
+  window.addEventListener("resize", resize);
+  if (window.ResizeObserver) {
+    resizeObserver = new window.ResizeObserver(resize);
+    resizeObserver.observe($("graph-canvas"));
+  }
   unsubscribe = api.onDataChange((change) => {
     if (
       change &&
@@ -813,6 +1060,12 @@ async function load() {
     refreshTimer = setTimeout(() => run(refresh), 180);
   });
   unsubscribeOptions = api.onGraphOptionsChange(() => {
+    const depth = api.getGraphLocalDepth();
+    if (depth !== localDepth) {
+      localDepth = depth;
+      scopeChanged = !!centerId;
+      if (centerId) viewMoved = false;
+    }
     syncOptions();
     run(render);
   });
@@ -821,6 +1074,16 @@ async function load() {
 window.addEventListener("load", () => run(load));
 window.addEventListener("unload", () => {
   simulation?.stop();
+  window.cancelAnimationFrame(paintFrame);
+  resizeObserver?.disconnect();
+  $("graph-paint").width = 0;
+  $("graph-paint").height = 0;
+  canvasRenderer?.dispose();
+  $("graph-gpu").removeEventListener("webglcontextlost", gpuChanged);
+  $("graph-gpu").removeEventListener("webglcontextrestored", gpuChanged);
+  $("graph-gpu").width = 0;
+  $("graph-gpu").height = 0;
+  canvasRenderer = undefined;
   drag = null;
   d3Select($("graph-svg")).on(".zoom", null);
   refreshVersion++;

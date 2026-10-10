@@ -111,6 +111,10 @@ let _initializing: Promise<void> | undefined;
 let _shutdownClient: SqliteModule["Sqlite"]["shutdown"] | undefined;
 let _closing: Promise<void> | undefined;
 const _transactions = new Set<Promise<unknown>>();
+let generation = 0;
+let revision = 0;
+export const getDatabaseGeneration = () => generation;
+export const getDatabaseRevision = () => revision;
 
 async function shutdownDatabase(): Promise<void> {
   try {
@@ -144,6 +148,8 @@ async function initializeDB(): Promise<void> {
     const { Sqlite } = getSqlite();
     const path = PathUtils.join(Zotero.DataDirectory.dir, DB_FILENAME);
     _conn = await Sqlite.openConnection({ path });
+    generation++;
+    revision++;
     // Sqlite waits for every connection to close; it does not close ours for us.
     _shutdownClient = Sqlite.shutdown;
     _shutdownClient.addBlocker(
@@ -423,6 +429,8 @@ export async function closeDB(): Promise<void> {
     await Promise.allSettled([..._transactions]);
     await connection.close();
     _conn = null;
+    generation++;
+    revision++;
     _schemaReady = false;
     _shutdownClient?.removeBlocker(shutdownDatabase);
     _shutdownClient = undefined;
@@ -444,6 +452,7 @@ function conn(): SqliteConnection {
 
 export async function exec(sql: string, params: unknown[] = []): Promise<void> {
   await conn().execute(sql, params);
+  revision++;
 }
 
 /** Map mozStorage column accessors to typed query results. */
@@ -482,7 +491,13 @@ export async function transaction<T>(fn: () => Promise<T>): Promise<T> {
   _transactions.add(operation);
   try {
     return await operation;
+  } catch (error) {
+    // Reference caches can contain identities read before a failed write rolls back.
+    generation++;
+    throw error;
   } finally {
+    // A rolled-back write must invalidate snapshots read inside the transaction.
+    revision++;
     _transactions.delete(operation);
   }
 }

@@ -11,6 +11,14 @@ export interface CitationReference {
   label: string;
   selectURL: string;
 }
+export interface CardReference {
+  id: string;
+  title: string;
+  label?: string;
+  sourceTitle?: string;
+  reference: string;
+  href?: string;
+}
 
 function escapeHTML(text: string): string {
   return text.replace(
@@ -90,7 +98,7 @@ const markdown = new Marked({
         };
       },
       renderer(token) {
-        return `<a href="knowledge-base://card/${encodeURIComponent(token.ref)}" class="zettel-link"${token.raw.includes("|") ? ` data-card-alias="${escapeHTML(token.display)}"` : ""}>${escapeHTML(token.display)}</a>`;
+        return `<a href="${escapeHTML(token.href || `knowledge-base://card/${encodeURIComponent(token.ref)}`)}" class="zettel-link"${token.wiki ? ` title="${escapeHTML(token.wiki)}"` : ""}${token.raw.includes("|") ? ` data-card-alias="${escapeHTML(token.display)}"` : ""}>${escapeHTML(token.display)}</a>`;
       },
     },
     {
@@ -124,6 +132,16 @@ export function nativeNoteRefFromURL(href: string): string | null {
     href,
   )
     ? href
+    : null;
+}
+/** The native editor preserves standard link titles, unlike custom data attributes. */
+export function managedWikiReference(
+  title: string,
+  href: string,
+): string | null {
+  return (nativeNoteRefFromURL(href) || cardRefFromURL(href)) &&
+    /^\[\[[^\][\n]+\]\]$/.test(title)
+    ? title
     : null;
 }
 
@@ -189,6 +207,7 @@ export function renderMarkdown(
   resolveImage: (url: string) => string = (url) => url,
   resolveCitation: (key: string) => CitationReference | undefined = () =>
     undefined,
+  resolveCard: (ref: string) => CardReference | undefined = () => undefined,
 ): string {
   const tokens = markdown.lexer(body);
   markdown.walkTokens(tokens, (token) => {
@@ -198,6 +217,46 @@ export function renderMarkdown(
       if (citation) {
         token.label = citation.label;
         token.href = citation.selectURL;
+      }
+    }
+    if (token.type === "wikilink") {
+      const target = resolveCard(token.ref);
+      if (target) {
+        const alias = token.raw.includes("|")
+          ? token.raw.slice(2, -2).split("|").slice(1).join("|").trim()
+          : "";
+        token.ref = target.id;
+        token.href = target.href;
+        token.display =
+          alias || target.label || target.title || target.reference;
+        token.wiki = `[[${target.id}${alias ? `|${alias}` : ""}]]`;
+      }
+    } else if (token.type === "link") {
+      const ref = cardRefFromURL(token.href);
+      const target = ref ? resolveCard(ref) : undefined;
+      if (target?.href) {
+        const automatic =
+          [
+            ref,
+            ref?.replace(/^@/, ""),
+            target.id,
+            target.reference,
+            target.reference.replace(/^@/, ""),
+            target.title,
+            target.label,
+            target.sourceTitle,
+          ].includes(token.text) || token.text === `[[${ref}]]`;
+        const alias = automatic ? "" : token.text.replace(/[\][\n]/g, " ");
+        token.href = target.href;
+        // Standard Markdown link titles round-trip through Zotero's link mark.
+        token.title = `[[${target.id}${alias ? `|${alias}` : ""}]]`;
+        if (automatic) {
+          const label = target.label || target.title || target.reference;
+          token.text = label;
+          token.tokens = [
+            { type: "text", raw: label, text: escapeHTML(label) },
+          ];
+        }
       }
     }
   });

@@ -18,6 +18,10 @@ export interface DataChange {
 
 const listeners = new Set<(change: DataChange) => void>();
 let revision = 0;
+let identityRevision = 0;
+export const getIdentityRevision = () => identityRevision;
+let sourceRevision = 0;
+export const getSourceRevision = () => sourceRevision;
 let pending: Omit<DataChange, "revision"> | undefined;
 
 export function onDataChange(
@@ -30,6 +34,19 @@ export function onDataChange(
 export function notifyDataChange(
   change: Partial<Omit<DataChange, "revision">> = { all: true },
 ): void {
+  if (
+    change.all ||
+    !change.fields?.length ||
+    change.fields.some((field) => ["source", "availability"].includes(field))
+  )
+    sourceRevision++;
+  if (
+    !change.fields?.length ||
+    change.fields.some((field) =>
+      ["identity", "source", "availability"].includes(field),
+    )
+  )
+    identityRevision++;
   const scheduled = !!pending;
   pending = {
     all: !!pending?.all || !!change.all,

@@ -7,6 +7,7 @@ pref("extensions.zotero.knowledge-base.graph.references", true);
 pref("extensions.zotero.knowledge-base.graph.sources", true);
 pref("extensions.zotero.knowledge-base.graph.hideIsolated", false);
 pref("extensions.zotero.knowledge-base.graph.labelLength", 20);
+pref("extensions.zotero.knowledge-base.graph.localDepth", 1);
 
 pref(
   "extensions.zotero.knowledge-base.sourceStyle",

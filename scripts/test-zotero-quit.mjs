@@ -63,6 +63,7 @@ files["bootstrap.js"] = strToU8(
 function runQuitTest() {
   const { setTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
   async function run() {
+    let restarting = false;
     try {
       const kb = Zotero.ZoteroKnowledgeBase;
       // Fixture for previously linked notes; never included in production code.
@@ -84,6 +85,7 @@ function runQuitTest() {
         return;
       }
       if (await IOUtils.exists(${JSON.stringify(marker)})) {
+        restarting = true;
         const first = JSON.parse(await IOUtils.readUTF8(${JSON.stringify(marker)}));
         if(kb.api.getWorkbenchMode()!=="window") throw new Error('Restart lost the workbench opening preference');
         if(kb.api.getGraphLabelLength()!==18) throw new Error("Restart lost the graph title length");
@@ -98,7 +100,10 @@ function runQuitTest() {
         restartTrashNote.deleted = false; await restartTrashNote.saveTx();
         for (let n=0; n<100 && !(await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[first.restartTrashID]})).items.length; n++) await new Promise(resolve=>setTimeout(resolve,25));
         const rebound = await kb.api.acquireNativeNote({id:first.restartTrashID,title:'Trash across restart',body:''});
-        if (rebound.noteID !== restartTrashNote.id || restartTrashNote.key !== first.restartTrashKey || restartTrashNote.getNote() !== first.restartTrashHTML || !(await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[first.restartTrashID]})).items.length || !(await kb.api.getOutgoing(first.restartTrashID)).some(link=>link.targetId===first.cardID)) throw new Error('Native restore after restart lost identity, content or card links');
+        const restoredTrashSource = kb.api.getMarkdownSource(restartTrashNote.getNote());
+        const originalTrashSource = kb.api.getMarkdownSource(first.restartTrashHTML);
+        const expectedTrashBody = originalTrashSource.body.replace('[Linked card](knowledge-base://card/' + first.cardID + ')', '[[' + first.cardID + '|Linked card]]');
+        if (rebound.noteID !== restartTrashNote.id || restartTrashNote.key !== first.restartTrashKey || restoredTrashSource.title !== originalTrashSource.title || restoredTrashSource.body !== expectedTrashBody || !restartTrashNote.getNote().includes('<span class="math">$x^2$</span>') || !(await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[first.restartTrashID]})).items.length || !(await kb.api.getOutgoing(first.restartTrashID)).some(link=>link.targetId===first.cardID)) throw new Error('Native restore after restart lost identity, content or card links: ' + JSON.stringify({restoredTrashSource, expectedTrashBody, noteID:rebound.noteID, nativeID:restartTrashNote.id}));
         await kb.api.releaseNativeNote(rebound.noteID);
         const keyedThinking = await kb.api.getZettel(first.keyedThinkingID);
         if (keyedThinking?.kind !== "thinking" || keyedThinking.custom_key !== "HostProjectRevised" || keyedThinking.reference !== "HostProjectRevised" || (await kb.api.resolveCardLink("knowledge-base://card/HostProject")).targetId !== first.keyedThinkingID) throw new Error("Restart lost Thinking keys or old links");
@@ -383,11 +388,12 @@ function runQuitTest() {
       const literatureReference = literatureEditor.document.getElementById("knowledge-base-editor-reference");
       if (literatureReference.textContent !== "@Host2026" || (await kb.api.getZettel(literatureID)).reference !== "@Host2026") throw new Error("Literature Note reference is missing");
       literatureReference.click();
-      if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[@Host2026]]") throw new Error("Reference copy did not write a usable wiki link: " + JSON.stringify({plain: Zotero.Utilities.Internal.getClipboard("text/plain"), unicode: Zotero.Utilities.Internal.getClipboard("text/unicode")}));
+      if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[" + literatureID + "]]") throw new Error("Reference copy did not write a stable wiki link: " + JSON.stringify({plain: Zotero.Utilities.Internal.getClipboard("text/plain"), unicode: Zotero.Utilities.Internal.getClipboard("text/unicode")}));
       if ((await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Literature citation-key navigation failed");
       const noteLink = "[[@Host2026]]";
       const noteLinkHTML = await kb.api.nativeNoteHTML("", noteLink);
-      if (!kb.api.getMarkdownSource(noteLinkHTML).body.includes(noteLink) || (await kb.api.getDraftLinks(noteLink + " [@Host2026]")).length !== 1) throw new Error("Native Markdown roundtrip confused note links with item citations");
+      if (!kb.api.getMarkdownSource(noteLinkHTML).body.includes("[[" + literatureID + "]]") || !noteLinkHTML.includes('href="zotero://select/library/items/' + note.key + '"') || (await kb.api.getDraftLinks(noteLink + " [@Host2026]")).length !== 1) throw new Error("Native Markdown roundtrip confused note links with item citations");
+      if(!noteLinkHTML.includes('>Smith 2026</a>') || !(await kb.api.nativeNoteHTML('', '[[' + literatureID + '|My reading]]')).includes('>My reading</a>')) throw new Error('Literature native link labels do not use author-year or lost explicit aliases');
       await kb.api.saveZettel({id: thinkingID, kind: "thinking", title: "Existing project", body: noteLink});
       if ((await kb.api.getOutgoing(thinkingID))[0]?.targetId !== literatureID || !(await kb.api.getBacklinks(literatureID)).some(link => link.sourceId === thinkingID)) throw new Error("Literature reference was not indexed into backlinks");
       await openMarkdownToolbar(literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
@@ -423,7 +429,7 @@ function runQuitTest() {
       }
       if (!reselectRow) throw new Error("Existing-note source picker did not find its source");
       reselectRow.click();
-      if (!(await literatureEditor.save(false)) || note.parentItemID !== item.id || note.id !== beforeSourceReselect.id || note.key !== beforeSourceReselect.key || note.getNote() !== beforeSourceReselect.html) throw new Error("Reselecting the same source did not move the existing note intact");
+      if (!(await literatureEditor.save(false)) || note.parentItemID !== item.id || note.id !== beforeSourceReselect.id || note.key !== beforeSourceReselect.key || note.getNote() !== beforeSourceReselect.html) throw new Error("Reselecting the same source did not move the existing note intact: " + JSON.stringify({before:beforeSourceReselect, after:{id:note.id,key:note.key,html:note.getNote(),parent:note.parentItemID}, status:literatureEditor.document.getElementById("knowledge-base-editor-status").textContent}));
       if (literatureEditor.document.getElementById("knowledge-base-metadata") || literatureEditor.document.getElementById("knowledge-base-kind") || literatureEditor.document.getElementById("knowledge-base-editor-mode")) throw new Error("Editor still exposes metadata, a type selector or Browse mode");
       if (literatureEditor.document.getElementById("knowledge-base-editor-status").textContent.includes(literatureID)) throw new Error("Editor exposes its internal note ID");
       item.setField("extra", "Citation Key: HostRenamed2026");
@@ -518,6 +524,59 @@ function runQuitTest() {
       preferences.close();
       item.setField("title", "Isolated test source");
       await item.saveTx();
+      Zotero.debug('KB host stage: persisted reference labels and inline wiki input');
+      const referenceID = await kb.api.saveZettel({title:'Reference label probe', body:'[[' + literatureID + ']] [[' + literatureID + '|Pinned label]] $x^2$'});
+      const referenceMapping = await kb.api.acquireNativeNote({id:referenceID,title:'Reference label probe',body:''});
+      const referenceNote = await Zotero.Items.getAsync(referenceMapping.noteID);
+      await kb.api.releaseNativeNote(referenceNote.id);
+      const literatureBeforeLabels = note.getNote();
+      item.setCreators([{firstName:'B',lastName:'Jones',creatorType:'author'}]);
+      item.setField('date','2027');
+      await item.saveTx();
+      for(let n=0;n<150 && !referenceNote.getNote().includes('>Jones 2027</a>');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!referenceNote.getNote().includes('>Jones 2027</a>') || !referenceNote.getNote().includes('>Pinned label</a>') || note.getNote() !== literatureBeforeLabels) throw new Error('Author-year metadata updates changed Literature titles, aliases or failed to update native link text');
+      const unchangedReferenceHTML = referenceNote.getNote();
+      item.setField('publisher','Reference label invariant'); await item.saveTx();
+      await kb.api.prepareMarkdown('[[' + literatureID + ']]');
+      await new Promise(resolve=>setTimeout(resolve,100));
+      if(referenceNote.getNote() !== unchangedReferenceHTML) throw new Error('Unrelated source metadata rewrote a note with unchanged reference labels');
+      await kb.api.openEditor({window:true,zettelId:referenceID});
+      let quickLinkEditor;
+      for(let n=0;n<150;n++) {
+        quickLinkEditor = [...Services.wm.getEnumerator('knowledge-base:editor')].find(view=>view.knowledgeBaseCardId === referenceID);
+        if(quickLinkEditor?.document.getElementById('knowledge-base-rich-frame')?.getCurrentInstance()?._iframeWindow?.document.querySelector('.primary-editor')) break;
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
+      if(!quickLinkEditor) throw new Error('Inline wiki input editor did not open');
+      const quickFrame = quickLinkEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()._iframeWindow;
+      const quickParagraph = quickFrame.document.querySelector('.primary-editor p');
+      quickLinkEditor.focus(); quickParagraph.closest('.primary-editor').focus();
+      const quickRange = quickFrame.document.createRange(); quickRange.selectNodeContents(quickParagraph); quickRange.collapse(false);
+      quickFrame.getSelection().removeAllRanges(); quickFrame.getSelection().addRange(quickRange);
+      await new Promise(resolve=>setTimeout(resolve,50));
+      quickFrame.document.execCommand('insertText',false,' [[' + literatureID + ']]');
+      for(let n=0;n<150 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length !== 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if([...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length !== 2) throw new Error('Typing [[id]] in the native KB editor did not insert the resolved native link: ' + quickFrame.document.querySelector('.primary-editor').innerHTML);
+      if(!quickFrame.wrappedJSObject.doUndo()) throw new Error('Native undo cannot reverse inline wiki insertion');
+      for(let n=0;n<100 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length === 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if([...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length === 2) throw new Error('Native undo left the inserted wiki link unchanged');
+      if(!quickFrame.wrappedJSObject.doRedo()) throw new Error('Native redo cannot restore inline wiki insertion');
+      for(let n=0;n<100 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length !== 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!(await quickLinkEditor.save(false)) || referenceNote.getNoteTitle() !== 'Reference label probe' || !referenceNote.getNote().includes('>Jones 2027</a>') || !referenceNote.getNote().includes('$x^2$')) throw new Error('Inline wiki input did not save a native link while preserving title and math');
+      const quickCore = quickFrame.wrappedJSObject._currentEditorInstance._editorCore;
+      const readStarted = quickFrame.performance.now();
+      for(let n=0;n<1000;n++) quickFrame.wrappedJSObject.getDataSync(false);
+      const fullReadMs = quickFrame.performance.now() - readStarted;
+      const htmlStarted = quickFrame.performance.now();
+      for(let n=0;n<1000;n++) quickCore.getHTML();
+      const editorSnapshotTiming = {iterations:1000,fullStateMs:fullReadMs,htmlOnlyMs:quickFrame.performance.now()-htmlStarted};
+      Zotero.debug('KB editor snapshot timing: ' + JSON.stringify(editorSnapshotTiming));
+      const quickSelection = quickFrame.getSelection();
+      if(!quickSelection.isCollapsed || quickSelection.anchorNode?.parentElement?.closest('h1')) throw new Error('Inline wiki replacement reset the editing cursor');
+      quickLinkEditor.close();
+      for(let n=0;n<100 && !quickLinkEditor.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      await kb.api.deleteZettel(referenceID);
+      item.setCreators([{firstName:'A',lastName:'Smith',creatorType:'author'}]); item.setField('date','2026'); await item.saveTx();
       // Explicitly detach this fixture to cover a surviving note with a trashed source.
       note.parentItemID = false; await note.saveTx({skipSelect:true});
       item.deleted = true; await item.saveTx();
@@ -531,6 +590,56 @@ function runQuitTest() {
       await kb.api.deleteZettel(literatureID);
       await kb.api.deleteZettel(thinkingID);
       if (thinking.deleted || note.deleted || thinking.getNote() !== originalThinking) throw new Error("Removing registered notes trashed or rewrote original notes");
+      Zotero.debug("KB host stage: stable native links and rename updates");
+      const linkPreviousSelection = Zotero.getMainWindow().ZoteroPane.getSelectedItems().map(selected=>selected.id);
+      const linkTargetID = await kb.api.saveZettel({kind:"thinking", customKey:"LinkTarget", title:"Link target", body:""});
+      const linkTargetMapping = await kb.api.acquireNativeNote({id:linkTargetID, title:"Link target", body:""});
+      const linkTargetNote = await Zotero.Items.getAsync(linkTargetMapping.noteID);
+      await kb.api.releaseNativeNote(linkTargetNote.id);
+      const linkBody = "[[" + linkTargetID + "]] [[" + linkTargetID + "|My label]]";
+      const linkSourceID = await kb.api.saveZettel({title:"Link source", body:linkBody});
+      const linkSourceMapping = await kb.api.acquireNativeNote({id:linkSourceID, title:"Link source", body:linkBody});
+      const linkSourceNote = await Zotero.Items.getAsync(linkSourceMapping.noteID);
+      linkSourceNote.setNote('<div data-schema-version="9"><h1>Link source</h1><p><a href="knowledge-base://card/' + linkTargetID + '">Link target</a> <a href="knowledge-base://card/' + linkTargetID + '">My label</a> <a href="zotero://select/library/items/' + linkTargetNote.key + '">Plain native label</a></p><pre class="math">$$x^2$$</pre></div>');
+      await linkSourceNote.saveTx();
+      const linkInstance = await Zotero.Notes.open(linkSourceNote.id, null, {openInWindow:true});
+      const linkWindow = linkInstance._iframeWindow.browsingContext.embedderElement.ownerDocument.defaultView;
+      const nativeHref = "zotero://select/library/items/" + linkTargetNote.key;
+      for(let n=0;n<100 && !linkSourceNote.getNote().includes('title="[[' + linkTargetID + ']]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!linkSourceNote.getNote().includes('title="[[' + linkTargetID + ']]"') || !linkSourceNote.getNote().includes('title="[[' + linkTargetID + '|My label]]"') || !linkSourceNote.getNote().includes('$$x^2$$')) throw new Error("Opening an ordinary native editor did not convert legacy links safely: " + linkSourceNote.getNote());
+      // Follow the real native editor message handler through Zotero's protocol handler.
+      await linkInstance._messageHandler({source:linkInstance._iframeWindow, data:{instanceID:linkInstance.instanceID, message:{action:"openURL", url:nativeHref}}});
+      for(let n=0;n<100 && !Zotero.getMainWindow().ZoteroPane.getSelectedItems().some(selected=>selected.id===linkTargetNote.id);n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!Zotero.getMainWindow().ZoteroPane.getSelectedItems().some(selected=>selected.id===linkTargetNote.id)) throw new Error("Native note link did not jump through Zotero's own protocol handler");
+      linkTargetNote.setNote('<div data-schema-version="9"><h1>Renamed link target</h1></div>');
+      await linkTargetNote.saveTx();
+      for(let n=0;n<100 && (await kb.api.getZettel(linkTargetID)).title !== 'Renamed link target';n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!linkSourceNote.getNote().includes('>LinkTarget</a>') || linkSourceNote.getNote().includes('>Renamed link target</a>')) throw new Error('A title rename replaced a key-based default link label');
+      await kb.api.saveZettel({id:linkTargetID, title:'Renamed link target', body:'', customKey:'RenamedLinkTarget'});
+      for(let n=0;n<150 && !linkSourceNote.getNote().includes('>RenamedLinkTarget</a>');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!linkSourceNote.getNote().includes('>RenamedLinkTarget</a>') || !linkSourceNote.getNote().includes('>My label</a>') || !linkSourceNote.getNote().includes(nativeHref)) throw new Error("Native key change lost link identity or did not update default labels");
+      if(!linkSourceNote.getNote().includes('>Plain native label</a>')) throw new Error('An ordinary native link label was unexpectedly rewritten');
+      const linkData = linkInstance._iframeWindow.wrappedJSObject.getDataSync(false);
+      if(!linkData?.html.includes('title="[[' + linkTargetID + ']]"')) throw new Error("Zotero's native link schema discarded the stable Markdown reference: " + JSON.stringify({data:linkData, note:linkSourceNote.getNote(), dom:linkInstance._iframeWindow.document.querySelector('.primary-editor')?.innerHTML}));
+      const linkFrame = linkInstance._iframeWindow;
+      for(let n=0;n<100 && !linkFrame.document.querySelector('.primary-editor a')?.textContent.includes('RenamedLinkTarget');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      linkWindow.focus();
+      linkFrame.document.querySelector('.primary-editor').focus();
+      const editableLink = [...linkFrame.document.querySelectorAll('.primary-editor a')].find(anchor=>anchor.getAttribute('title')==='[[' + linkTargetID + ']]');
+      const linkRange = linkFrame.document.createRange();
+      linkRange.setStart(editableLink.firstChild, 1);
+      linkRange.setEnd(editableLink.firstChild, editableLink.textContent.length - 1);
+      const linkSelection = linkFrame.getSelection(); linkSelection.removeAllRanges(); linkSelection.addRange(linkRange);
+      await new Promise(resolve=>setTimeout(resolve,50));
+      if(!linkFrame.document.execCommand('insertText', false, 'evisedLinkTarge')) throw new Error('Native link label insertion failed');
+      for(let n=0;n<150 && !linkSourceNote.getNote().includes('title="[[' + linkTargetID + '|RevisedLinkTarget]]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!kb.api.getMarkdownSource(linkSourceNote.getNote()).body.includes('[[' + linkTargetID + '|RevisedLinkTarget]]')) throw new Error('Editing link text in the native editor was lost instead of becoming an alias: ' + JSON.stringify({html:linkSourceNote.getNote(), dom:linkFrame.document.querySelector('.primary-editor')?.innerHTML.slice(0,500)}));
+      linkWindow.close();
+      for(let n=0;n<100 && !linkWindow.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      await kb.api.releaseNativeNote(linkSourceNote.id);
+      await kb.api.deleteZettel(linkSourceID);
+      await kb.api.deleteZettel(linkTargetID);
+      if(linkPreviousSelection.length) await Zotero.getMainWindow().ZoteroPane.selectItems(linkPreviousSelection);
       const migrationCanvas=Zotero.getMainWindow().document.createElementNS("http://www.w3.org/1999/xhtml","canvas");
       migrationCanvas.width=240;migrationCanvas.height=90;
       const migrationContext=migrationCanvas.getContext("2d");
@@ -635,7 +744,7 @@ function runQuitTest() {
         await new Promise(resolve => setTimeout(resolve, 150));
         const sourcesHidden = sourceWasVisible && !graph.document.querySelector(".graph-node.source,.graph-edge.source") && Zotero.Prefs.get("extensions.zotero.knowledge-base.graph.sources", true) === false;
         const editor = [...Services.wm.getEnumerator("knowledge-base:editor")][0];
-        const body = editor.document.getElementById("knowledge-base-editor-body");
+        let body = editor.document.getElementById("knowledge-base-editor-body");
         const rootElement = editor.document.getElementById("knowledge-base-editor-root");
         for (let n = 0; n < 80 && rootElement.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if (rootElement.dataset.mode !== "visual") throw new Error("The editor did not start in visual mode");
@@ -645,6 +754,7 @@ function runQuitTest() {
             await openMarkdownToolbar(editor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow);
           }
           for (let n = 0; n < 80 && rootElement.dataset.mode !== mode; n++) await new Promise(resolve => setTimeout(resolve, 100));
+          body = editor.document.getElementById("knowledge-base-editor-body");
           const nativeElement = editor.document.getElementById("knowledge-base-rich-frame");
           const nativeFrame = nativeElement.getCurrentInstance()._iframeWindow;
           const toggle = nativeFrame.document.querySelector(".toolbar .start .knowledge-base-markdown-toggle");
@@ -782,7 +892,7 @@ function runQuitTest() {
           if (!inline.knowledgeBaseCardId && inline.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
           await new Promise(resolve => setTimeout(resolve,50));
         }
-        if (inline.knowledgeBaseCardId === unsourced.id || inline.document.getElementById("knowledge-base-editor-title").value !== "Workbench typing fixture") throw new Error("New Note kept the old document: " + JSON.stringify({url:inline.location.href, args:inline.eval("args"), id:inline.knowledgeBaseCardId}));
+        if (inline.knowledgeBaseCardId === unsourced.id || kb.api.projectNativeNote(inline.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.getNote()).title !== "Workbench typing fixture") throw new Error("New Note kept the old document: " + JSON.stringify({url:inline.location.href, args:inline.eval("args"), id:inline.knowledgeBaseCardId}));
         const emptyConnections = inline.document.getElementById("knowledge-base-editor-relations");
         const emptyButtons = [...emptyConnections.querySelectorAll("nav button")];
         if (emptyConnections.hidden || emptyButtons.length !== 3 || emptyButtons.some(button => !button.disabled || !button.textContent.endsWith("0"))) throw new Error("Zero-count connections disappeared from the workbench");
@@ -918,7 +1028,7 @@ function runQuitTest() {
           if (!separateEditor.knowledgeBaseCardId && separateEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
           await new Promise(resolve=>setTimeout(resolve,50));
         }
-        if (separateEditor.knowledgeBaseCardId || separateEditor.document.getElementById("knowledge-base-editor-title").value !== "Independent closing draft") throw new Error("Independent new-note action opened or retained another editor");
+        if (separateEditor.knowledgeBaseCardId || kb.api.projectNativeNote(separateEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.getNote()).title !== "Independent closing draft") throw new Error("Independent new-note action opened or retained another editor");
         await separateEditor.setEditorMode("source");
         const pendingSeparate = separateEditor.document.getElementById("knowledge-base-editor-body");
         pendingSeparate.value = "# Independent closing draft\\n\\nKept when closing the independent window.";
@@ -1068,8 +1178,9 @@ function runQuitTest() {
         const nativeNote = instance._item;
         const nativeHTML = nativeNote.getNote();
         if (!nativeHTML.includes('class="math"') || !nativeHTML.includes('data-citation=')) throw new Error("Markdown did not migrate to native math and citations");
-        const cardLink = richSurface.querySelector("a[href^='knowledge-base://card/']");
-        if (!cardLink?.textContent.startsWith("[[")) throw new Error("Card IDs were rewritten");
+        const childID = (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id;
+        const cardLink = [...richSurface.querySelectorAll("a[title]")].find(link=>link.getAttribute("title")==="[[" + childID + "]]");
+        if (!cardLink || cardLink.textContent !== (await kb.api.getNoteLink(childID)).label || (await kb.api.resolveCardLink(cardLink.href))?.targetId !== childID) throw new Error("Native card links lost their stable target or current key");
         if (richSurface.querySelector("a[href$='" + note.key + "']")?.textContent !== "My note") throw new Error("Note labels were rewritten");
         const citation = richSurface.querySelector(".citation");
         if (!citation?.textContent.includes("Smith") || !citation.textContent.includes("2026")) throw new Error("Native author-year citation missing");
@@ -1077,8 +1188,11 @@ function runQuitTest() {
           const bounds = target.getBoundingClientRect();
           for (const type of ["mousedown", "mouseup", "click"]) target.dispatchEvent(new frameWindow.MouseEvent(type, { bubbles: true, cancelable: true, clientX: bounds.x + bounds.width / 2, clientY: bounds.y + bounds.height / 2, ctrlKey: true, metaKey: true }));
         };
+        const linkMessages=[];
+        frameWindow.addEventListener("message", event=>{if(event.data?.message)linkMessages.push({action:event.data.message.action,url:event.data.message.url,id:event.data.instanceID,source:event.source===frameWindow});},true);
+        cardLink.scrollIntoView({block:"center"});
+        await new Promise(resolve=>setTimeout(resolve,50));
         click(cardLink);
-        const childID = (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id;
         let linkEditor;
         for (let n = 0; n < 120; n++) {
           const linkWorkbench = Zotero.getMainWindow().document.querySelector(".knowledge-base-workbench")?.contentWindow;
@@ -1086,7 +1200,7 @@ function runQuitTest() {
           if (linkEditor?.knowledgeBaseCardId === childID && linkEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
           await new Promise(resolve => setTimeout(resolve, 50));
         }
-        if (linkEditor?.knowledgeBaseCardId !== childID) throw new Error("Native card hyperlink did not navigate into the workbench");
+        if (linkEditor?.knowledgeBaseCardId !== childID) throw new Error("Native card hyperlink did not navigate into the workbench: " + JSON.stringify({href:cardLink.href,connected:cardLink.isConnected,currentInstance:noteElement.getCurrentInstance().instanceID,expectedInstance:instance.instanceID,mode:kb.api.getWorkbenchMode(),editor:linkEditor?.knowledgeBaseCardId,selected:Zotero.getMainWindow().ZoteroPane.getSelectedItems().map(item=>item.id), messages:linkMessages}));
         Zotero.getMainWindow().Zotero_Tabs.close(Zotero.getMainWindow().Zotero_Tabs.selectedID);
         const math = richSurface.querySelector("math-inline .math-render");
         const mathBounds = math.getBoundingClientRect();
@@ -1113,7 +1227,7 @@ function runQuitTest() {
         if (!(await kb.api.getZettel(rows[0].id)).body.includes("Native autosave probe")) throw new Error("Native note changes did not refresh the card cache");
         await switchMode("source");
         if (!body.value.includes("[@Host2026]") || !body.value.includes("[My note](zotero://")) throw new Error("Source projection lost references");
-        if (!editor.document.getElementById("knowledge-base-editor-title").hidden || !body.querySelector("iframe")?.contentDocument.querySelector(".cm-editor")) throw new Error("Markdown still exposes a separate title or plain textarea");
+        if (editor.document.getElementById("knowledge-base-editor-title") || !body.querySelector("iframe")?.contentDocument.querySelector(".cm-editor")) throw new Error("Markdown still exposes a separate title or plain textarea");
         const sourceDoc = body.querySelector("iframe").contentDocument;
         const cmContent = sourceDoc.querySelector(".cm-content");
         if (cmContent.namespaceURI !== "http://www.w3.org/1999/xhtml") throw new Error("Markdown content is not HTML: " + cmContent.namespaceURI);
@@ -1261,6 +1375,26 @@ function runQuitTest() {
         kb.api.setGraphOption("sources", true);
         const realGetGraph = kb.api.getGraph;
         const originalGraphData = await realGetGraph();
+        let graphFrames;
+        Zotero.debug("KB host stage: blank native note");
+        const windowsBeforeNew=new Set([...Services.wm.getEnumerator("knowledge-base:editor")]);
+        const newNoteStarted=Date.now();
+        kb.api.openEditor({window:true,sourceItem:{key:item.key,libraryID:item.libraryID}});
+        let quickNote;
+        for(let n=0;n<100;n++) {
+          quickNote=[...Services.wm.getEnumerator("knowledge-base:editor")].find(win=>!windowsBeforeNew.has(win));
+          if(quickNote?.document.getElementById("knowledge-base-editor-root")?.dataset.mode==="visual") break;
+          await new Promise(resolve=>setTimeout(resolve,20));
+        }
+        if(!quickNote || quickNote.document.getElementById("knowledge-base-editor-title") || quickNote.document.getElementById("knowledge-base-editor-body").querySelector("iframe")) throw new Error("New Note still uses a separate title or eagerly allocates Markdown");
+        const quickInstance=quickNote.document.getElementById("knowledge-base-rich-frame").getCurrentInstance();
+        if(!quickInstance?._item.isNote() || quickInstance._item.parentItemID!==item.id || quickInstance._iframeWindow.document.querySelector(".primary-editor h1")) throw new Error("New Note is not a blank native Zotero note under its source");
+        const newNoteOpenMs=Date.now()-newNoteStarted;
+        if(screenshotDirectory) await snapshot("new-native-note",quickNote);
+        quickNote.close();
+        for(let n=0;n<100 && !quickNote.closed;n++) await new Promise(resolve=>setTimeout(resolve,20));
+        if(!quickNote.closed) throw new Error("Blank native note did not close cleanly");
+        Zotero.debug("KB host stage: graph scopes and animation");
         const topics = ["视觉语言模型", "图像分割", "表示学习", "多模态检索", "生成模型", "研究方法"];
         const network = {nodes:[], edges:[]};
         for (let topic = 0; topic < topics.length; topic++) {
@@ -1281,15 +1415,26 @@ function runQuitTest() {
           for(let n=0;n<100 && graph.document.querySelectorAll(".graph-node").length!==count;n++) await new Promise(resolve=>setTimeout(resolve,25));
           if(graph.document.querySelectorAll(".graph-node").length!==count || graph.document.getElementById("graph-error").textContent) throw new Error("Isolated-node filtering failed: " + graph.document.querySelectorAll(".graph-node").length + "/" + count + " " + graph.document.getElementById("graph-error").textContent);
         }
+        async function snapshotGraph(name) {
+          if(!screenshotDirectory) return;
+          for(let n=0;n<150 && graph.document.getElementById("graph-svg").dataset.layoutState!=="settled";n++) await new Promise(resolve=>setTimeout(resolve,25));
+          graph.document.getElementById("graph-fit").click();
+          await new Promise(resolve=>graph.requestAnimationFrame(()=>graph.requestAnimationFrame(resolve)));
+          await snapshot(name,graph);
+        }
         async function redrawGraph(data) {
+          kb.api.setGraphOption("sources",true);
+          kb.api.setGraphOption("hideIsolated",false);
+          graph.document.getElementById("graph-global").click();
           kb.api.getGraph = async () => data;
           graph.document.getElementById("graph-refresh").click();
           for (let n = 0; n < 100 && graph.document.querySelectorAll(".graph-node").length !== data.nodes.length; n++) await new Promise(resolve => setTimeout(resolve, 25));
-          if (graph.document.querySelectorAll(".graph-node").length !== data.nodes.length || graph.document.getElementById("graph-error").textContent) throw new Error("Host network rendering failed: " + graph.document.querySelectorAll(".graph-node").length + "/" + data.nodes.length + " " + graph.document.getElementById("graph-error").textContent);
+          if (graph.document.querySelectorAll(".graph-node").length !== data.nodes.length || graph.document.getElementById("graph-error").textContent) throw new Error("Host network rendering failed: " + graph.document.querySelectorAll(".graph-node").length + "/" + data.nodes.length + " " + graph.document.getElementById("graph-error").textContent + " " + JSON.stringify({options:kb.api.getGraphOptions(),scope:graph.document.getElementById("graph-svg").dataset.scope}));
           await new Promise(resolve=>setTimeout(resolve,400));
           graph.document.getElementById("graph-fit").click();
         }
         try {
+          graph.document.getElementById("graph-global").click();
           await redrawGraph(network);
           if (graph.getComputedStyle(graph.document.getElementById("graph-canvas")).backgroundImage !== "none") throw new Error("Graph still has a distracting background grid");
           const circles = [...graph.document.querySelectorAll(".graph-node-dot")].map(circle => Number(circle.getAttribute("r")));
@@ -1358,6 +1503,115 @@ function runQuitTest() {
           isolationControl.dispatchEvent(new graph.Event("command",{bubbles:true}));
           await waitGraphCount(network.nodes.length);
           if(network.nodes.length!==188 || network.edges.length!==360) throw new Error("Graph filtering modified the source data");
+          manager.document.getElementById("knowledge-base-btn-graph").click();
+          await waitGraphCount(network.nodes.length);
+          if(graph.document.getElementById("graph-svg").dataset.scope!=="global" || graph.document.getElementById("graph-depth-control")) throw new Error("Manager global entry did not restore global scope");
+          kb.api.openGraph({centerId:"network-0-1"});
+          await waitGraphCount(3);
+          if([...Services.wm.getEnumerator("knowledge-base:graph")].length!==1 || graph.document.getElementById("graph-svg").dataset.centerId!=="network-0-1") throw new Error("Local entry did not reuse the graph window with a new center");
+          function setHop(value) { kb.api.setGraphLocalDepth(value); }
+          setHop(2); await waitGraphCount(36);
+          await snapshotGraph("graph-local-two-hops");
+          kb.api.setGraphOption("hideIsolated",true); await waitGraphCount(36);
+          setHop(1); await waitGraphCount(3);
+          kb.api.setGraphOption("sources",false); await waitGraphCount(2);
+          kb.api.setGraphOption("outline",false); await waitGraphCount(1);
+          kb.api.setGraphOption("sources",true);
+          kb.api.setGraphOption("outline",true);
+          kb.api.setGraphOption("hideIsolated",false);
+          kb.api.openGraph({centerId:"network-source-0"});
+          await waitGraphCount(31);
+          await snapshotGraph("graph-local-paper");
+          graph.document.getElementById("graph-global").click();
+          await waitGraphCount(network.nodes.length);
+          if(!graph.document.querySelector('[data-node-id="network-source-0"].selected') || graph.document.querySelector('.dimmed')) throw new Error("Global scope did not retain the selected paper highlight");
+          graph.document.querySelector('[data-node-id="network-1-1"]').dispatchEvent(new graph.MouseEvent("click",{bubbles:true}));
+          graph.document.getElementById("graph-local").click(); await waitGraphCount(3);
+          if(graph.document.getElementById("graph-svg").dataset.centerId!=="network-1-1") throw new Error("Local action did not center the selected note");
+          graph.document.getElementById("graph-global").click(); await waitGraphCount(network.nodes.length);
+          const large={nodes:[],edges:[]};
+          for(let i=0;i<1200;i++) {
+            large.nodes.push({id:"large-"+i,title:"Research note with a long title "+i,kind:"card",snippet:"",group:topics[i%6],color:["#2469c9","#268572","#bd4781","#8c61c9","#c88428","#368b9c"][i%6],tags:[topics[i%6]]});
+            if(i) large.edges.push({source:"large-"+i,target:"large-"+(i-1),kind:"link",ref:"",context:""});
+            if(i>6) large.edges.push({source:"large-"+i,target:"large-"+(i-6),kind:"parent",ref:"",context:""});
+          }
+          await redrawGraph(large);
+          Zotero.Utilities.Internal.activate(graph); graph.focus();
+          await new Promise(resolve=>setTimeout(resolve,100));
+          const intervals=[]; let lastFrame=graph.performance.now();
+          await new Promise(resolve=>{
+            function frame(now) {
+              intervals.push(now-lastFrame);lastFrame=now;
+              if(intervals.length>=24) resolve(); else graph.requestAnimationFrame(frame);
+            }
+            graph.requestAnimationFrame(frame);
+          });
+          if(Math.max(...intervals)>250 || graph.document.getElementById("graph-error").textContent) throw new Error("Large graph blocked display frames: "+JSON.stringify(intervals));
+          const svg=graph.document.getElementById("graph-svg");
+          if(!["canvas","webgl2"].includes(svg.dataset.renderer) || graph.document.getElementById("graph-paint").hidden) throw new Error("Large graph did not use a batched renderer");
+          for(let i=0;i<400 && svg.dataset.layoutState!=="settled";i++) await new Promise(resolve=>setTimeout(resolve,25));
+          if(svg.dataset.layoutState!=="settled") throw new Error("Large graph did not finish its background layout");
+          await new Promise(resolve=>graph.requestAnimationFrame(resolve));
+          const idleIntervals=[];let idleFrame=graph.performance.now();
+          await new Promise(resolve=>{
+            function frame(now) {
+              idleIntervals.push(now-idleFrame);idleFrame=now;
+              if(idleIntervals.length>=12) resolve();else graph.requestAnimationFrame(frame);
+            }
+            graph.requestAnimationFrame(frame);
+          });
+          const paint=graph.document.getElementById("graph-paint"), bounds=svg.getBoundingClientRect();
+          const target=[...svg.querySelectorAll(".graph-node")].find(node=>{const m=node.getScreenCTM();return m.e>bounds.left+30 && m.f>bounds.top+30 && m.e<bounds.right-30 && m.f<bounds.bottom-30;});
+          if(!target) throw new Error("Large graph has no visible node");
+          const screenTarget=target.getScreenCTM();
+          svg.dispatchEvent(new graph.MouseEvent("click",{clientX:screenTarget.e,clientY:screenTarget.f,bubbles:true}));
+          if(!graph.document.querySelector(".graph-node.selected") || graph.document.getElementById("graph-selection").hidden) throw new Error("Graph hit testing did not select a node: "+JSON.stringify({state:svg.dataset.layoutState,backend:svg.dataset.renderer,id:target.dataset.nodeId,point:{x:screenTarget.e,y:screenTarget.f},bounds:{x:bounds.x,y:bounds.y,width:bounds.width,height:bounds.height}}));
+          const canvasCapture=svg.setPointerCapture;svg.setPointerCapture=()=>{};
+          svg.dispatchEvent(new graph.PointerEvent("pointerdown",{button:0,clientX:screenTarget.e,clientY:screenTarget.f,bubbles:true}));
+          svg.dispatchEvent(new graph.PointerEvent("pointermove",{clientX:screenTarget.e+40,clientY:screenTarget.f+20,bubbles:true}));
+          svg.dispatchEvent(new graph.PointerEvent("pointerup",{bubbles:true}));svg.setPointerCapture=canvasCapture;
+          const bitmap=paint.getContext("2d").getImageData(0,0,paint.width,paint.height).data;
+          const gpuCanvas=graph.document.getElementById("graph-gpu");
+          let gpuRenderer;
+          if(svg.dataset.renderer==="webgl2") {
+            const gl=gpuCanvas.getContext("webgl2");
+            async function checkGPUPixels() {
+              graph.dispatchEvent(new graph.Event("resize"));
+              await new Promise((resolve,reject)=>graph.requestAnimationFrame(()=>{
+                const pixels=new Uint8Array(gpuCanvas.width*gpuCanvas.height*4);
+                gl.readPixels(0,0,gpuCanvas.width,gpuCanvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+                if(gl.getError()!==gl.NO_ERROR || !pixels.some((value,i)=>i%4===3&&value)) reject(new Error("GPU graph did not paint valid pixels"));
+                else resolve();
+              }));
+            }
+            await checkGPUPixels();
+            const info=gl.getExtension("WEBGL_debug_renderer_info");
+            gpuRenderer=gl.getParameter(info?info.UNMASKED_RENDERER_WEBGL:gl.RENDERER);
+            const context=gl.getExtension("WEBGL_lose_context");
+            if(context) {
+              context.loseContext();
+              for(let i=0;i<80&&svg.dataset.renderer!=="canvas";i++) await new Promise(resolve=>setTimeout(resolve,25));
+              if(svg.dataset.renderer!=="canvas" || !gpuCanvas.hidden) throw new Error("GPU context loss did not fall back to Canvas");
+              const fallbackPixels=paint.getContext("2d").getImageData(0,0,paint.width,paint.height).data;
+              if(!fallbackPixels.some((value,i)=>i%4===3&&value)) throw new Error("GPU fallback lost graph pixels");
+              context.restoreContext();
+              for(let i=0;i<80&&svg.dataset.renderer!=="webgl2";i++) await new Promise(resolve=>setTimeout(resolve,25));
+              if(svg.dataset.renderer!=="webgl2" || gpuCanvas.hidden) throw new Error("Restored GPU context did not resume rendering");
+              await checkGPUPixels();
+            }
+          } else if(!bitmap.some((value,i)=>i%4===3 && value)) throw new Error("Canvas graph did not paint pixels");
+          graph.dispatchEvent(new graph.KeyboardEvent("keydown",{key:"Escape",bubbles:true}));
+          if(graph.document.querySelector(".graph-node.selected")) throw new Error("Canvas Escape did not clear selection");
+          const beforePan=svg.querySelector(":scope > g").getAttribute("transform");
+          if(Zotero.isMac) {
+            for(let i=0;i<20;i++) svg.dispatchEvent(new graph.WheelEvent("wheel",{deltaX:2,deltaY:3,bubbles:true,cancelable:true}));
+            await new Promise(resolve=>graph.requestAnimationFrame(()=>graph.requestAnimationFrame(resolve)));
+            if(svg.querySelector(":scope > g").getAttribute("transform")===beforePan) throw new Error("Large graph pan did not respond");
+          }
+          await snapshotGraph("graph-large");
+          graphFrames={nodes:large.nodes.length,links:large.edges.length,backend:svg.dataset.renderer,gpuRenderer,mean:intervals.reduce((a,b)=>a+b)/intervals.length,max:Math.max(...intervals),idleMean:idleIntervals.reduce((a,b)=>a+b)/idleIntervals.length};
+          await redrawGraph(network);
+
         } finally {
           kb.api.setGraphOption("hideIsolated",false);
           kb.api.setGraphOption("outline",true);
@@ -1370,6 +1624,7 @@ function runQuitTest() {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
         await switchMode("source");
+        Zotero.debug("KB host stage: native close confirmations");
         const nativeDialogs = [];
         const choices = ["cancel", "accept", "extra1"];
         let dialogFailure;
@@ -1476,7 +1731,7 @@ function runQuitTest() {
           // Restore through Zotero only: no KB restore or explicit audit call.
           caseNote.deleted = false; await caseNote.saveTx();
           for (let n=0; n<150; n++) {
-            if (trashedEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id === caseNote.id && trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id === caseNote.id && (await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[caseID]})).items.length) break;
+            if (!trashedEditor.document.getElementById('knowledge-base-rich-frame').hidden && !trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').hidden && trashedEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id === caseNote.id && trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id === caseNote.id && (await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[caseID]})).items.length) break;
             await new Promise(resolve=>setTimeout(resolve,25));
           }
           if (trashedEditor.document.getElementById('knowledge-base-rich-frame').hidden || trashedEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id !== caseNote.id || trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').hidden || trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id !== caseNote.id || !(await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[caseID]})).items.length || caseNote.getNote() !== beforeExternalRestore) throw new Error('Native Trash restore did not reconnect open editors to the unchanged original: ' + JSON.stringify({separateID:trashedEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id,separateHidden:trashedEditor.document.getElementById('knowledge-base-rich-frame').hidden,inlineID:trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()?._item.id,inlineHidden:trashNavigation.contentWindow.document.getElementById('knowledge-base-rich-frame').hidden,expectedID:caseNote.id,active:(await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[caseID]})).items.length,htmlChanged:caseNote.getNote()!==beforeExternalRestore,status:trashedEditor.document.getElementById('knowledge-base-editor-status').textContent,dirty:trashedEditor.eval('dirty'),recovery:trashedEditor.eval('recoveryPending'),unavailable:trashedEditor.eval('noteUnavailable')}));
@@ -1516,9 +1771,9 @@ function runQuitTest() {
             if (draftEditor?.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
             await new Promise(resolve => setTimeout(resolve, 50));
           }
-          const draftBody = draftEditor.document.getElementById("knowledge-base-editor-body");
           await draftEditor.setEditorMode("source");
           for (let n = 0; n < 80 && draftEditor.document.getElementById("knowledge-base-editor-root").dataset.mode !== "source"; n++) await new Promise(resolve => setTimeout(resolve, 50));
+          const draftBody = draftEditor.document.getElementById("knowledge-base-editor-body");
           draftBody.value = "Keep this close draft";
           draftBody.dispatchEvent(new draftEditor.Event("input", { bubbles: true }));
           await closeShortcut(draftEditor);
@@ -1529,15 +1784,16 @@ function runQuitTest() {
         } finally { Services.ww.unregisterNotification(observer); }
         if (choices.length) throw new Error("Native close choices were not all tested");
         const saved = await kb.api.getZettel(rows[0].id);
+        Zotero.debug("KB host stage: recovery and shutdown");
         await kb.api.saveEditorDraft({ id: saved.id, title: saved.title, body: "Recovered draft body", itemKey: saved.item_key, libraryID: saved.library_id, expectedUpdatedAt: saved.updated_at, draftId: "host-recovery", draftRevision: 1 });
         kb.api.openEditor({window:true, draftId: "host-recovery" });
         let recovered;
         for (let n = 0; n < 80; n++) {
           recovered = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => win.knowledgeBaseDraftId === "host-recovery");
-          if (recovered?.document.getElementById("knowledge-base-editor-body")?.value === "Recovered draft body") break;
+          if (recovered?.document.getElementById("knowledge-base-editor-body")?.value === "Recovered draft body" && recovered.eval("loaded")) break;
           await new Promise(resolve => setTimeout(resolve, 100));
         }
-        if (recovered?.document.getElementById("knowledge-base-editor-body")?.value !== "Recovered draft body") throw new Error("Draft recovery failed");
+        if (recovered?.document.getElementById("knowledge-base-editor-body")?.value !== "Recovered draft body" || !recovered.eval("loaded")) throw new Error("Draft recovery failed");
         recovered.document.getElementById("knowledge-base-editor-save").dispatchEvent(new recovered.Event("command", { bubbles: true }));
         for (let n = 0; n < 80 && (await kb.api.getZettel(saved.id)).body !== "Recovered draft body"; n++) await new Promise(resolve => setTimeout(resolve, 100));
         if ((await kb.api.getZettel(saved.id)).body !== "Recovered draft body") throw new Error("Recovered draft did not save");
@@ -1607,7 +1863,7 @@ function runQuitTest() {
           const journalRows = await journalConnection.execute("SELECT body FROM zettels WHERE id = ?", [journalCard.id]);
           if (journalRows[0].getResultByName("body") === "Interrupted host save") throw new Error("Interrupted-save fixture committed metadata prematurely");
         } finally { await journalConnection.close(); }
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 5, quittingWorkbenchDraftID, restartTrashID, restartTrashKey: restartTrashNote.key, restartTrashHTML, keyedThinkingID: unsourced.id, panelWidths, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, markdownSaveMs, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, nativeStyleUntouched, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 5, editorSnapshotTiming, graphFrames, newNoteOpenMs, quittingWorkbenchDraftID, restartTrashID, restartTrashKey: restartTrashNote.key, restartTrashHTML, keyedThinkingID: unsourced.id, panelWidths, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, markdownSaveMs, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, nativeStyleUntouched, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -1615,7 +1871,7 @@ function runQuitTest() {
         }
       }, 1500);
     } catch (error) {
-      await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
+      await IOUtils.writeUTF8(restarting ? ${JSON.stringify(restartMarker)} : ${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
       Services.startup.quit(Components.interfaces.nsIAppStartup.eForceQuit);
     }
   }
@@ -1649,8 +1905,11 @@ try {
     exited,
     new Promise((_, reject) => {
       timeout = setTimeout(
-        () => reject(new Error("Zotero did not exit within 90 seconds")),
-        90000,
+        () =>
+          reject(
+            new Error("Zotero host suite did not finish within 180 seconds"),
+          ),
+        180000,
       );
     }),
   ]);
@@ -1720,17 +1979,29 @@ try {
     ]);
     const restored = JSON.parse(await readFile(restartMarker, "utf8"));
     if (
+      restored.error ||
       code !== 0 ||
       restored.cards !== 5 ||
       restored.noteKey !== state.noteKey
     )
-      throw new Error("Restart validation failed");
+      throw new Error("Restart validation failed: " + JSON.stringify(restored));
   } finally {
     clearTimeout(restartTimeout);
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, author-year citations and note links; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; single-row connection navigation with visible zero counts, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, body-only Reading views that preserve drafts and toolbars, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; single-row connection navigation with visible zero counts, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, body-only Reading views that preserve drafts and toolbars, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+  );
+  console.log(
+    "Graph display intervals (ms): " +
+      JSON.stringify(state.graphFrames) +
+      "; blank native Note opened in " +
+      state.newNoteOpenMs +
+      " ms",
+  );
+  console.log(
+    "Native editor snapshot timing (ms): " +
+      JSON.stringify(state.editorSnapshotTiming),
   );
   passed = true;
 } finally {
