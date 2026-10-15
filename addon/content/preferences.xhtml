@@ -97,4 +97,50 @@
       role="alert"
     />
   </vbox>
+  <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-pref-codex-heading" />
+    <checkbox
+      id="knowledge-base-codex-enabled"
+      native="true"
+      data-l10n-id="knowledge-base-pref-codex-enabled"
+    />
+    <vbox id="knowledge-base-codex-options" hidden="true">
+      <hbox align="center">
+        <label
+          id="knowledge-base-codex-path-label"
+          control="knowledge-base-codex-path"
+          data-l10n-id="knowledge-base-pref-codex-path"
+        />
+        <html:input
+          id="knowledge-base-codex-path"
+          type="text"
+          style="flex: 1; min-width: 20em"
+          aria-labelledby="knowledge-base-codex-path-label"
+        />
+      </hbox>
+      <hbox align="center">
+        <label
+          id="knowledge-base-codex-model-label"
+          control="knowledge-base-codex-model"
+          data-l10n-id="knowledge-base-pref-codex-model"
+        />
+        <html:input
+          id="knowledge-base-codex-model"
+          type="text"
+          style="flex: 1"
+          aria-labelledby="knowledge-base-codex-model-label"
+        />
+        <button
+          id="knowledge-base-codex-test"
+          data-l10n-id="knowledge-base-pref-codex-test"
+        />
+      </hbox>
+      <description data-l10n-id="knowledge-base-pref-codex-help" />
+      <description
+        id="knowledge-base-codex-status"
+        role="status"
+        hidden="true"
+      />
+    </vbox>
+  </vbox>
 </vbox>

@@ -1,4 +1,10 @@
 import { config, version } from "../package.json";
+import {
+  initPaperReading,
+  stopPaperReading,
+  closePaperReadingTasks,
+  closePaperReadings,
+} from "./modules/paper-reading";
 import { getString, initLocale } from "./utils/locale";
 import { closeDB, initDB } from "./modules/db";
 import {
@@ -12,7 +18,7 @@ import {
   stopNativeMarkdown,
   closeNativeMarkdown,
 } from "./modules/native-markdown";
-import { rebuildCounts } from "./modules/zettel";
+import { rebuildCounts, ensureZettelKeys } from "./modules/zettel";
 import {
   initNoteSessions,
   stopNoteSessions,
@@ -36,6 +42,7 @@ import {
 } from "./modules/startup-errors";
 
 const windows = new Map<Window, Element[]>();
+const readingMenuListeners = new Map<Window, () => void>();
 let ready = false;
 let generation = 0;
 let startupPromise: Promise<void> | undefined;
@@ -77,6 +84,7 @@ async function start(token: number): Promise<void> {
     initLocale();
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
+      ["zettelKeys", () => ensureZettelKeys(() => token !== generation)],
       ["initAssets", initAssets],
       ["noteSessions", initNoteSessions],
       [
@@ -89,6 +97,7 @@ async function start(token: number): Promise<void> {
       ["registerItemPaneUI", registerItemPaneUI],
       ["nativeMarkdown", initNativeMarkdown],
       ["registerPreferences", registerPreferences],
+      ["paperReading", initPaperReading],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -184,6 +193,51 @@ async function onMainWindowLoad(win: Window): Promise<void> {
             : undefined,
       });
     });
+    addMenu(
+      "zotero-itemmenu",
+      "itemmenu-read-paper",
+      "codex-read-paper",
+      () => {
+        const pane = (
+          win as Window & {
+            ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
+          }
+        ).ZoteroPane;
+        const selected = pane.getSelectedItems();
+        if (selected.length !== 1) return;
+        const item = selected[0];
+        const source = item.isRegularItem() ? item : item.parentItem;
+        if (source && source.isRegularItem() && !source.isInTrash())
+          addon.api.openPaperReading(source.key, source.libraryID, win);
+      },
+    );
+    const popup = doc.getElementById("zotero-itemmenu")!;
+    const updateReadingMenu = () => {
+      const pane = (
+        win as Window & {
+          ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
+        }
+      ).ZoteroPane;
+      const selected = pane.getSelectedItems();
+      const item = selected.length === 1 ? selected[0] : undefined;
+      const source = item?.isRegularItem() ? item : item?.parentItem;
+      doc
+        .getElementById(`${config.addonRef}-itemmenu-read-paper`)
+        ?.toggleAttribute(
+          "hidden",
+          !addon.api.isCodexEnabled() ||
+            !source ||
+            !source.isRegularItem() ||
+            source.isInTrash(),
+        );
+    };
+    doc
+      .getElementById(`${config.addonRef}-itemmenu-read-paper`)!
+      .setAttribute("hidden", "true");
+    popup.addEventListener("popupshowing", updateReadingMenu);
+    readingMenuListeners.set(win, () =>
+      popup.removeEventListener("popupshowing", updateReadingMenu),
+    );
   } catch (error) {
     await onMainWindowUnload(win);
     throw error;
@@ -191,6 +245,9 @@ async function onMainWindowLoad(win: Window): Promise<void> {
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
+  closePaperReadings(win);
+  readingMenuListeners.get(win)?.();
+  readingMenuListeners.delete(win);
   closeWorkbenches(win);
   for (const node of windows.get(win) ?? []) node.remove();
   windows.delete(win);
@@ -218,6 +275,7 @@ async function releaseResources(): Promise<void> {
     },
     unregisterItemPaneUI,
     unregisterPreferences,
+    closePaperReadingTasks,
     closeNativeMarkdown,
     closeNativeNotes,
     closeNoteSessions,
@@ -237,6 +295,7 @@ async function releaseResources(): Promise<void> {
 }
 
 function onAppShutdown(): void {
+  stopPaperReading();
   stopWorkbenches();
   // Start pending draft writes before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {

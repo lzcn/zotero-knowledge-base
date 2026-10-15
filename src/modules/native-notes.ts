@@ -30,6 +30,7 @@ import {
   deleteZettel,
   saveEditorCard,
   refreshItemCount,
+  refreshAnnotationCount,
   type SaveCardInput,
   resolveUnresolvedLinks,
 } from "./zettel";
@@ -650,6 +651,7 @@ export function auditNativeNotes(): Promise<void> {
     while (auditRequested && !stopping) {
       auditRequested = false;
       const changed: string[] = [];
+      const itemKeys = new Set<string>();
       const rows = await getAll<NoteMapping>("SELECT * FROM card_notes");
       for (let index = 0; index < rows.length && !stopping; index++) {
         const row = rows[index];
@@ -682,6 +684,10 @@ export function auditNativeNotes(): Promise<void> {
             await exec("DELETE FROM unavailable_notes WHERE card_id = ?", [
               row.card_id,
             ]);
+          const card = await getZettel(row.card_id);
+          if (card?.item_key) itemKeys.add(card.item_key);
+          await refreshItemCount(card?.item_key ?? null);
+          await refreshAnnotationCount(card?.annotation_key ?? null);
           changed.push(row.card_id);
         }
         if (!state && note && !activeNotes.has(note.id))
@@ -689,7 +695,11 @@ export function auditNativeNotes(): Promise<void> {
         if (index % 20 === 19) await Zotero.Promise.delay(0);
       }
       if (changed.length && !stopping)
-        notifyDataChange({ cardIDs: changed, fields: ["availability"] });
+        notifyDataChange({
+          cardIDs: changed,
+          itemKeys: [...itemKeys],
+          fields: ["availability"],
+        });
     }
   })().finally(() => {
     auditing = undefined;
@@ -1402,21 +1412,23 @@ export async function closeNativeNotes(): Promise<void> {
   targetLabels.clear();
 }
 
-export async function trashNativeNote(id: string): Promise<void> {
+export async function trashNativeNote(id: string): Promise<boolean> {
   const row = await getOne<NoteMapping>(
     "SELECT * FROM card_notes WHERE card_id = ?",
     [id],
   );
-  if (!row) return;
+  if (!row) return false;
   const note = await Zotero.Items.getByLibraryAndKeyAsync(
     row.library_id,
     row.note_key,
   );
-  if (!row.external && note && !note.deleted) {
+  if (note && note.isNote() && !note.deleted) {
     note.deleted = true;
     await note.saveTx();
   }
-  await exec("DELETE FROM card_notes WHERE card_id = ?", [id]);
+  // Retain the original mapping and relationships for native Zotero restoration.
+  await auditNativeNotes();
+  return true;
 }
 
 /** Native images have attachment keys, so previews resolve them through Zotero. */

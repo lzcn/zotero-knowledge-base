@@ -22,6 +22,7 @@ await writeFile(
     "preferences",
     "document-merge",
     "note-tags",
+    "note-sort",
   ]
     .map(
       (name) =>
@@ -61,6 +62,7 @@ const {
   native_markdown_toolbar,
   native_reading_view,
   preferences,
+  note_sort,
   graph_layout,
   graph_canvas,
   platform,
@@ -955,6 +957,8 @@ const prefsDOM = new JSDOM(
   { contentType: "application/xhtml+xml", runScripts: "outside-only" },
 );
 const prefsWin = prefsDOM.window;
+let codexEnabled = false;
+let codexChanges = 0;
 prefsWin.document.createXULElement = (tag) =>
   prefsWin.document.createElementNS(
     "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
@@ -968,6 +972,12 @@ prefsWin.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
       ...preferences,
+      getCodexSettings: () => ({ enabled: codexEnabled, path: "", model: "" }),
+      setCodexEnabled: (enabled) => {
+        codexEnabled = enabled;
+        codexChanges++;
+      },
+      setCodexSetting() {},
       getGraphTags: async () => ["Machine learning", "中文 标签"],
       getSourceStyles: async () => [{ id: "apa", title: "APA" }],
       getSourceStyle: () => "apa",
@@ -985,6 +995,30 @@ await Promise.all([
 ]);
 const prefsCommand = (control) =>
   control.dispatchEvent(new prefsWin.Event("command", { bubbles: true }));
+const codexControl = prefsWin.document.getElementById(
+  "knowledge-base-codex-enabled",
+);
+const codexOptions = prefsWin.document.getElementById(
+  "knowledge-base-codex-options",
+);
+check("Codex reading starts disabled with its configuration hidden", () => {
+  assert.equal(codexControl.checked, false);
+  assert.equal(codexOptions.hidden, true);
+});
+codexControl.checked = true;
+prefsCommand(codexControl);
+assert.equal(codexEnabled, true);
+assert.equal(codexOptions.hidden, false);
+codexControl.checked = false;
+prefsCommand(codexControl);
+check(
+  "Native Codex switch persists once per click and hides configuration",
+  () => {
+    assert.equal(codexEnabled, false);
+    assert.equal(codexOptions.hidden, true);
+    assert.equal(codexChanges, 2);
+  },
+);
 const groupRows = () => [
   ...prefsWin.document.querySelectorAll(".graph-group-row"),
 ];
@@ -1144,6 +1178,8 @@ async function editor(args = {}, overrides = {}) {
       })),
     getBacklinks: async () => [],
     onDataChange: () => () => {},
+    isCodexEnabled: () => false,
+    onCodexEnabledChange: () => () => {},
     onNativeNoteChange: () => () => {},
     onSourceStyleChange: () => () => {},
     getSourceBibliography: async () =>
@@ -1310,8 +1346,8 @@ check(
 );
 cursorFixture.win.close();
 const ed = await editor({ prefillTitle: "New concept" });
-check("Connection categories stay visible for a note with no links", () => {
-  assert.equal(ed.$("knowledge-base-editor-relations").hidden, false);
+check("Empty connection categories leave the writing surface clear", () => {
+  assert.equal(ed.$("knowledge-base-editor-relations").hidden, true);
   assert.equal(
     ed.$("knowledge-base-editor-relations").querySelector("details"),
     null,
@@ -1322,10 +1358,23 @@ check("Connection categories stay visible for a note with no links", () => {
   assert.equal(buttons.length, 3);
   assert.ok(
     buttons.every(
-      (button) => button.disabled && button.textContent.endsWith("0"),
+      (button) =>
+        button.hidden && button.disabled && button.textContent.endsWith("0"),
     ),
   );
 });
+check(
+  "Minimal metadata stays available in More while empty source and parent rows stay hidden",
+  () => {
+    assert.equal(ed.$("knowledge-base-editor-toolbar").hidden, true);
+    assert.equal(
+      ed.$("knowledge-base-parent-display").parentElement.hidden,
+      true,
+    );
+    assert.ok(ed.$("knowledge-base-src-pick"));
+    assert.ok(ed.$("knowledge-base-parent-change"));
+  },
+);
 const relationEditor = await editor(
   { zettelId: "RELATION" },
   {
@@ -1371,7 +1420,6 @@ check(
       .$("knowledge-base-editor-backlinks")
       .querySelector("button")
       .click();
-    assert.equal(relationEditor.calls.open.at(-1).zettelId, "INCOMING");
     backlinks.click();
     assert.equal(backlinks.getAttribute("aria-expanded"), "false");
     assert.equal(
@@ -1379,6 +1427,10 @@ check(
       true,
     );
   },
+);
+await wait();
+check("Connection navigation waits for target availability", () =>
+  assert.equal(relationEditor.calls.open.at(-1).zettelId, "INCOMING"),
 );
 check(
   "More uses one consistent button style and closes after an action",
@@ -1514,6 +1566,10 @@ check(
   "A note in Trash keeps its card and cannot create a Markdown-based replacement",
   () => {
     assert.equal(restoredNativeAcquisitions, 0);
+    assert.equal(
+      restoredEditor.$("knowledge-base-editor-restore").hidden,
+      true,
+    );
     assert.equal(
       restoredEditor.$("knowledge-base-editor-save-copy").hidden,
       true,
@@ -3922,6 +3978,8 @@ let managerCards = [
 ];
 const managerCalls = { edits: [], graphs: [], deletes: [], opens: [] };
 let managerChanged;
+let managerSort = "updated-desc";
+let managerIssues = [];
 const labels = {
   "manager-new": "New card",
   "graph-title": "All cards graph",
@@ -3950,6 +4008,11 @@ managerWin.Zotero = {
       onSourceStyleChange: () => () => {},
       getSourceBibliography: async () =>
         '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
+      getNoteSort: () => managerSort,
+      setNoteSort: (value) => {
+        managerSort = value;
+      },
+      compareNoteSummaries: note_sort.compareNoteSummaries,
       getPanelWidth: () => 28,
       setPanelWidth: () => {},
       getNoteTags: async () => [],
@@ -3973,10 +4036,17 @@ managerWin.Zotero = {
       listEditorDrafts: async () => [],
       auditNativeNotes: async () => {},
       isAccelKey: (event) => platform.isAccelKey(event, true),
-      searchZettelSummaries: async (_query, { kind }) => ({
-        items: managerCards.filter(
-          (card) => !kind || (card.kind || "zettel") === kind,
-        ),
+      searchZettelSummaries: async (
+        _query,
+        { kind, cardIDs, sort = "updated-desc" },
+      ) => ({
+        items: managerCards
+          .filter(
+            (card) =>
+              (!kind || (card.kind || "zettel") === kind) &&
+              (!cardIDs || cardIDs.includes(card.id)),
+          )
+          .sort((a, b) => note_sort.compareNoteSummaries(a, b, sort)),
         cursor: null,
       }),
       listZettels: async (_query, _entries, kind) =>
@@ -3993,7 +4063,9 @@ managerWin.Zotero = {
       }),
       getOutgoing: async () => [],
       getBacklinks: async () => [],
-      getUnresolvedRefs: async () => [],
+      getUnresolvedRefs: async () => managerIssues,
+      getUnresolvedSources: async () => [managerCards[1]],
+      noteSnippet: markdown.noteSnippet,
       onDataChange: (listener) => {
         managerChanged = listener;
         return () => {};
@@ -4014,12 +4086,36 @@ managerWin.Zotero = {
 managerWin.eval(previewScript);
 managerWin.eval(
   (await readFile(path.join(ROOT, "addon/content/manager.js"), "utf8")) +
-    "\nwindow.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRows = () => zettels; window.__managerRenderHealth = renderHealth;",
+    "\nwindow.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRefreshChanged = refreshChanged; window.__managerRows = () => zettels; window.__managerRenderHealth = renderHealth;",
 );
 await managerWin.__managerLoad();
 await wait();
 await wait();
 const managerDoc = managerWin.document;
+const noteSortControl = managerDoc.getElementById("knowledge-base-sort");
+check("The note list shows its current persistent sort", () => {
+  assert.equal(noteSortControl.value, "updated-desc");
+  assert.equal(noteSortControl.options.length, 6);
+});
+noteSortControl.value = "title-asc";
+noteSortControl.dispatchEvent(new managerWin.Event("change"));
+await wait();
+await wait();
+check(
+  "Changing list sort preserves selection and saves the view preference",
+  () => {
+    assert.equal(managerSort, "title-asc");
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active").dataset.id,
+      managerCards[0].id,
+    );
+  },
+);
+noteSortControl.value = "updated-desc";
+noteSortControl.dispatchEvent(new managerWin.Event("change"));
+await wait();
+await wait();
+
 check("The workbench has no duplicate window-opening control", () => {
   assert.equal(managerDoc.getElementById("knowledge-base-open-window"), null);
 });
@@ -4170,6 +4266,77 @@ check("Native highlights and images leave only readable list summaries", () => {
   assert.ok(!summary.includes("data-annotation"));
   assert.ok(!summary.includes("IMAGE001"));
 });
+check(
+  "List summaries keep readable math variables and suppress long LaTeX source",
+  () => {
+    const text = markdown.noteSnippet(
+      '系统有 $n$ 个节点。\n\n$$\\sum_{i=1}^{N} x_i$$\n\n<span class="math">$\\mathcal{N}(\\mu,\\Sigma)$</span>。',
+      "",
+      "[公式]",
+    );
+    assert.ok(text.includes("n 个节点"));
+    assert.ok(text.includes("[公式]"));
+    assert.ok(
+      !text.includes("\\sum") &&
+        !text.includes("\\mathcal") &&
+        !text.includes("$"),
+    );
+    assert.equal(
+      markdown.noteSnippet(
+        "A **clear** [link](https://example.test) and [[id|label]].",
+      ),
+      "A clear link and label.",
+    );
+    assert.equal(
+      markdown.noteSnippet("See [[note-1-TESTKEY1]].", "", "[formula]", () => ({
+        id: "note-1-TESTKEY1",
+        title: "State-space Models",
+      })),
+      "See State-space Models.",
+    );
+  },
+);
+managerIssues = [
+  { ref: "note-1-MISSING1", count: 1, state: "unresolved", title: null },
+];
+await managerWin.__managerRefresh();
+check(
+  "Link diagnostics remain collapsed outside the editor and never create a replacement card",
+  () => {
+    const panel = managerDoc.getElementById("knowledge-base-unresolved");
+    assert.equal(panel.open, false);
+    assert.equal(panel.parentElement.id, "knowledge-base-root");
+    assert.ok(panel.querySelector("details > summary"));
+  },
+);
+const issueEditorCount = managerCalls.edits.length;
+managerWin.knowledgeBaseShowUnresolved("note-1-MISSING1");
+await wait();
+await wait();
+await wait();
+check(
+  "Opening a link issue reveals its referring notes without creating a card",
+  () => {
+    assert.equal(
+      managerDoc.getElementById("knowledge-base-unresolved").open,
+      true,
+    );
+    assert.ok(
+      managerDoc.querySelector(
+        "#knowledge-base-unresolved-list .relation-link",
+      ),
+    );
+    assert.equal(managerCalls.edits.length, issueEditorCount);
+  },
+);
+managerIssues = [];
+await managerWin.__managerRefresh();
+check("Resolved or removed link issues disappear automatically", () =>
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-unresolved").hidden,
+    true,
+  ),
+);
 // Save the real rendered fixture for browser visual inspection when requested.
 if (process.env.KNOWLEDGE_BASE_PREVIEW) {
   const css = await readFile(
@@ -4184,15 +4351,71 @@ if (process.env.KNOWLEDGE_BASE_PREVIEW) {
     `<html><head><meta charset="utf-8"><style>${css}\n:root{--bg:#f5f5f7;--fg:#1d1d1f;--accent:#007aff}body{margin:0}#knowledge-base-toolbar,#knowledge-base-list-pane{background:#f5f5f7}</style></head><body>${markup}</body></html>`,
   );
 }
-nativeClick(managerDoc.getElementById("knowledge-base-btn-delete"), managerWin);
+managerDoc.querySelector(".zettel-row.active").focus();
+managerDoc.activeElement.dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "Backspace",
+    metaKey: true,
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+managerDoc.activeElement.dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "Backspace",
+    metaKey: true,
+    repeat: true,
+    bubbles: true,
+  }),
+);
 await wait();
 await wait();
-check("Delete action removes the selected card and clears its details", () => {
-  assert.equal(managerCalls.deletes[0], "20261002011320");
-  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
-  assert.equal(managerDoc.getElementById("knowledge-base-detail").hidden, true);
-});
+check(
+  "Deleting a note selects its neighbor and keeps keyboard focus in the list",
+  () => {
+    assert.equal(managerCalls.deletes[0], "20261002011320");
+    assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active")?.dataset.id,
+      managerCards[0].id,
+    );
+    assert.equal(managerDoc.activeElement?.dataset.id, managerCards[0].id);
+  },
+);
+managerDoc.getElementById("knowledge-base-search").focus();
+managerDoc.getElementById("knowledge-base-search").dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "Backspace",
+    metaKey: true,
+    bubbles: true,
+  }),
+);
+managerDoc.getElementById("knowledge-base-list").dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "Delete",
+    metaKey: true,
+    isComposing: true,
+    bubbles: true,
+  }),
+);
+await wait();
+check("Delete shortcuts preserve text inputs and IME composition", () =>
+  assert.equal(managerCalls.deletes.length, 1),
+);
+managerDoc.getElementById("knowledge-base-list").dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "f",
+    metaKey: true,
+    bubbles: true,
+  }),
+);
+check("Command-F focuses the note search", () =>
+  assert.equal(managerDoc.activeElement.id, "knowledge-base-search"),
+);
 const kindFilter = managerDoc.getElementById("knowledge-base-kind");
+check("Note kind filtering does not expose Zotero Trash", () => {
+  assert.equal(kindFilter.querySelector('[value="deleted"]'), null);
+});
 kindFilter.value = "thinking";
 kindFilter.dispatchEvent(new managerWin.Event("change"));
 await wait();
@@ -4315,15 +4538,27 @@ paginationAPI.searchZettelSummaries = async (_query, options) => {
   assert.deepEqual(Array.from(options.cardIDs), ["VIRTUAL_1"]);
   return {
     items: [
-      { ...manyCards[1], title: "Updated single note", updated_at: Date.now() },
+      {
+        ...manyCards[1],
+        title: "Updated single note",
+        updated_at: Date.now(),
+      },
     ],
     cursor: null,
   };
 };
+const anchorID = managerDoc.querySelector(".zettel-row.active").dataset.id;
+const anchorOffset =
+  managerWin.__managerRows().findIndex((row) => row.id === anchorID) * 112 -
+  managerDoc.getElementById("knowledge-base-list-pane").scrollTop;
 const beforeChangeScroll = managerDoc.getElementById(
   "knowledge-base-list-pane",
 ).scrollTop;
-managerChanged({ all: false, fields: ["content"], cardIDs: ["VIRTUAL_1"] });
+managerChanged({
+  all: false,
+  fields: ["content"],
+  cardIDs: ["VIRTUAL_1"],
+});
 await wait();
 await wait();
 check(
@@ -4333,8 +4568,9 @@ check(
     assert.equal(managerWin.__managerRows().length, 1200);
     assert.equal(managerWin.__managerRows()[0].title, "Updated single note");
     assert.equal(
-      managerDoc.getElementById("knowledge-base-list-pane").scrollTop,
-      beforeChangeScroll,
+      managerWin.__managerRows().findIndex((row) => row.id === anchorID) * 112 -
+        managerDoc.getElementById("knowledge-base-list-pane").scrollTop,
+      anchorOffset,
     );
   },
 );
@@ -4360,6 +4596,39 @@ check(
     assert.ok(
       managerDoc.getElementById("knowledge-base-list-pane").scrollTop <
         beforeChangeScroll,
+    );
+  },
+);
+paginationAPI.searchZettelSummaries = async (_query, options) => {
+  const offset = Number(options.cursor || 0);
+  return {
+    items: manyCards.slice(offset, offset + 100),
+    cursor: offset + 100 < manyCards.length ? String(offset + 100) : null,
+  };
+};
+await managerWin.__managerRefresh();
+assert.equal(
+  managerDoc.getElementById("knowledge-base-list").getAttribute("aria-busy"),
+  "true",
+);
+await managerWin.__managerRefreshChanged(["VIRTUAL_1"], true);
+for (
+  let n = 0;
+  n < 100 &&
+  managerDoc.getElementById("knowledge-base-list").getAttribute("aria-busy") ===
+    "true";
+  n++
+)
+  await new Promise((resolve) => setTimeout(resolve, 10));
+check(
+  "Saving or deleting during pagination never truncates the note list",
+  () => {
+    assert.equal(managerWin.__managerRows().length, 1200);
+    assert.equal(
+      managerDoc
+        .getElementById("knowledge-base-list")
+        .getAttribute("aria-busy"),
+      "false",
     );
   },
 );

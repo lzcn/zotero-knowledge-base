@@ -1,3 +1,20 @@
+import { compareNoteSummaries } from "./note-sort";
+import {
+  getCodexSettings,
+  setCodexSetting,
+  testCodex,
+  isCodexEnabled,
+  setCodexEnabled,
+  onCodexEnabledChange,
+} from "./codex";
+import {
+  openPaperReading,
+  generatePaperReading,
+  applyPaperReading,
+  cancelPaperReading,
+  closePaperReading,
+  readingErrorMessage,
+} from "./paper-reading";
 import { isAccelKey } from "../ui/platform";
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
@@ -58,6 +75,7 @@ import {
   cardRefFromURL,
   nativeNoteRefFromURL,
   renderMarkdown,
+  noteSnippet,
 } from "./markdown";
 import { prepareCitations, getCitation, resolveCitation } from "./references";
 import {
@@ -79,6 +97,8 @@ import {
   getPanelWidth,
   setPanelWidth,
   onGraphOptionsChange,
+  getNoteSort,
+  setNoteSort,
   getWorkbenchMode,
   setWorkbenchMode,
   getTagInheritance,
@@ -100,6 +120,7 @@ import {
   getBacklinks,
   getOutgoing,
   getUnresolvedRefs,
+  getUnresolvedSources,
   getZettel,
   listByItem,
   listZettels,
@@ -146,6 +167,7 @@ export interface EditorArgs {
 }
 
 export interface ManagerArgs {
+  unresolvedRef?: string;
   editor?: EditorArgs;
   window?: boolean;
   embedded?: boolean;
@@ -167,6 +189,18 @@ function mainWindow(): Window {
 const editorWindows = new Map<string, Window>();
 
 export const api = {
+  openPaperReading,
+  generatePaperReading,
+  applyPaperReading,
+  cancelPaperReading,
+  closePaperReading,
+  readingErrorMessage,
+  getCodexSettings,
+  setCodexSetting,
+  testCodex,
+  isCodexEnabled,
+  setCodexEnabled,
+  onCodexEnabledChange,
   ensureLiteratureNote,
   getNoteHealth,
   getNoteTags,
@@ -199,6 +233,10 @@ export const api = {
         getCachedNoteTarget,
       ),
     );
+  },
+
+  noteSnippet(body: string, query = "", formula = "∑") {
+    return noteSnippet(body, query, formula, getCachedNoteTarget);
   },
 
   async prepareMarkdown(body: string): Promise<void> {
@@ -271,6 +309,9 @@ export const api = {
   onNativeNoteChange,
   mergeMarkdownDocuments,
   isAccelKey,
+  getNoteSort,
+  setNoteSort,
+  compareNoteSummaries,
   mountEditor,
   clearEditor,
   getViewArguments,
@@ -401,6 +442,7 @@ export const api = {
     options: Parameters<typeof searchZettels>[1] = {},
     references?: Map<string, string>,
   ) {
+    await getNoteLinkTargets();
     const page = await searchZettels(query, { ...options, summary: true });
     references ??= (await getNoteReferences()).byID;
     return {
@@ -446,8 +488,9 @@ export const api = {
     }));
   },
 
-  getUnresolvedRefs(): Promise<{ ref: string; count: number }[]> {
-    return getUnresolvedRefs();
+  getUnresolvedRefs,
+  async getUnresolvedSources(ref: string) {
+    return withNoteReferences(await getUnresolvedSources(ref));
   },
 
   saveZettel(input: Parameters<typeof saveZettel>[0]): Promise<string> {
@@ -455,8 +498,7 @@ export const api = {
   },
 
   async deleteZettel(id: string): Promise<void> {
-    await trashNativeNote(id);
-    await deleteZettel(id);
+    if (!(await trashNativeNote(id))) await deleteZettel(id);
   },
 
   /* ---------------- zotero integration ---------------- */
@@ -523,6 +565,8 @@ export const api = {
       existing.knowledgeBaseRefreshNotes?.();
       if (args.selectId)
         existing.ZoteroKnowledgeBase_selectZettel?.(args.selectId);
+      if (args.unresolvedRef)
+        existing.knowledgeBaseShowUnresolved?.(args.unresolvedRef);
       return;
     }
     mainWindow().openDialog(

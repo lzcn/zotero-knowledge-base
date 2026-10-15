@@ -46,8 +46,10 @@ export interface ResolvedLink extends ParsedLink {
  * If two cards are created within the same second, a numeric suffix
  * is appended: 20260909122345-2.
  */
-export function newZettelID(existing: Set<string>): string {
-  const base = formatTimestamp(new Date());
+export function newZettelID(existing: Set<string>, date = new Date()): string {
+  if (!Number.isFinite(date.getTime()))
+    throw new Error("Invalid note creation date");
+  const base = formatTimestamp(date);
   if (!existing.has(base)) return base;
   let n = 2;
   while (existing.has(`${base}-${n}`)) n++;
@@ -64,6 +66,44 @@ function formatTimestamp(d: Date): string {
 
 export function isZettelID(s: string): boolean {
   return /^\d{14}(-\d+)?$/.test(s);
+}
+
+/** Public timestamp keys leave native mappings, graph IDs and old links intact. */
+export async function ensureZettelKeys(
+  shouldStop = () => false,
+): Promise<void> {
+  const changed: string[] = [];
+  await transaction(async () => {
+    const rows = await getAll<{ id: string; created_at: number }>(
+      "SELECT id, created_at FROM zettels WHERE kind = 'zettel' AND custom_key IS NULL ORDER BY created_at, id",
+    );
+    const reserved = new Set(
+      (
+        await getAll<{ id: string }>(
+          "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys",
+        )
+      ).map((row) => row.id),
+    );
+    for (const row of rows) {
+      if (shouldStop()) break;
+      if (isZettelID(row.id)) continue;
+      const key = newZettelID(reserved, new Date(row.created_at));
+      reserved.add(key);
+      await exec("UPDATE zettels SET custom_key = ? WHERE id = ?", [
+        key,
+        row.id,
+      ]);
+      await exec("INSERT INTO note_keys(key, card_id) VALUES (?, ?)", [
+        key,
+        row.id,
+      ]);
+      changed.push(row.id);
+    }
+  });
+  if (changed.length) {
+    invalidateNoteReferences();
+    notifyDataChange({ cardIDs: changed, fields: ["identity"] });
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -269,7 +309,7 @@ export async function listByItem(
   libraryID?: number,
 ): Promise<Zettel[]> {
   const rows = await getAll<ZettelRow>(
-    `SELECT * FROM zettels WHERE item_key = ?${libraryID === undefined ? "" : " AND library_id = ?"} ORDER BY updated_at DESC`,
+    `SELECT * FROM zettels z WHERE item_key = ?${libraryID === undefined ? "" : " AND library_id = ?"} AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY updated_at DESC`,
     libraryID === undefined ? [itemKey] : [itemKey, libraryID],
   );
   return rows.map((r) => rowToZettel(r));
@@ -278,7 +318,7 @@ export async function listByItem(
 export async function listUnsourcedNotes(libraryID: number): Promise<Zettel[]> {
   const rows = await getAll<ZettelRow>(
     `SELECT z.* FROM zettels z JOIN card_notes n ON n.card_id = z.id
-     WHERE z.item_key IS NULL AND n.library_id = ? ORDER BY z.updated_at DESC`,
+     WHERE z.item_key IS NULL AND n.library_id = ? AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY z.updated_at DESC`,
     [libraryID],
   );
   return rows.map((row) => rowToZettel(row));
@@ -286,7 +326,7 @@ export async function listUnsourcedNotes(libraryID: number): Promise<Zettel[]> {
 
 export async function countByItem(itemKey: string): Promise<number> {
   const row = await getOne<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM zettels WHERE item_key = ?`,
+    `SELECT COUNT(*) AS n FROM zettels z WHERE item_key = ? AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)`,
     [itemKey],
   );
   return row?.n ?? 0;
@@ -316,8 +356,8 @@ export async function countByAnnotationKeys(
   if (!keys.length) return map;
   const placeholders = keys.map(() => "?").join(",");
   const rows = await getAll<{ annotation_key: string; n: number }>(
-    `SELECT annotation_key, COUNT(*) AS n FROM zettels
-     WHERE annotation_key IN (${placeholders})
+    `SELECT annotation_key, COUNT(*) AS n FROM zettels z
+     WHERE annotation_key IN (${placeholders}) AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)
      GROUP BY annotation_key`,
     keys,
   );
@@ -345,16 +385,16 @@ export async function rebuildCounts(shouldStop = () => false): Promise<void> {
   await resolveUnresolvedLinks(shouldStop);
   if (shouldStop()) return;
   const items = await getAll<{ item_key: string; n: number }>(
-    `SELECT item_key, COUNT(*) AS n FROM zettels
-     WHERE item_key IS NOT NULL GROUP BY item_key`,
+    `SELECT item_key, COUNT(*) AS n FROM zettels z
+     WHERE item_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) GROUP BY item_key`,
   );
   if (shouldStop()) return;
   itemCounts.clear();
   for (const r of items) itemCounts.set(r.item_key, r.n);
 
   const annotations = await getAll<{ annotation_key: string; n: number }>(
-    `SELECT annotation_key, COUNT(*) AS n FROM zettels
-     WHERE annotation_key IS NOT NULL GROUP BY annotation_key`,
+    `SELECT annotation_key, COUNT(*) AS n FROM zettels z
+     WHERE annotation_key IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) GROUP BY annotation_key`,
   );
   if (shouldStop()) return;
   annotationCounts.clear();
@@ -374,12 +414,12 @@ export async function refreshItemCount(itemKey: string | null): Promise<void> {
   itemCounts.set(itemKey, await countByItem(itemKey));
 }
 
-async function refreshAnnotationCount(
+export async function refreshAnnotationCount(
   annotationKey: string | null,
 ): Promise<void> {
   if (!annotationKey) return;
   const row = await getOne<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM zettels WHERE annotation_key = ?`,
+    `SELECT COUNT(*) AS n FROM zettels z WHERE annotation_key = ? AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)`,
     [annotationKey],
   );
   annotationCounts.set(annotationKey, row?.n ?? 0);
@@ -440,13 +480,15 @@ export async function saveEditorCard(
       throw new Error("CARD_CONFLICT");
     }
     const kind = input.kind ?? previous?.kind ?? "zettel";
-    const customKey =
+    let customKey =
       kind === "thinking"
         ? (input.customKey === undefined
             ? previous?.custom_key
             : input.customKey
           )?.trim() || null
-        : null;
+        : kind === "zettel" && previous?.kind === "zettel"
+          ? previous.custom_key
+          : null;
     if (customKey && (/[\s[\]|]/.test(customKey) || customKey.startsWith("@")))
       throw new Error("NOTE_KEY_INVALID");
     if (customKey) {
@@ -561,6 +603,20 @@ export async function saveEditorCard(
           now,
         ],
       );
+    }
+    if (kind === "zettel" && !isZettelID(id) && !customKey) {
+      const reserved = await getAll<{ id: string }>(
+        "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys",
+      );
+      customKey = newZettelID(
+        new Set(reserved.map((row) => row.id)),
+        new Date(previous?.created_at ?? now),
+      );
+      await exec("UPDATE zettels SET custom_key = ? WHERE id = ?", [
+        customKey,
+        id,
+      ]);
+      fields.add("identity");
     }
     if (customKey && customKey !== id)
       await exec(
@@ -788,13 +844,39 @@ export async function getBacklinks(id: string): Promise<Backlink[]> {
   }));
 }
 
-/** Zettels referenced by [[ref]] but not yet created (click → create). */
-export async function getUnresolvedRefs(): Promise<
-  { ref: string; count: number }[]
-> {
-  const rows = await getAll<{ ref: string; count: number }>(
-    `SELECT ref, COUNT(*) AS count FROM links
-     WHERE target_id IS NULL AND substr(ref, 1, 9) <> 'zotero://' GROUP BY ref ORDER BY count DESC, ref LIMIT 100`,
+export interface UnresolvedReference {
+  ref: string;
+  count: number;
+  title: string | null;
+  state: "unresolved" | "trashed";
+}
+
+/** Only active referring notes need attention; Trash targets retain their identity. */
+export async function getUnresolvedRefs(): Promise<UnresolvedReference[]> {
+  const rows = await getAll<UnresolvedReference>(
+    `SELECT l.ref, COUNT(DISTINCT l.source_id) AS count, t.title,
+       CASE WHEN u.state = 'trashed' THEN 'trashed' ELSE 'unresolved' END AS state
+     FROM links l JOIN zettels s ON s.id = l.source_id
+     LEFT JOIN zettels t ON t.id = l.target_id
+     LEFT JOIN unavailable_notes u ON u.card_id = t.id
+     WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes su WHERE su.card_id = s.id)
+       AND ((t.id IS NULL AND substr(l.ref, 1, 9) <> 'zotero://') OR u.state = 'trashed')
+     GROUP BY l.ref ORDER BY count DESC, l.ref LIMIT 100`,
   );
-  return rows.map((r) => ({ ref: r.ref, count: r.count }));
+  return rows.map((r) => ({
+    ref: r.ref,
+    count: r.count,
+    title: r.title,
+    state: r.state,
+  }));
+}
+
+export async function getUnresolvedSources(ref: string): Promise<Zettel[]> {
+  const rows = await getAll<ZettelRow>(
+    `SELECT z.* FROM links l JOIN zettels z ON z.id = l.source_id
+     WHERE l.ref = ? AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)
+     ORDER BY z.title_folded, z.id`,
+    [ref],
+  );
+  return rows.map((row) => rowToZettel(row));
 }

@@ -43,9 +43,12 @@ manager-outgoing = Linked notes
 manager-backlinks = Backlinks
 manager-preview = Preview
 manager-edit = Edit
-manager-delete = Delete
-manager-unresolved = Missing cards
-manager-unresolved-tip = Click to create a card
+manager-delete = Move to Zotero Trash
+manager-unresolved = Unavailable links
+manager-unresolved-tip = Open the referring note to fix this link
+manager-link-trashed = In Zotero Trash. Restoring the original reconnects this link.
+manager-unavailable-note = Note ({ $key })
+manager-formula = [formula]
 manager-untitled = Untitled
 manager-source = Source
 manager-source-open = Open this item in Zotero
@@ -56,7 +59,7 @@ manager-count =
        *[other] { $count } notes
     }
 manager-updated = Updated
-manager-confirm-delete = Delete "{ $title }"? Links to this note will remain but will no longer open it.
+manager-confirm-delete = Move “{ $title }” to Zotero Trash? Restore it in Zotero to show it in Knowledge Base again.
 
 editor-title-new = New Note
 editor-title-edit = Edit Note
@@ -252,7 +255,6 @@ note-kind-zettel = Zettel
 note-kind-thinking = Thinking Note
 literature-source-required = Choose a literature item as the source.
 literature-exists = This item already has a Literature Note. Open it from the item pane.
-manager-confirm-remove = Remove “{ $title }” from Knowledge Base? The original Zotero note will be kept.
 
 relations-hierarchy = Hierarchy
 panel-resize = Resize panel
@@ -303,7 +305,6 @@ editor-key-invalid = Use a key without spaces, brackets, | or a leading @.
 
 editor-key-exists = This key belongs to another note.
 
-manager-deleted-notes = In Zotero Trash
 
 pref-tags-heading = Note tags
 pref-inherit-tags =
@@ -323,3 +324,52 @@ graph-group-remove = Remove group
 graph-global = Global Graph
 graph-local = Local Graph
 pref-graph-local-depth = Local graph hops
+
+manager-sort = Sort notes
+manager-sort-updated-desc = Recently modified
+manager-sort-updated-asc = Oldest modified
+manager-sort-created-desc = Recently created
+manager-sort-created-asc = Oldest created
+manager-sort-title-asc = Title: A to Z
+manager-sort-title-desc = Title: Z to A
+
+pref-codex-heading = Paper Reading with Codex
+pref-codex-enabled = Enable paper reading with Codex
+    .label = Enable paper reading with Codex
+pref-codex-path = Executable path
+pref-codex-model = Model
+pref-codex-test = Test Connection
+pref-codex-help = Install and sign in to a recent Codex CLI first. Leave the path blank for detection and the model blank for the CLI default. Each reading sends the selected PDF's extracted text to Codex using your account. User CLI tools and MCP configuration are not loaded.
+codex-read-paper = Read with Codex
+codex-reading-help = Sends this paper's PDF text to your signed-in Codex. Review and edit the draft before saving. Closing discards this unsaved reading draft.
+codex-extracting = Reading the local PDF…
+codex-reading = Codex is reading the paper…
+codex-checking = Checking Codex…
+codex-ready = Draft ready · { $pages } PDF pages. Text extraction can omit figures and mathematical glyphs.
+codex-ready-partial = Partial draft · { $pages } of { $total } PDF pages. Review the reading limitations.
+codex-partial-note = Partial reading: this draft uses the first { $pages } of { $total } PDF pages.
+codex-preserve-existing = Saving appends this draft and preserves your existing content.
+codex-draft = Literature Note draft
+codex-preview = Reading View
+codex-edit = Edit Markdown
+codex-cancel = Cancel
+codex-close = Close
+codex-save-note = Save Literature Note
+codex-append-note = Append to Literature Note
+codex-saving = Saving Literature Note…
+codex-not-found = Codex CLI was not found. Set its executable path in Settings → Knowledge Base.
+codex-path-invalid = Use an existing absolute Codex executable path in Settings → Knowledge Base.
+codex-settings-invalid = The Codex setting contains invalid characters.
+codex-cancelled = Reading cancelled. Your existing notes were preserved.
+codex-disabled = Paper reading with Codex is disabled.
+codex-timeout = Codex timed out. Your existing notes were preserved. Try again later.
+codex-failed = Codex could not finish. Use Test Connection in Settings → Knowledge Base; check CLI sign-in, network access, model availability and CLI updates.
+codex-output-invalid = Codex returned an invalid draft or page reference. Your existing notes were preserved.
+codex-source-unavailable = The source paper or PDF was removed. Restore it in Zotero before saving.
+codex-read-only = This library is read-only. Literature Notes cannot be saved here.
+codex-note-unavailable = The Literature Note is unavailable. Restore the original in Zotero before reading again.
+codex-note-changed = The Literature Note changed during reading. This draft was not saved. Copy the draft before closing, then reopen and generate again.
+codex-pdf-missing = No local PDF is available. Download or attach a PDF to this paper first.
+codex-pdf-empty = The PDF has too little readable text. Run OCR or attach a text-based PDF first.
+codex-pdf-unreadable = Zotero could not extract PDF text. Check whether the PDF is damaged or password-protected.
+codex-pdf-too-large = This PDF exceeds the reading limit. Attach a shorter paper PDF first.

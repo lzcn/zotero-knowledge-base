@@ -14,6 +14,7 @@
   --source: #268572;
   --danger: #bc404b;
   --graph-link: #929daa;
+  --note-row-height: 112px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -592,7 +593,7 @@ html|button[disabled] {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  margin: 0 24px;
+  margin: 0 20px;
 }
 #knowledge-base-editor-workspace #knowledge-base-editor-body {
   width: 100%;
@@ -1358,9 +1359,10 @@ summary {
 }
 #knowledge-base-list .zettel-row {
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 5px;
-  margin: 2px 0;
-  padding: 11px 12px;
+  grid-template-rows: 36px 30px 18px;
+  gap: 4px 8px;
+  margin: 0;
+  padding: 10px 12px;
   border: 0;
   border-left: 2px solid transparent;
   border-radius: 3px;
@@ -1777,8 +1779,8 @@ summary {
   grid-column: 1 / -1;
   grid-row: 2;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 11.5px;
+  line-height: 15px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1858,8 +1860,36 @@ summary {
 }
 #knowledge-base-unresolved {
   flex-shrink: 0;
-  max-height: 100px;
+  max-height: min(240px, 30vh);
   overflow-y: auto;
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  background: var(--bg);
+}
+#knowledge-base-unresolved > summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+#knowledge-base-unresolved-list {
+  margin-top: 8px;
+}
+#knowledge-base-unresolved-list > li {
+  padding: 6px 0;
+  cursor: default;
+}
+#knowledge-base-unresolved-list > li:hover {
+  background: transparent;
+}
+#knowledge-base-unresolved-list details > summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+#knowledge-base-unresolved-list details > .muted {
+  display: block;
+  margin: 6px 0;
+  font-size: 11px;
 }
 .kb-native-tool:not([disabled]):hover {
   color: var(--accent);
@@ -2102,7 +2132,7 @@ summary {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 6px 24px;
+  padding: 4px 20px;
   margin: 0;
   min-height: 20px;
 }
@@ -2111,8 +2141,8 @@ summary {
   min-width: 0;
   overflow-wrap: anywhere;
   color: var(--fg);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .bibliography-reference .csl-bib-body,
 .bibliography-reference .csl-entry {
@@ -2193,9 +2223,22 @@ summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 24px;
+  padding: 6px 20px;
   color: var(--muted);
   font-size: 12px;
+}
+.note-identity-row .note-reference {
+  min-width: 0;
+  max-width: min(70%, 480px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#knowledge-base-editor-toolbar .bibliography-reference {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .editor-more {
   position: relative;
@@ -2346,7 +2389,7 @@ summary {
 }
 #knowledge-base-editor-relations {
   flex: 0 0 auto;
-  margin: 0 24px;
+  margin: 0 20px;
   padding: 8px 0;
   max-height: none;
   overflow: hidden;
@@ -2401,8 +2444,8 @@ summary {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  margin: 0 24px;
-  padding: 0 0 10px;
+  margin: 0 20px;
+  padding: 0 0 6px;
 }
 #knowledge-base-parent-label {
   color: var(--muted);
@@ -2487,7 +2530,7 @@ summary {
 
 /* Keep row geometry stable while recycling the visible list window. */
 #knowledge-base-list .zettel-row {
-  height: 126px;
+  height: var(--note-row-height);
   box-sizing: border-box;
   overflow: hidden;
 }
@@ -2496,6 +2539,7 @@ summary {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  align-self: start;
 }
 #knowledge-base-list .list-spacer {
   padding: 0;
@@ -2563,4 +2607,22 @@ summary {
 #graph-svg[data-renderer="webgl2"] .graph-node *,
 #graph-svg[data-renderer="webgl2"] .graph-edge {
   pointer-events: none !important;
+}
+
+/* Native list controls remain available while the virtual list scrolls. */
+#knowledge-base-list-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 34px;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--border);
+}
+#knowledge-base-sort {
+  width: 100%;
+  height: 26px;
+  font: inherit;
+  color: CanvasText;
 }

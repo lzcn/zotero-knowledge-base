@@ -9,12 +9,14 @@ let listVersion = 0;
 let nextCursor = null;
 let pageTimer = null;
 let renderTimer = null;
-const ROW_HEIGHT = 126;
+const ROW_HEIGHT = 112;
+let unresolvedVersion = 0;
 const rowIndices = new Map();
 let listScope = "";
 let listReferences;
 let navigationVersion = 0;
 let managerLoaded = false;
+let deleting = false;
 const history = [];
 let historyIndex = -1;
 const scrollPositions = new Map();
@@ -43,7 +45,9 @@ function updateActions() {
     "knowledge-base-btn-local-graph",
     "knowledge-base-btn-delete",
   ])
-    document.getElementById(id).toggleAttribute("disabled", !selectedId);
+    document
+      .getElementById(id)
+      .toggleAttribute("disabled", !selectedId || deleting);
 }
 
 function showError(error) {
@@ -80,6 +84,7 @@ const load = wrap(async function () {
       { get: (_, key) => window.Zotero.ZoteroKnowledgeBase.api[key] },
     )
   );
+  $("knowledge-base-sort").value = api.getNoteSort();
   applyLocale();
   if (args.embedded) {
     document.getElementById("knowledge-base-root").classList.add("workbench");
@@ -102,11 +107,14 @@ const load = wrap(async function () {
       ? args.selectId
       : null;
   managerLoaded = true;
-  if (args.embedded && args.editor) {
-    await showInlineEditor(args.editor);
-    if (args.editor.zettelId) select(args.editor.zettelId, true, true);
+  const initialEditor = args.editor;
+  if (args.embedded && initialEditor) {
+    if ((await showInlineEditor(initialEditor)) && initialEditor.zettelId)
+      select(initialEditor.zettelId, true, true);
   } else if (wanted) select(wanted);
   else if (zettels.length) select(zettels[0].id);
+  if (args.unresolvedRef)
+    window.knowledgeBaseShowUnresolved(args.unresolvedRef);
   let changeRefresh = Promise.resolve();
   const unsubscribe = api.onDataChange(
     (change) =>
@@ -123,15 +131,14 @@ const load = wrap(async function () {
               !all &&
               change.cardIDs.length &&
               change.cardIDs.length <= 500 &&
-              !change.fields.includes("hierarchy") &&
-              !change.fields.includes("source") &&
               $("knowledge-base-list").getAttribute("aria-busy") === "false" &&
               listScope === currentScope()
             )
               await refreshChanged(
                 change.cardIDs,
                 change.fields.includes("identity") ||
-                  change.fields.includes("availability"),
+                  change.fields.includes("availability") ||
+                  change.fields.includes("source"),
               );
             else await refresh();
           }
@@ -195,16 +202,18 @@ window.ZoteroKnowledgeBase_editNote = function (options) {
 };
 
 function applyLocale() {
+  $("knowledge-base-sort").setAttribute("aria-label", api.loc("manager-sort"));
+  for (const option of /** @type {HTMLOptionElement[]} */ (
+    Array.from($("knowledge-base-sort").options)
+  ))
+    option.textContent = api.loc("manager-sort-" + option.value);
+
   $("knowledge-base-kind").setAttribute("aria-label", api.loc("note-kind"));
   for (const option of /** @type {HTMLOptionElement[]} */ (
     Array.from($("knowledge-base-kind").options)
   ))
     option.textContent = api.loc(
-      option.value === "deleted"
-        ? "manager-deleted-notes"
-        : option.value
-          ? "note-kind-" + option.value
-          : "note-kind-all",
+      option.value ? "note-kind-" + option.value : "note-kind-all",
     );
   for (const [id, key] of [
     ["knowledge-base-back", "manager-back"],
@@ -271,7 +280,51 @@ function bindEvents() {
     $("knowledge-base-detail").hidden = true;
     $("knowledge-base-detail-empty").hidden = false;
   });
+  $("knowledge-base-sort").addEventListener("change", () => {
+    api.setNoteSort($("knowledge-base-sort").value);
+    safeCall(refresh, true);
+  });
   window.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.isComposing) return;
+    const target = /** @type {HTMLElement} */ (
+      event.target instanceof window.Element
+        ? event.target
+        : document.activeElement
+    );
+    const listFocused = $("knowledge-base-list").contains(target);
+    const editable = target.closest?.(
+      'input, textarea, select, [contenteditable="true"], browser',
+    );
+    if (
+      !editable &&
+      !event.repeat &&
+      !event.altKey &&
+      !event.shiftKey &&
+      ((api.isAccelKey(event) && ["Backspace", "Delete"].includes(event.key)) ||
+        (listFocused &&
+          event.key === "Delete" &&
+          !event.metaKey &&
+          !event.ctrlKey))
+    ) {
+      if (selectedId) {
+        event.preventDefault();
+        safeCall(removeZettel, selectedId);
+      }
+      return;
+    }
+    if (api.isAccelKey(event) && !event.altKey && !event.shiftKey) {
+      if (event.key.toLowerCase() === "f") {
+        event.preventDefault();
+        $("knowledge-base-search").focus();
+        $("knowledge-base-search").select();
+        return;
+      }
+      if (event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        newZettel();
+        return;
+      }
+    }
     if (
       !event.defaultPrevented &&
       api.isAccelKey(event) &&
@@ -421,10 +474,17 @@ function currentScope() {
     $("knowledge-base-search").value,
     $("knowledge-base-kind").value,
     $("knowledge-base-entries").checked,
+    $("knowledge-base-sort").value,
   ]);
 }
 
 async function refreshChanged(cardIDs, referencesChanged) {
+  if (
+    $("knowledge-base-list").getAttribute("aria-busy") !== "false" ||
+    listScope !== currentScope()
+  )
+    return refresh();
+  const position = captureListPosition();
   const version = ++listVersion;
   const query = $("knowledge-base-search").value || "";
   const page = await api.searchZettelSummaries(
@@ -434,12 +494,12 @@ async function refreshChanged(cardIDs, referencesChanged) {
       limit: 500,
       entriesOnly: $("knowledge-base-entries").checked,
       kind: /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
-        $("knowledge-base-kind").value === "deleted"
-          ? undefined
-          : $("knowledge-base-kind").value || undefined
+        $("knowledge-base-kind").value || undefined
       ),
-      availability:
-        $("knowledge-base-kind").value === "deleted" ? "deleted" : "active",
+      availability: "active",
+      sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
+        $("knowledge-base-sort").value
+      ),
     },
     referencesChanged ? undefined : listReferences,
   );
@@ -452,17 +512,21 @@ async function refreshChanged(cardIDs, referencesChanged) {
       page.items.map((row) => ({
         ...row,
         body: "",
-        snippet: summarize(row.body, query),
+        snippet: api.noteSnippet(row.body, query, api.loc("manager-formula")),
       })),
     );
-  zettels.sort(
-    (a, b) =>
-      (a.searchRank || 0) - (b.searchRank || 0) ||
-      b.updated_at - a.updated_at ||
-      (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+  zettels.sort((a, b) =>
+    api.compareNoteSummaries(
+      a,
+      b,
+      /** @type {import("../../src/modules/note-sort").NoteSort} */ (
+        $("knowledge-base-sort").value
+      ),
+    ),
   );
   rowIndices.clear();
   zettels.forEach((row, index) => rowIndices.set(row.id, index));
+  restoreListPosition(position);
   renderList();
   $("knowledge-base-stats").textContent = api.loc("manager-count", {
     count: zettels.length,
@@ -476,7 +540,8 @@ async function refreshChanged(cardIDs, referencesChanged) {
   await refreshUnresolved();
 }
 
-const refresh = wrap(async function () {
+const refresh = wrap(async function (preserve = listScope === currentScope()) {
+  const position = preserve ? captureListPosition() : null;
   invalidatePages();
   const version = listVersion;
   listScope = currentScope();
@@ -484,21 +549,21 @@ const refresh = wrap(async function () {
   const options = {
     entriesOnly: $("knowledge-base-entries").checked,
     kind: /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
-      $("knowledge-base-kind").value === "deleted"
-        ? undefined
-        : $("knowledge-base-kind").value || undefined
+      $("knowledge-base-kind").value || undefined
     ),
-    availability:
-      $("knowledge-base-kind").value === "deleted" ? "deleted" : "active",
+    availability: "active",
+    sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
+      $("knowledge-base-sort").value
+    ),
     limit: 100,
   };
   const query = $("knowledge-base-search").value || "";
   $("knowledge-base-list").setAttribute("aria-busy", "true");
-  await loadPage(version, query, options, false);
+  await loadPage(version, query, options, false, position);
   if (version === listVersion) await refreshUnresolved();
 });
 
-async function loadPage(version, query, options, append) {
+async function loadPage(version, query, options, append, position = null) {
   try {
     const page = await api.searchZettelSummaries(
       query,
@@ -513,7 +578,7 @@ async function loadPage(version, query, options, append) {
     const rows = page.items.map((row) => ({
       ...row,
       body: "",
-      snippet: summarize(row.body, query),
+      snippet: api.noteSnippet(row.body, query, api.loc("manager-formula")),
     }));
     if (!append) {
       zettels = [];
@@ -528,7 +593,8 @@ async function loadPage(version, query, options, append) {
       }
     }
     nextCursor = page.cursor;
-    if (!append) $("knowledge-base-list-pane").scrollTop = 0;
+    if (!append && !position) $("knowledge-base-list-pane").scrollTop = 0;
+    if (position) restoreListPosition(position);
     renderList();
     $("knowledge-base-stats").textContent = api.loc("manager-count", {
       count: zettels.length,
@@ -537,7 +603,7 @@ async function loadPage(version, query, options, append) {
     if (nextCursor) {
       pageTimer = setTimeout(() => {
         pageTimer = null;
-        safeCall(loadPage, version, query, options, true);
+        safeCall(loadPage, version, query, options, true, position);
       }, 16);
     } else if (selectedId && !zettels.some((row) => row.id === selectedId)) {
       selectedId = null;
@@ -552,33 +618,6 @@ async function loadPage(version, query, options, append) {
   }
 }
 
-function summarize(body, query) {
-  const summary = new window.DOMParser().parseFromString(
-    body || "",
-    "text/html",
-  );
-  for (const node of summary.querySelectorAll("script, style"))
-    node.parentNode?.removeChild(node);
-  const plain = (summary.body.textContent || "")
-    .replace(
-      /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
-      (_match, id, alias) => alias || `[[${id}]]`,
-    )
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/[#*`>_$]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  const match = query
-    ? plain.toLocaleLowerCase().indexOf(query.toLocaleLowerCase())
-    : 0;
-  const start = Math.max(0, match - 30);
-  return (
-    (start ? "…" : "") +
-    plain.slice(start, start + 110) +
-    (plain.length > start + 110 ? "…" : "")
-  );
-}
-
 function scheduleListRender() {
   if (renderTimer !== null) return;
   renderTimer = setTimeout(() => {
@@ -587,13 +626,44 @@ function scheduleListRender() {
   }, 16);
 }
 
+function listHeaderHeight() {
+  return $("knowledge-base-sort").parentElement.offsetHeight || 34;
+}
+function captureListPosition() {
+  const pane = $("knowledge-base-list-pane");
+  const first = Math.max(
+    0,
+    Math.floor((pane.scrollTop - listHeaderHeight()) / ROW_HEIGHT),
+  );
+  const selected = rowIndices.get(selectedId);
+  const index =
+    selected !== undefined &&
+    selected >= first &&
+    selected * ROW_HEIGHT < pane.scrollTop + (pane.clientHeight || 600)
+      ? selected
+      : first;
+  return {
+    id: zettels[index]?.id,
+    offset: index * ROW_HEIGHT - pane.scrollTop,
+    scroll: pane.scrollTop,
+  };
+}
+function restoreListPosition(position) {
+  const index = rowIndices.get(position.id);
+  $("knowledge-base-list-pane").scrollTop =
+    index === undefined
+      ? position.scroll
+      : Math.max(0, index * ROW_HEIGHT - position.offset);
+}
+
 function revealRow(id) {
   const index = zettels.findIndex((row) => row.id === id);
   if (index < 0) return;
   const pane = $("knowledge-base-list-pane");
-  const top = index * ROW_HEIGHT;
+  const top = index * ROW_HEIGHT + listHeaderHeight();
   const height = pane.clientHeight || 600;
-  if (top < pane.scrollTop) pane.scrollTop = top;
+  if (top < pane.scrollTop + listHeaderHeight())
+    pane.scrollTop = top - listHeaderHeight();
   else if (top + ROW_HEIGHT > pane.scrollTop + height)
     pane.scrollTop = top + ROW_HEIGHT - height;
   renderList();
@@ -612,10 +682,16 @@ function renderList() {
     ?.id;
   const maxScroll = Math.max(
     0,
-    zettels.length * ROW_HEIGHT - (pane.clientHeight || 600) + 8,
+    listHeaderHeight() +
+      zettels.length * ROW_HEIGHT -
+      (pane.clientHeight || 600) +
+      8,
   );
   if (pane.scrollTop > maxScroll) pane.scrollTop = maxScroll;
-  const start = Math.max(0, Math.floor(pane.scrollTop / ROW_HEIGHT) - 4);
+  const start = Math.max(
+    0,
+    Math.floor((pane.scrollTop - listHeaderHeight()) / ROW_HEIGHT) - 4,
+  );
   const end = Math.min(
     zettels.length,
     start + Math.ceil((pane.clientHeight || 600) / ROW_HEIGHT) + 8,
@@ -634,7 +710,7 @@ function renderList() {
     const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
     li.className = "zettel-row" + (z.id === selectedId ? " active" : "");
     li.dataset.id = z.id;
-    li.tabIndex = 0;
+    li.tabIndex = z.id === selectedId ? 0 : -1;
     li.setAttribute("role", "option");
     li.setAttribute("aria-posinset", String(start + offset + 1));
     li.setAttribute("aria-setsize", String(zettels.length));
@@ -670,7 +746,12 @@ function renderList() {
     badges.className = "badges";
     badges.title = `${api.loc("manager-outgoing")} ${z.outgoing} · ${api.loc("manager-backlinks")} ${z.incoming}`;
     badges.setAttribute("aria-label", badges.title);
-    badges.textContent = `↗ ${z.outgoing} · ↙ ${z.incoming}`;
+    badges.textContent = [
+      z.outgoing ? `↗ ${z.outgoing}` : "",
+      z.incoming ? `↙ ${z.incoming}` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
     li.appendChild(badges);
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
@@ -694,18 +775,104 @@ function safeCall(fn, ...args) {
 }
 
 const refreshUnresolved = wrap(async function () {
+  const version = ++unresolvedVersion;
   const refs = await api.getUnresolvedRefs();
+  if (version !== unresolvedVersion || window.closed) return;
   const box = $("knowledge-base-unresolved");
   const ul = $("knowledge-base-unresolved-list");
+  const expanded = new Set(
+    /** @type {HTMLDetailsElement[]} */ (
+      Array.from(ul.querySelectorAll("details[open]"))
+    ).map((node) => node.dataset.ref),
+  );
   ul.textContent = "";
   box.hidden = refs.length === 0;
-  for (const r of refs.slice(0, 20)) {
+  $("knowledge-base-unresolved-head").textContent =
+    `${api.loc("manager-unresolved")} · ${refs.length}`;
+  for (const r of refs) {
     const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
-    li.textContent = `${r.ref} (${r.count})`;
-    li.addEventListener("click", () => newZettel(r.ref));
+    const details = /** @type {HTMLDetailsElement} */ (
+      document.createElementNS("http://www.w3.org/1999/xhtml", "details")
+    );
+    details.dataset.ref = r.ref;
+    const summary = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "summary",
+    );
+    const nativeKey = /^note-\d+-([A-Z0-9]{8})$/.exec(r.ref)?.[1];
+    summary.textContent = `${r.title || (nativeKey ? api.loc("manager-unavailable-note", { key: nativeKey }) : r.ref)} · ${r.count}`;
+    summary.title = r.ref;
+    const status = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    status.className = "muted";
+    status.textContent = api.loc(
+      r.state === "trashed" ? "manager-link-trashed" : "manager-unresolved-tip",
+    );
+    const sources = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    );
+    details.append(summary, status, sources);
+    let loaded = false;
+    let loading = false;
+    details.addEventListener("toggle", () => {
+      if (!details.open || loaded || loading) return;
+      loading = true;
+      safeCall(async () => {
+        try {
+          const notes = await api.getUnresolvedSources(r.ref);
+          if (version !== unresolvedVersion || window.closed) return;
+          for (const note of notes) {
+            const button = document.createElementNS(
+              "http://www.w3.org/1999/xhtml",
+              "button",
+            );
+            button.className = "relation-link";
+            window.ZoteroKnowledgeBaseMarkdown.identity(
+              button,
+              note.id,
+              note.title,
+              note.reference,
+            );
+            button.addEventListener("click", () =>
+              window.ZoteroKnowledgeBase_selectZettel(note.id),
+            );
+            sources.append(button);
+          }
+          loaded = true;
+        } finally {
+          loading = false;
+        }
+      });
+    });
+    li.append(details);
     ul.appendChild(li);
+    if (expanded.has(r.ref)) details.open = true;
   }
 });
+
+window.knowledgeBaseShowUnresolved = (ref) => {
+  if (!managerLoaded) {
+    args.unresolvedRef = ref;
+    return;
+  }
+  safeCall(async () => {
+    await api.auditNativeNotes();
+    await refreshUnresolved();
+    const row = /** @type {HTMLDetailsElement[]} */ (
+      Array.from(
+        $("knowledge-base-unresolved-list").querySelectorAll("details"),
+      )
+    ).find((node) => node.dataset.ref === ref);
+    if (!row) return;
+    $("knowledge-base-unresolved").open = true;
+    row.open = true;
+    row.querySelector("summary").focus();
+    row.scrollIntoView?.({ block: "nearest" });
+  });
+};
 
 function select(id, record = true, mounted = false) {
   if (!mounted) navigationVersion++;
@@ -735,6 +902,8 @@ function select(id, record = true, mounted = false) {
     li.classList.toggle("active", li.dataset.id === id);
     li.setAttribute("aria-current", li.dataset.id === id ? "true" : "false");
     li.setAttribute("aria-selected", String(li.dataset.id === id));
+    if (li.classList.contains("zettel-row"))
+      li.tabIndex = li.dataset.id === id ? 0 : -1;
   }
   safeCall(async () => {
     if (!args.embedded) await renderDetail(id);
@@ -744,9 +913,18 @@ function select(id, record = true, mounted = false) {
 }
 
 async function navigateHistory(direction) {
-  const index = historyIndex + direction;
-  if (index < 0 || index >= history.length) return;
-  const card = await api.getZettel(history[index]);
+  let index = historyIndex + direction;
+  let card;
+  while (index >= 0 && index < history.length) {
+    card = await api.getZettel(history[index]);
+    if (
+      card &&
+      !["trashed", "missing"].includes((await api.getNoteHealth(card.id)).note)
+    )
+      break;
+    card = null;
+    index += direction;
+  }
   if (!card) return;
   historyIndex = index;
   $("knowledge-base-search").value = "";
@@ -871,10 +1049,16 @@ const renderDetail = wrap(async function (id) {
       link.reference,
     );
     if (!link.targetId) chip.title = api.loc("manager-unresolved-tip");
-    chip.addEventListener("click", () => {
-      if (link.targetId) select(link.targetId);
-      else newZettel(link.ref);
-    });
+    chip.addEventListener("click", () =>
+      safeCall(async () => {
+        const health = link.targetId
+          ? await api.getNoteHealth(link.targetId)
+          : null;
+        if (health && !["trashed", "missing"].includes(health.note))
+          select(link.targetId);
+        else window.knowledgeBaseShowUnresolved(link.ref);
+      }),
+    );
     chips.appendChild(chip);
   }
 
@@ -921,7 +1105,7 @@ async function showInlineEditor(options) {
       onSaved: (id) =>
         safeCall(async () => {
           selectedId = id;
-          await refresh();
+          await refreshChanged([id], true);
           updateActions();
           options.onSaved?.(id);
         }),
@@ -930,11 +1114,7 @@ async function showInlineEditor(options) {
     return false;
   frame.hidden = false;
   $("knowledge-base-error").hidden = true;
-  for (const id of [
-    "knowledge-base-detail",
-    "knowledge-base-detail-empty",
-    "knowledge-base-unresolved",
-  ])
+  for (const id of ["knowledge-base-detail", "knowledge-base-detail-empty"])
     document.getElementById(id).hidden = true;
   return true;
 }
@@ -973,27 +1153,58 @@ function newZettel(title = "") {
 }
 
 const removeZettel = wrap(async function (id) {
-  const z = await api.getZettel(id);
-  const ok = window.confirm(
-    api.loc(
-      (await api.isExternalNote(id))
-        ? "manager-confirm-remove"
-        : "manager-confirm-delete",
-      { title: (z && z.title) || id },
-    ),
-  );
-  if (!ok) return;
-  await api.deleteZettel(id);
-  if (args.embedded) {
-    const frame = document.getElementById("knowledge-base-workbench-editor");
-    frame.hidden = true;
-    api.clearEditor(frame);
-  }
-  selectedId = null;
+  if (deleting) return;
+  deleting = true;
   updateActions();
-  $("knowledge-base-detail").hidden = true;
-  $("knowledge-base-detail-empty").hidden = false;
-  await refresh();
+  try {
+    const z = await api.getZettel(id);
+    if (
+      !z ||
+      !window.confirm(
+        api.loc("manager-confirm-delete", { title: z.title || id }),
+      )
+    )
+      return;
+    const index = rowIndices.get(id) ?? 0;
+    const neighbor = zettels[index + 1]?.id || zettels[index - 1]?.id;
+    const frame = /** @type {HTMLIFrameElement} */ (
+      /** @type {unknown} */ (
+        document.getElementById("knowledge-base-workbench-editor")
+      )
+    );
+    if (
+      args.embedded &&
+      frame.contentWindow?.knowledgeBasePrepareNavigation &&
+      !(await frame.contentWindow.knowledgeBasePrepareNavigation())
+    )
+      return;
+    await api.deleteZettel(id);
+    if (window.closed) return;
+    if (selectedId && selectedId !== id) {
+      await refreshChanged([id], true);
+      return;
+    }
+    if (args.embedded) {
+      frame.hidden = true;
+      api.clearEditor(frame);
+    }
+    selectedId = null;
+    await refreshChanged([id], true);
+    const next =
+      zettels.find((row) => row.id === neighbor) ||
+      zettels[Math.min(index, zettels.length - 1)];
+    if (next) {
+      await select(next.id);
+      getRenderedRow(next.id)?.focus({ preventScroll: true });
+    } else {
+      $("knowledge-base-detail").hidden = true;
+      $("knowledge-base-detail-empty").hidden = false;
+      $("knowledge-base-list").focus();
+    }
+  } finally {
+    deleting = false;
+    updateActions();
+  }
 });
 
 window.addEventListener("load", load);
@@ -1013,7 +1224,7 @@ function renderHealth(box, health, id) {
       : `health-source-${health.source}`,
   );
   box.appendChild(label);
-  if (health.note === "missing") return;
+  if (unavailable) return;
   const action = document.createXULElement("button");
   if (health.note === "trashed" || health.source === "trashed") {
     action.setAttribute("label", api.loc("health-restore"));

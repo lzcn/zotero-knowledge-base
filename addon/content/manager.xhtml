@@ -25,8 +25,7 @@ type="text/css"?>
       <html:input id="knowledge-base-search" type="search" />
       <html:select id="knowledge-base-kind"
         ><html:option value="" /><html:option value="literature" /><html:option
-          value="zettel" /><html:option value="deleted" /><html:option
-          value="thinking"
+          value="zettel" /><html:option value="thinking"
       /></html:select>
       <html:label
         ><html:input id="knowledge-base-entries" type="checkbox" /><html:span
@@ -45,6 +44,16 @@ type="text/css"?>
     </html:header>
     <html:main id="knowledge-base-main">
       <html:section id="knowledge-base-list-pane">
+        <html:div id="knowledge-base-list-toolbar">
+          <html:select id="knowledge-base-sort">
+            <html:option value="updated-desc" />
+            <html:option value="updated-asc" />
+            <html:option value="created-desc" />
+            <html:option value="created-asc" />
+            <html:option value="title-asc" />
+            <html:option value="title-desc" />
+          </html:select>
+        </html:div>
         <html:ul id="knowledge-base-list"></html:ul>
       </html:section>
       <html:div id="knowledge-base-splitter" />
@@ -95,12 +104,12 @@ type="text/css"?>
             </html:div>
           </html:section>
         </html:div>
-        <html:div id="knowledge-base-unresolved">
-          <html:h2 id="knowledge-base-unresolved-head"></html:h2>
-          <html:ul id="knowledge-base-unresolved-list" class="refs"></html:ul>
-        </html:div>
       </html:section>
     </html:main>
+    <html:details id="knowledge-base-unresolved" hidden="hidden">
+      <html:summary id="knowledge-base-unresolved-head" />
+      <html:ul id="knowledge-base-unresolved-list" class="refs" />
+    </html:details>
     <hbox id="knowledge-base-drafts" hidden="true" align="center">
       <label
         id="knowledge-base-drafts-label"

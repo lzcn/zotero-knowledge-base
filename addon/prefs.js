@@ -13,3 +13,8 @@ pref(
   "extensions.zotero.knowledge-base.sourceStyle",
   "http://www.zotero.org/styles/apa",
 );
+
+pref("extensions.zotero.knowledge-base.noteSort", "updated-desc");
+pref("extensions.zotero.knowledge-base.codex.path", "");
+pref("extensions.zotero.knowledge-base.codex.enabled", false);
+pref("extensions.zotero.knowledge-base.codex.model", "");

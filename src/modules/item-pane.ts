@@ -60,23 +60,27 @@ export async function registerItemPaneUI(): Promise<void> {
         body: HTMLElement;
         refresh: () => Promise<void>;
       }) => {
-        subscriptions.set(
-          body,
-          onDataChange((change) => {
-            const item = sectionItems.get(body);
-            if (
-              change &&
-              !change.all &&
-              (!change.fields.some((field) =>
-                ["identity", "source", "availability"].includes(field),
-              ) ||
-                (!(item && isPersonalKnowledgeItem(item)) &&
-                  !change.itemKeys.includes(item?.key || "")))
-            )
-              return;
-            void refresh().catch((error: Error) => Zotero.logError(error));
-          }),
-        );
+        const unsubscribeData = onDataChange((change) => {
+          const item = sectionItems.get(body);
+          if (
+            change &&
+            !change.all &&
+            (!change.fields.some((field) =>
+              ["identity", "source", "availability"].includes(field),
+            ) ||
+              (!(item && isPersonalKnowledgeItem(item)) &&
+                !change.itemKeys.includes(item?.key || "")))
+          )
+            return;
+          void refresh().catch((error: Error) => Zotero.logError(error));
+        });
+        const unsubscribeCodex = addon.api.onCodexEnabledChange(() => {
+          void refresh().catch((error: Error) => Zotero.logError(error));
+        });
+        subscriptions.set(body, () => {
+          unsubscribeData();
+          unsubscribeCodex();
+        });
       },
       onDestroy: ({ body }: { body: HTMLElement }) => {
         subscriptions.get(body)?.();
@@ -136,6 +140,20 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
         .catch((error: Error) => Zotero.logError(error));
     });
     container.appendChild(literature);
+    if (addon.api.isCodexEnabled()) {
+      const read = el(container, "button");
+      read.className = "knowledge-base-mini-btn";
+      read.style.marginInlineStart = "6px";
+      read.textContent = getString("codex-read-paper");
+      read.addEventListener("click", () =>
+        addon.api.openPaperReading(
+          item.key,
+          item.libraryID,
+          container.ownerDocument.defaultView!,
+        ),
+      );
+      container.appendChild(read);
+    }
   }
 
   const head = el(container, "div");

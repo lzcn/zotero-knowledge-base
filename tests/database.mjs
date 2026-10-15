@@ -230,6 +230,7 @@ await writeFile(
     `export * as nativeNotes from ${JSON.stringify(path.join(ROOT, "src/modules/native-notes.ts"))};\n` +
     `export * as operations from ${JSON.stringify(path.join(ROOT, "src/modules/note-operations.ts"))};\n` +
     // Absolute paths so esbuild does not need the entry to sit in the project.
+    `export * as noteSort from ${JSON.stringify(path.join(ROOT, "src/modules/note-sort.ts"))};\n` +
     `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
     `export * as zettel from ${JSON.stringify(path.join(ROOT, "src/modules/zettel.ts"))};\n` +
     `export * as noteRefs from ${JSON.stringify(path.join(ROOT, "src/modules/note-references.ts"))};\n` +
@@ -257,6 +258,7 @@ const {
   events,
   nativeNotes,
   operations,
+  noteSort,
 } = await import(pathToFileURL(bundle).href);
 
 async function readSchema(file) {
@@ -447,6 +449,73 @@ if (currentSchema) {
     ),
   );
 
+  const legacyKeys = ["note-1-PUBKEY01", "note-1-PUBKEY02"];
+  const creation = Date.UTC(2020, 1, 2, 3, 4, 5);
+  const reservedKey = zettel.newZettelID(new Set(), new Date(creation));
+  for (const id of [reservedKey, ...legacyKeys])
+    await db.exec(
+      "INSERT INTO zettels(id,title,title_folded,body,kind,created_at,updated_at) VALUES(?,?,?,'Original body','zettel',?,?)",
+      [id, id, id, creation, creation],
+    );
+  await db.exec(
+    "INSERT INTO card_notes(card_id,note_key,library_id,original_body) VALUES(?,'PUBKEY01',1,'Original body')",
+    [legacyKeys[0]],
+  );
+  await db.exec(
+    "INSERT INTO links(source_id,target_id,ref,ref_folded) VALUES(?,?,?,?)",
+    [legacyKeys[1], legacyKeys[0], legacyKeys[0], legacyKeys[0].toLowerCase()],
+  );
+  await zettel.ensureZettelKeys();
+  const normalized = await Promise.all(
+    legacyKeys.map((id) => zettel.getZettel(id)),
+  );
+  const publicRefs = await noteRefs.getNoteReferences();
+  check(
+    "Legacy Zettels get distinct timestamp keys while reserved keys and native identities remain intact",
+    normalized[0].custom_key === reservedKey + "-2" &&
+      normalized[1].custom_key === reservedKey + "-3" &&
+      normalized.every(
+        (row) => row.updated_at === creation && row.body === "Original body",
+      ) &&
+      (
+        await db.getOne("SELECT note_key FROM card_notes WHERE card_id=?", [
+          legacyKeys[0],
+        ])
+      ).note_key === "PUBKEY01" &&
+      (await zettel.getOutgoing(legacyKeys[1]))[0].targetId === legacyKeys[0] &&
+      publicRefs.byID.get(legacyKeys[0]) === normalized[0].custom_key,
+  );
+  const publicResolved = await zettel.resolveRefs([
+    legacyKeys[0],
+    normalized[0].custom_key,
+  ]);
+  check(
+    "Both old internal IDs and new public timestamp keys resolve to the original Zettel",
+    publicResolved.get(legacyKeys[0]) === legacyKeys[0] &&
+      publicResolved.get(normalized[0].custom_key) === legacyKeys[0],
+  );
+  const keyWrites = executedStatements.filter((sql) =>
+    /^(UPDATE zettels SET custom_key|INSERT INTO note_keys)/.test(sql),
+  ).length;
+  await zettel.ensureZettelKeys();
+  check(
+    "Repeated key normalization does not change timestamps or write new aliases",
+    executedStatements.filter((sql) =>
+      /^(UPDATE zettels SET custom_key|INSERT INTO note_keys)/.test(sql),
+    ).length === keyWrites,
+  );
+  await zettel.saveZettel({
+    id: legacyKeys[0],
+    title: "Updated legacy note",
+    body: "Original body",
+  });
+  check(
+    "Normal saving retains a Zettel's generated public key",
+    (await zettel.getZettel(legacyKeys[0])).custom_key ===
+      normalized[0].custom_key,
+  );
+  for (const id of [reservedKey, ...legacyKeys]) await zettel.deleteZettel(id);
+
   const searchFixtures = [];
   for (let n = 0; n < 7; n++)
     searchFixtures.push(
@@ -460,6 +529,56 @@ if (currentSchema) {
     );
   for (const id of searchFixtures)
     await db.exec("UPDATE zettels SET updated_at = 42 WHERE id = ?", [id]);
+  for (const sort of [
+    "updated-desc",
+    "updated-asc",
+    "created-desc",
+    "created-asc",
+    "title-asc",
+    "title-desc",
+  ]) {
+    const all = await zettel.searchZettels("SearchNeedle", {
+      sort,
+      limit: 100,
+    });
+    const expected = [...all.items].sort((a, b) =>
+      noteSort.compareNoteSummaries(a, b, sort),
+    );
+    let part = await zettel.searchZettels("SearchNeedle", { sort, limit: 2 });
+    const ids = part.items.map((row) => row.id);
+    while (part.cursor) {
+      part = await zettel.searchZettels("SearchNeedle", {
+        sort,
+        limit: 2,
+        cursor: part.cursor,
+      });
+      ids.push(...part.items.map((row) => row.id));
+    }
+    check(
+      "Sorted pagination retains relevance and every note exactly once: " +
+        sort,
+      JSON.stringify(ids) === JSON.stringify(expected.map((row) => row.id)) &&
+        new Set(ids).size === searchFixtures.length,
+    );
+  }
+  const sortedFirst = await zettel.searchZettels("SearchNeedle", {
+    sort: "title-asc",
+    limit: 2,
+  });
+  let wrongSortRejected = false;
+  try {
+    await zettel.searchZettels("SearchNeedle", {
+      sort: "updated-desc",
+      limit: 2,
+      cursor: sortedFirst.cursor,
+    });
+  } catch {
+    wrongSortRejected = true;
+  }
+  check(
+    "A cursor cannot be reused after changing note sort",
+    wrongSortRejected,
+  );
   let page = await zettel.searchZettels("SearchNeedle", { limit: 2 });
   const paged = page.items.map((row) => row.id);
   check(
@@ -585,12 +704,14 @@ if (currentSchema) {
   );
   check(
     "Active searches exclude deleted notes while the deleted filter includes their cached records",
-    !(
-      await zettel.searchZettels("", {
-        availability: "active",
-        cardIDs: searchFixtures.slice(1, 3),
-      })
-    ).items.length &&
+    !(await zettel.searchZettels("", { cardIDs: searchFixtures.slice(1, 3) }))
+      .items.length &&
+      !(
+        await zettel.searchZettels("", {
+          availability: "active",
+          cardIDs: searchFixtures.slice(1, 3),
+        })
+      ).items.length &&
       (
         await zettel.searchZettels("", {
           availability: "deleted",
@@ -1494,6 +1615,63 @@ if (currentSchema) {
         row.id.includes("UNMANAGE"),
       ),
   );
+  const issueTarget = await zettel.saveZettel({
+    title: "Deleted target",
+    body: "",
+  });
+  const issueSource = await zettel.saveZettel({
+    title: "Referring note",
+    body: `[[${issueTarget}]] [[Never created]]`,
+  });
+  await db.exec(
+    "INSERT INTO unavailable_notes(card_id,state) VALUES(?,'trashed')",
+    [issueTarget],
+  );
+  const issueRefs = await zettel.getUnresolvedRefs();
+  check(
+    "Unavailable links distinguish native Trash targets from unresolved references",
+    issueRefs.some(
+      (r) =>
+        r.ref === issueTarget &&
+        r.state === "trashed" &&
+        r.title === "Deleted target",
+    ) &&
+      issueRefs.some(
+        (r) => r.ref === "Never created" && r.state === "unresolved",
+      ),
+  );
+  check(
+    "Link diagnostics identify the active referring note",
+    (await zettel.getUnresolvedSources(issueTarget))[0].id === issueSource,
+  );
+  await db.exec(
+    "INSERT INTO unavailable_notes(card_id,state) VALUES(?,'trashed')",
+    [issueSource],
+  );
+  check(
+    "Trashed referring notes do not create active link warnings",
+    !(await zettel.getUnresolvedRefs()).some(
+      (r) => r.ref === issueTarget || r.ref === "Never created",
+    ) && !(await zettel.getUnresolvedSources(issueTarget)).length,
+  );
+  await db.exec("DELETE FROM unavailable_notes WHERE card_id IN (?,?)", [
+    issueSource,
+    issueTarget,
+  ]);
+  check(
+    "Restoring the original target removes its warning and preserves the link identity",
+    !(await zettel.getUnresolvedRefs()).some((r) => r.ref === issueTarget) &&
+      (await zettel.getOutgoing(issueSource)).find((r) => r.ref === issueTarget)
+        .targetId === issueTarget,
+  );
+  await zettel.deleteZettel(issueTarget);
+  check(
+    "Permanently missing targets retain a repairable reference rather than creating a replacement",
+    (await zettel.getUnresolvedRefs()).some(
+      (r) => r.ref === issueTarget && r.state === "unresolved",
+    ) && !(await zettel.getZettel(issueTarget)),
+  );
+  await zettel.deleteZettel(issueSource);
   await db.exec("DELETE FROM card_notes WHERE card_id = ?", [literature]);
   for (const id of [literature, anotherLibrary, thought, firstCard, secondCard])
     await zettel.deleteZettel(id);

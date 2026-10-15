@@ -84,6 +84,10 @@ export function openWorkbench(args: ManagerArgs = {}): void {
         args.selectId,
       );
     }
+    if (args.unresolvedRef)
+      existing.browser.contentWindow.knowledgeBaseShowUnresolved?.(
+        args.unresolvedRef,
+      );
     return;
   }
   const tabs = (win as unknown as { Zotero_Tabs: Tabs }).Zotero_Tabs;
@@ -139,6 +143,8 @@ export function openWorkbenchWindow(args: ManagerArgs = {}): void {
       record.args.editor = undefined;
       manager?.ZoteroKnowledgeBase_selectZettel?.(args.selectId);
     }
+    if (args.unresolvedRef)
+      manager?.knowledgeBaseShowUnresolved?.(args.unresolvedRef);
     return;
   }
   const record: NonNullable<typeof workbenchWindow> = {

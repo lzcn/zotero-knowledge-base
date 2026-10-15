@@ -704,7 +704,7 @@ function select(id) {
     .catch((error) => window.Zotero.logError(error));
   const openLabel = api.loc(
     node.kind === "unresolved"
-      ? "graph-create"
+      ? "manager-unresolved"
       : node.kind === "card"
         ? "graph-open-card"
         : "graph-open-source",
@@ -802,7 +802,7 @@ async function openNode(node) {
   if (node.kind === "card") api.openEditor({ zettelId: node.id });
   else if (node.kind === "source")
     await api.selectItem(node.itemKey, node.libraryID);
-  else api.openEditor({ prefillTitle: node.title });
+  else api.openManager({ unresolvedRef: node.title });
 }
 window.ZoteroKnowledgeBase_showGraph = (id) => {
   showScope(id, true);

@@ -67,7 +67,7 @@ async function loadNoteReferences() {
     "SELECT key, card_id FROM note_keys",
   );
   const current = await getAll<{ id: string; custom_key: string }>(
-    "SELECT id, custom_key FROM zettels WHERE kind = 'thinking' AND custom_key IS NOT NULL",
+    "SELECT id, custom_key FROM zettels WHERE kind IN ('thinking', 'zettel') AND custom_key IS NOT NULL",
   );
   const byAlias = new Map<string, string | null>(
     aliases.map((row) => [row.key, row.card_id]),

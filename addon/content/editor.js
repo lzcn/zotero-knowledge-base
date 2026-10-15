@@ -73,6 +73,7 @@ const relationGroups = [
 ];
 let unsubscribe = null;
 let unsubscribeSourceStyle = null;
+let unsubscribeCodex = null;
 let sourceRenderVersion = 0;
 /** @type {"visual" | "source"} */
 let editorMode = "visual";
@@ -214,6 +215,7 @@ async function loadEditor() {
   await setEditorMode("visual", !zettelId && !args.draftId);
   if (disposed || window.knowledgeBaseStopping) return;
   loaded = true;
+  unsubscribeCodex = api.onCodexEnabledChange(() => updateNoteIdentity());
   if (dirty && !args.draftId) scheduleSave();
   await refreshParentItem();
   await refreshNoteTags();
@@ -356,6 +358,13 @@ async function refreshSavedCard() {
 }
 
 function updateNoteIdentity(note = null) {
+  const readingButton = /** @type {HTMLButtonElement} */ (
+    document.getElementById("knowledge-base-read-paper")
+  );
+  readingButton.hidden =
+    !api.isCodexEnabled() || noteKind !== "literature" || !zettelId;
+  readingButton.disabled =
+    recoveryPending || libraryReadOnly || noteUnavailable;
   const select = $("knowledge-base-note-kind");
   select.replaceChildren();
   for (const kind of noteKind === "literature"
@@ -389,7 +398,10 @@ function updateNoteIdentity(note = null) {
     note?.reference || zettelId || api.loc("editor-key-auto");
   reference.title = api.loc("note-reference-copy");
   reference.disabled = !zettelId;
-  reference.onclick = () => api.copyNoteReference(zettelId);
+  reference.onclick = () =>
+    api.copyNoteReference(
+      noteKind === "zettel" ? note?.reference || zettelId : zettelId,
+    );
   const convert = /** @type {HTMLButtonElement} */ (
     document.getElementById("knowledge-base-kind-convert")
   );
@@ -444,6 +456,8 @@ function applyLocale() {
   const openWindow = document.getElementById("knowledge-base-open-window");
   openWindow.hidden = !args.embedded;
   openWindow.textContent = api.loc("editor-open-window");
+  document.getElementById("knowledge-base-read-paper").textContent =
+    api.loc("codex-read-paper");
   if (args.embedded) $("knowledge-base-editor-cancel").hidden = true;
   $("knowledge-base-src-label").textContent = api.loc("editor-source-label");
   $("knowledge-base-src-none").textContent = api.loc("editor-src-none");
@@ -529,6 +543,14 @@ function bindEvents() {
     .addEventListener("click", () =>
       run(async () => {
         if (await save(false)) api.openEditor({ zettelId, window: true });
+      }),
+    );
+  document
+    .getElementById("knowledge-base-read-paper")
+    .addEventListener("click", () =>
+      run(async () => {
+        if (source && (await save(false)))
+          api.openPaperReading(source.key, source.libraryID);
       }),
     );
   const more = /** @type {HTMLDetailsElement} */ (
@@ -995,12 +1017,14 @@ async function refreshSourceDisplay() {
   display.onkeydown = null;
   display.classList.toggle("placeholder", !current || !!current.missing);
   if (!current || current.missing) {
+    $("knowledge-base-editor-toolbar").hidden = !current;
     display.textContent = current?.title || api.loc("editor-src-none");
     display.removeAttribute("role");
     display.removeAttribute("tabindex");
     display.title = "";
     return;
   }
+  $("knowledge-base-editor-toolbar").hidden = false;
   try {
     await window.ZoteroKnowledgeBaseMarkdown.source(display, current, api);
   } catch (error) {
@@ -1442,6 +1466,7 @@ async function refreshRelations() {
   );
 
   const display = $("knowledge-base-parent-display");
+  display.parentElement.hidden = !parent;
   display.replaceChildren();
   display.classList.toggle("placeholder", !parent);
   if (parent)
@@ -1496,11 +1521,12 @@ async function refreshRelations() {
       row.appendChild(button);
       row.classList.toggle("unresolved", !targetId);
       const open = () =>
-        targetId
-          ? navigateNote(targetId)
-          : args.onNavigate
-            ? args.onNavigate({ prefillTitle: link.ref })
-            : api.openEditor({ prefillTitle: link.ref });
+        run(async () => {
+          const health = targetId ? await api.getNoteHealth(targetId) : null;
+          if (health && !["trashed", "missing"].includes(health.note))
+            await navigateNote(targetId);
+          else api.openManager({ unresolvedRef: link.ref });
+        });
       button.addEventListener("click", open);
       list.appendChild(row);
     }
@@ -1516,8 +1542,12 @@ async function refreshRelations() {
     /** @type {HTMLButtonElement} */ (
       document.getElementById(buttonID)
     ).disabled = !count;
+    document.getElementById(buttonID).hidden = !count;
     if (!count && activeRelation === listID) activeRelation = null;
   }
+  $("knowledge-base-editor-relations").hidden = relationGroups.every(
+    ([, listID]) => !document.getElementById(listID).children.length,
+  );
   updateRelationView();
 }
 
@@ -1929,6 +1959,7 @@ window.addEventListener("unload", () => {
   }
   unsubscribe?.();
   unsubscribeSourceStyle?.();
+  unsubscribeCodex?.();
   clearTimeout(previewTimer);
   clearTimeout(relationsTimer);
   clearTimeout(searchTimer);
@@ -2191,9 +2222,7 @@ async function refreshHealth() {
     );
   const restore = $("knowledge-base-editor-restore");
   restore.setAttribute("label", api.loc("health-restore"));
-  restore.hidden =
-    health.note === "missing" ||
-    (health.note !== "trashed" && health.source !== "trashed");
+  restore.hidden = unavailable || health.source !== "trashed";
   restore.disabled = !health.editable;
   $("knowledge-base-editor-save").disabled = unavailable || libraryReadOnly;
   if (unavailable && !noteUnavailable) {

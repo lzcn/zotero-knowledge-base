@@ -179,6 +179,62 @@ export function parseCitationKeys(body: string): string[] {
   return [...keys];
 }
 
+/** List previews use prose rather than raw LaTeX, HTML payloads or Markdown syntax. */
+export function noteSnippet(
+  body: string,
+  query = "",
+  formula = "∑",
+  resolve?: (ref: string) => CardReference | undefined,
+): string {
+  const tokens = markdown.lexer(body);
+  markdown.walkTokens(tokens, (token) => {
+    if (token.type === "inlineMath" || token.type === "blockMath") {
+      token.text = /^[\p{L}\p{N}]+$/u.test(token.latex) ? token.latex : formula;
+      token.type = "text";
+    } else if (token.type === "wikilink") {
+      token.text = token.raw.includes("|")
+        ? token.display
+        : resolve?.(token.ref)?.title || token.ref;
+      token.type = "text";
+    }
+  });
+  const win = Zotero.getMainWindow() as Window & {
+    DOMParser: typeof DOMParser;
+  };
+  const doc = new win.DOMParser().parseFromString(
+    markdown.parser(tokens),
+    "text/html",
+  );
+  for (const node of Array.from(
+    doc.querySelectorAll("script,style,img"),
+  ) as Element[])
+    node.remove();
+  for (const node of Array.from(
+    doc.querySelectorAll(
+      '.math,[data-type="inline-math"],[data-type="block-math"]',
+    ),
+  ) as Element[]) {
+    const source = (node.textContent || node.getAttribute("data-latex") || "")
+      .replace(/^\$+|\$+$/g, "")
+      .trim();
+    node.textContent = /^[\p{L}\p{N}]+$/u.test(source) ? source : formula;
+  }
+  for (const block of Array.from(
+    doc.querySelectorAll("p,h1,h2,h3,h4,h5,h6,li,pre,blockquote"),
+  ) as Element[])
+    block.append(" ");
+  const plain = (doc.body.textContent || "").replace(/\s+/g, " ").trim();
+  const match = query
+    ? plain.toLocaleLowerCase().indexOf(query.toLocaleLowerCase())
+    : 0;
+  const start = Math.max(0, match - 30);
+  return (
+    (start ? "…" : "") +
+    plain.slice(start, start + 110) +
+    (plain.length > start + 110 ? "…" : "")
+  );
+}
+
 /** Actual image and link references, excluding examples in code blocks. */
 export function parseAssetNames(body: string): Set<string> {
   const names = new Set<string>();

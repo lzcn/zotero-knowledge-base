@@ -66,6 +66,20 @@ function runQuitTest() {
     let restarting = false;
     try {
       const kb = Zotero.ZoteroKnowledgeBase;
+      // Permanently remove transient fixtures; normal KB deletion retains Trash mappings.
+      async function eraseFixtureCard(id) {
+        await kb.api.deleteZettel(id);
+        const { Sqlite } = ChromeUtils.importESModule("resource://gre/modules/Sqlite.sys.mjs");
+        const connection = await Sqlite.openConnection({path: PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base.sqlite")});
+        let rows;
+        try { rows = await connection.execute("SELECT library_id, note_key FROM card_notes WHERE card_id = ?", [id]); }
+        finally { await connection.close(); }
+        if (rows.length) {
+          const native = await Zotero.Items.getByLibraryAndKeyAsync(rows[0].getResultByName('library_id'), rows[0].getResultByName('note_key'));
+          if (native) await Zotero.Items.erase(native.id);
+          await kb.api.auditNativeNotes();
+        }
+      }
       // Fixture for previously linked notes; never included in production code.
       async function seedMappedNote(input) {
         const native = await Zotero.Items.getAsync(input.noteID);
@@ -87,6 +101,7 @@ function runQuitTest() {
       if (await IOUtils.exists(${JSON.stringify(marker)})) {
         restarting = true;
         const first = JSON.parse(await IOUtils.readUTF8(${JSON.stringify(marker)}));
+        if(kb.api.getNoteSort()!=='created-desc') throw new Error('Restart lost the note sort preference');
         if(kb.api.getWorkbenchMode()!=="window") throw new Error('Restart lost the workbench opening preference');
         if(kb.api.getGraphLabelLength()!==18) throw new Error("Restart lost the graph title length");
         if(!kb.api.getGraphOptions().hideIsolated) throw new Error('Restart lost the isolated-node filter preference');
@@ -94,7 +109,7 @@ function runQuitTest() {
         kb.api.setWorkbenchMode("tab");
         const cards = await kb.api.listZettels();
         const card = cards.find(row => row.id === first.cardID);
-        if (cards.length !== 5 || card?.body !== "Recovered draft body" || (await kb.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
+        if (cards.length !== 4 || card?.body !== "Recovered draft body" || (await kb.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
         const restartTrashNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.restartTrashKey);
         if (!restartTrashNote?.isInTrash() || !(await kb.api.getZettel(first.restartTrashID)) || !(await kb.api.searchZettelSummaries('',{availability:'deleted',cardIDs:[first.restartTrashID]})).items.length) throw new Error('Restart lost the mapping for a note still in Zotero Trash');
         restartTrashNote.deleted = false; await restartTrashNote.saveTx();
@@ -154,7 +169,7 @@ function runQuitTest() {
         const restartedGraph = [...Services.wm.getEnumerator("knowledge-base:graph")][0];
         if(!restartedGraph.document.getElementById("graph-hide-isolated").checked) throw new Error('Restart did not restore the native isolated-node checkbox');
         kb.api.setGraphOption("hideIsolated", false);
-        await IOUtils.writeUTF8(${JSON.stringify(restartMarker)}, JSON.stringify({ cards: cards.length, noteKey: restoredNote.key }));
+        await IOUtils.writeUTF8(${JSON.stringify(restartMarker)}, JSON.stringify({ cards: (await kb.api.listZettels()).length, hiddenCards: cards.length, noteKey: restoredNote.key }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         return;
       }
@@ -368,10 +383,10 @@ function runQuitTest() {
       for (let n = 0; n < 150; n++) {
         const manager = literatureMain.document.querySelector(".knowledge-base-workbench")?.contentWindow;
         literatureInline = manager?.document.getElementById("knowledge-base-workbench-editor")?.contentWindow;
-        if (literatureInline?.knowledgeBaseCardId === literatureID && literatureInline.document.getElementById("knowledge-base-editor-root")?.dataset.mode === "visual") break;
+        if (literatureInline?.knowledgeBaseCardId === literatureID && literatureInline.document.getElementById("knowledge-base-rich-frame")?.getCurrentInstance()?._item.id === note.id) break;
         await new Promise(resolve => setTimeout(resolve, 50));
       }
-      if (literatureInline?.knowledgeBaseCardId !== literatureID || literatureInline.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id || literatureMain.document.querySelectorAll(".knowledge-base-workbench").length !== 1) throw new Error("Literature requests did not reuse the native note in one Tab");
+      if (literatureInline?.knowledgeBaseCardId !== literatureID || literatureInline.document.getElementById("knowledge-base-rich-frame")?.getCurrentInstance()?._item.id !== note.id || literatureMain.document.querySelectorAll(".knowledge-base-workbench").length !== 1) throw new Error("Literature requests did not reuse the native note in one Tab");
       literatureMain.Zotero_Tabs.close(literatureMain.Zotero_Tabs.selectedID);
       for (let n = 0; n < 100 && literatureMain.document.querySelector(".knowledge-base-workbench"); n++) await new Promise(resolve => setTimeout(resolve, 25));
       await kb.api.openEditor({window:true, zettelId:literatureID});
@@ -471,6 +486,16 @@ function runQuitTest() {
         await new Promise(resolve => setTimeout(resolve,50));
       }
       if (!styleMenu || styleMenu.value !== "http://www.zotero.org/styles/apa") throw new Error("Native Settings style control did not initialize");
+      const codexControl=preferences.document.getElementById("knowledge-base-codex-enabled");
+      const codexOptions=preferences.document.getElementById("knowledge-base-codex-options");
+      const codexAction=literatureEditor.document.getElementById("knowledge-base-read-paper");
+      if(kb.api.isCodexEnabled() || codexControl.checked || !codexOptions.hidden || !codexAction.hidden) throw new Error("Codex reading is not disabled by default");
+      codexControl.checked=true;codexControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      for(let n=0;n<100 && codexAction.hidden;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!kb.api.isCodexEnabled() || codexOptions.hidden || codexAction.hidden) throw new Error("Native Codex enable switch did not update the editor");
+      codexControl.checked=false;codexControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      for(let n=0;n<100 && !codexAction.hidden;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(kb.api.isCodexEnabled() || !codexOptions.hidden || !codexAction.hidden || Services.wm.getMostRecentWindow("knowledge-base:paper-reading")) throw new Error("Native Codex disable switch did not hide actions without launching a reading");
       const modeMenu=preferences.document.getElementById("knowledge-base-workbench-mode");
       if(modeMenu?.value!=="tab" || modeMenu.getAttribute("native")!=="true" || !modeMenu.querySelector('menuitem[value="window"]').label) throw new Error('Native Settings workbench mode did not initialize');
       modeMenu.value="window";modeMenu.dispatchEvent(new preferences.Event("command",{bubbles:true}));
@@ -544,7 +569,8 @@ function runQuitTest() {
       let quickLinkEditor;
       for(let n=0;n<150;n++) {
         quickLinkEditor = [...Services.wm.getEnumerator('knowledge-base:editor')].find(view=>view.knowledgeBaseCardId === referenceID);
-        if(quickLinkEditor?.document.getElementById('knowledge-base-rich-frame')?.getCurrentInstance()?._iframeWindow?.document.querySelector('.primary-editor')) break;
+        const candidate = quickLinkEditor?.document.getElementById('knowledge-base-rich-frame')?.getCurrentInstance()?._iframeWindow;
+        if(quickLinkEditor?.document.getElementById('knowledge-base-editor-root')?.dataset.mode === 'visual' && candidate?.document.querySelector('.primary-editor') && candidate.getSelection()) break;
         await new Promise(resolve=>setTimeout(resolve,25));
       }
       if(!quickLinkEditor) throw new Error('Inline wiki input editor did not open');
@@ -575,7 +601,7 @@ function runQuitTest() {
       if(!quickSelection.isCollapsed || quickSelection.anchorNode?.parentElement?.closest('h1')) throw new Error('Inline wiki replacement reset the editing cursor');
       quickLinkEditor.close();
       for(let n=0;n<100 && !quickLinkEditor.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
-      await kb.api.deleteZettel(referenceID);
+      await eraseFixtureCard(referenceID);
       item.setCreators([{firstName:'A',lastName:'Smith',creatorType:'author'}]); item.setField('date','2026'); await item.saveTx();
       // Explicitly detach this fixture to cover a surviving note with a trashed source.
       note.parentItemID = false; await note.saveTx({skipSelect:true});
@@ -589,7 +615,7 @@ function runQuitTest() {
       for (let n = 0; n < 100 && !literatureEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 25));
       await kb.api.deleteZettel(literatureID);
       await kb.api.deleteZettel(thinkingID);
-      if (thinking.deleted || note.deleted || thinking.getNote() !== originalThinking) throw new Error("Removing registered notes trashed or rewrote original notes");
+      if (!thinking.deleted || !note.deleted || thinking.getNote() !== originalThinking || !(await kb.api.getZettel(thinkingID)) || !(await kb.api.getZettel(literatureID)) || (await kb.api.listZettels()).some(card => [thinkingID,literatureID].includes(card.id))) throw new Error("Deleting linked notes did not trash, hide and retain their original cards");
       Zotero.debug("KB host stage: stable native links and rename updates");
       const linkPreviousSelection = Zotero.getMainWindow().ZoteroPane.getSelectedItems().map(selected=>selected.id);
       const linkTargetID = await kb.api.saveZettel({kind:"thinking", customKey:"LinkTarget", title:"Link target", body:""});
@@ -637,8 +663,8 @@ function runQuitTest() {
       linkWindow.close();
       for(let n=0;n<100 && !linkWindow.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
       await kb.api.releaseNativeNote(linkSourceNote.id);
-      await kb.api.deleteZettel(linkSourceID);
-      await kb.api.deleteZettel(linkTargetID);
+      await eraseFixtureCard(linkSourceID);
+      await eraseFixtureCard(linkTargetID);
       if(linkPreviousSelection.length) await Zotero.getMainWindow().ZoteroPane.selectItems(linkPreviousSelection);
       const migrationCanvas=Zotero.getMainWindow().document.createElementNS("http://www.w3.org/1999/xhtml","canvas");
       migrationCanvas.width=240;migrationCanvas.height=90;
@@ -885,7 +911,39 @@ function runQuitTest() {
         kb.api.openManager({selectId: unsourced.id});
         entryButton.dispatchEvent(new mainWindow.Event("command"));
         if (main.document.querySelectorAll(".knowledge-base-workbench").length !== 1) throw new Error("Workbench created duplicate tabs");
+        const listRows=[...workbench.document.querySelectorAll('.zettel-row')];
+        const rowHeight=workbench.eval('ROW_HEIGHT');
+        for(let index=0;index<listRows.length;index++) {
+          const bounds=listRows[index].getBoundingClientRect();
+          if(Math.abs(bounds.height-rowHeight)>1 || (index && Math.abs(bounds.top-listRows[index-1].getBoundingClientRect().top-rowHeight)>1)) throw new Error('List row spacing disagrees with virtual scrolling geometry');
+          for(const part of listRows[index].querySelectorAll('.title,.card-snippet,.zid')) if(part.getBoundingClientRect().bottom>bounds.bottom+1) throw new Error('List preview metadata overflowed its row');
+        }
         if (main.Zotero_Tabs.getState().some(tab => tab.type === "knowledgebase")) throw new Error("Workbench leaked an unsupported document into Zotero session state");
+        const brokenRef='note-1-MISSING1';
+        const brokenSource=await kb.api.saveZettel({title:'A referring note with an unavailable link',body:'[['+brokenRef+']]'});
+        for(let n=0;n<100 && !workbench.document.querySelector('#knowledge-base-unresolved-list details[data-ref="'+brokenRef+'"]');n++) await new Promise(resolve=>setTimeout(resolve,25));
+        const issues=workbench.document.getElementById('knowledge-base-unresolved');
+        if(issues.parentElement.id!=='knowledge-base-root' || issues.open || issues.hidden) throw new Error('Unavailable links are not a collapsed workbench panel');
+        const cardsBeforeIssue=(await kb.api.listZettels()).length;
+        workbench.knowledgeBaseShowUnresolved(brokenRef);
+        let issueSourceButton;
+        for(let n=0;n<100;n++) {
+          issueSourceButton=workbench.document.querySelector('#knowledge-base-unresolved-list details[data-ref="'+brokenRef+'"] .relation-link');
+          if(issueSourceButton)break;
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        if(!issues.open || !issueSourceButton?.textContent.includes('A referring note') || (await kb.api.listZettels()).length!==cardsBeforeIssue || inline.knowledgeBaseCardId!==unsourced.id) throw new Error('Unavailable link diagnostics created a replacement or lost the referring note');
+        if(metadataShots) {
+          const image=await main.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,'white');
+          const canvas=main.document.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=image.width;canvas.height=image.height;canvas.getContext('2d').drawImage(image,0,0);image.close();
+          const blob=await new Promise(resolve=>canvas.toBlob(resolve));
+          await IOUtils.write(PathUtils.join(metadataShots,'unavailable-links.png'),new Uint8Array(await blob.arrayBuffer()));
+        }
+        await kb.api.saveZettel({id:brokenSource,title:'A referring note with an unavailable link',body:'Link removed'});
+        for(let n=0;n<100 && workbench.document.querySelector('#knowledge-base-unresolved-list details[data-ref="'+brokenRef+'"]');n++) await new Promise(resolve=>setTimeout(resolve,25));
+        if(workbench.document.querySelector('#knowledge-base-unresolved-list details[data-ref="'+brokenRef+'"]')) throw new Error('Corrected link diagnostics did not refresh');
+        await eraseFixtureCard(brokenSource);
+        issues.open=false;
         workbench.newZettel("Workbench typing fixture");
         for (let n=0; n<150; n++) {
           inline = workbench.document.getElementById("knowledge-base-workbench-editor").contentWindow;
@@ -895,9 +953,8 @@ function runQuitTest() {
         if (inline.knowledgeBaseCardId === unsourced.id || kb.api.projectNativeNote(inline.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.getNote()).title !== "Workbench typing fixture") throw new Error("New Note kept the old document: " + JSON.stringify({url:inline.location.href, args:inline.eval("args"), id:inline.knowledgeBaseCardId}));
         const emptyConnections = inline.document.getElementById("knowledge-base-editor-relations");
         const emptyButtons = [...emptyConnections.querySelectorAll("nav button")];
-        if (emptyConnections.hidden || emptyButtons.length !== 3 || emptyButtons.some(button => !button.disabled || !button.textContent.endsWith("0"))) throw new Error("Zero-count connections disappeared from the workbench");
-        const emptyBounds = emptyConnections.getBoundingClientRect();
-        if (emptyBounds.height < 20 || emptyBounds.top < 0 || emptyBounds.bottom > inline.innerHeight) throw new Error("Connection navigation is outside the workbench viewport");
+        if (!emptyConnections.hidden || emptyButtons.length !== 3 || emptyButtons.some(button => !button.hidden || !button.disabled || !button.textContent.endsWith("0"))) throw new Error("Empty connections clutter the writing surface");
+        if (!inline.document.getElementById("knowledge-base-editor-toolbar").hidden || !inline.document.getElementById("knowledge-base-parent-display").parentElement.hidden) throw new Error("Empty source or parent metadata clutter the writing surface");
         await inline.setEditorMode("source");
         const inlineBody = inline.document.getElementById("knowledge-base-editor-body");
         inlineBody.value = "# Workbench typing fixture\\n\\nTyped in the workbench.";
@@ -1043,6 +1100,12 @@ function runQuitTest() {
         independent.close();
         await new Promise(resolve=>setTimeout(resolve,100));
         await kb.api.discardEditorDraft(separateDraftID);
+        const sortMenu = workbench.document.getElementById('knowledge-base-sort');
+        if (sortMenu.options.length !== 6 || sortMenu.value !== 'updated-desc') throw new Error('Native note sorting is missing its default or choices');
+        sortMenu.value = 'created-desc';
+        sortMenu.dispatchEvent(new workbench.Event('change', {bubbles:true}));
+        for (let n=0; n<100 && workbench.document.getElementById('knowledge-base-list').getAttribute('aria-busy')!=='false'; n++) await new Promise(resolve=>setTimeout(resolve,25));
+        if (kb.api.getNoteSort() !== 'created-desc' || !workbench.document.querySelector('.zettel-row.active')) throw new Error('Changing note sort lost the selection or preference');
         if (metadataShots) {
           const image = await main.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
           const canvas = main.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
@@ -1053,8 +1116,8 @@ function runQuitTest() {
         main.Zotero_Tabs.close(main.Zotero_Tabs.selectedID);
         for (let n=0; n<100 && main.document.querySelector(".knowledge-base-workbench"); n++) await new Promise(resolve => setTimeout(resolve,25));
         if (main.document.querySelector(".knowledge-base-workbench")) throw new Error("Workbench did not close its embedded views");
-        await kb.api.deleteZettel(connectionChildID);
-        await kb.api.deleteZettel(inlineID);
+        await eraseFixtureCard(connectionChildID);
+        await eraseFixtureCard(inlineID);
         const taggedCard = await kb.api.getZettel(unsourced.id);
         looseNote.addTag("Machine learning"); looseNote.addTag("中文 标签"); await looseNote.saveTx();
         await kb.api.saveEditorCard({id: taggedCard.id, noteID:looseNote.id, title:"A long child note title about understanding relationships between ideas and navigating a knowledge base without squeezing text into a narrow sidebar", body:"#tag-a #tag-b #中文 \`#ignored\`", sourceMode:true, expectedNoteHTML:looseNote.getNote(), expectedUpdatedAt:taggedCard.updated_at, parentId:null});
@@ -1710,6 +1773,7 @@ function runQuitTest() {
           caseNote.deleted = true; await caseNote.saveTx();
           for (let n = 0; n < 100 && (!trashedEditor.document.getElementById("knowledge-base-editor-save").disabled || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden); n++) await new Promise(resolve => setTimeout(resolve, 50));
           if (!trashedEditor.document.getElementById("knowledge-base-editor-save").disabled || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden) throw new Error("Deleting an open note left its editor writable");
+          if (!trashedEditor.document.getElementById("knowledge-base-editor-restore").hidden) throw new Error("A trashed note still offers restoration inside Knowledge Base");
           if ((await kb.api.getNoteHealth(caseID)).note !== "trashed" || (await kb.api.getZettel(caseID)).body !== caseCached.body) throw new Error("Deleting a native note lost its cached content");
           kb.api.openManager({selectId:caseID});
           const trashMain = Zotero.getMainWindow();
@@ -1723,10 +1787,9 @@ function runQuitTest() {
           const trashNavigation = trashWorkbench.document.getElementById('knowledge-base-workbench-editor');
           if (!(await kb.api.mountEditor(trashNavigation,{zettelId:rows[0].id})) || !(await kb.api.mountEditor(trashNavigation,{zettelId:caseID}))) throw new Error('A note in Trash blocked workbench navigation');
           const trashFilter = trashWorkbench.document.getElementById('knowledge-base-kind');
-          trashFilter.value = 'deleted';
-          trashFilter.dispatchEvent(new trashWorkbench.Event('change',{bubbles:true}));
-          for (let n=0; n<100 && !trashWorkbench.document.querySelector('.zettel-row[data-id="'+caseID+'"]'); n++) await new Promise(resolve=>setTimeout(resolve,25));
-          if (!trashWorkbench.document.querySelector('.zettel-row[data-id="'+caseID+'"]') || trashFilter.querySelector('[value="deleted"]').textContent !== kb.api.loc('manager-deleted-notes')) throw new Error('Trash filter lost the original card or localization');
+          if (trashFilter.querySelector('[value="deleted"]')) throw new Error('Knowledge Base still exposes a Trash filter');
+          for (let n=0; n<100 && trashWorkbench.document.querySelector('.zettel-row[data-id="'+caseID+'"]'); n++) await new Promise(resolve=>setTimeout(resolve,25));
+          if (trashWorkbench.document.querySelector('.zettel-row[data-id="'+caseID+'"]')) throw new Error('A trashed note remains visible in Knowledge Base');
           const beforeExternalRestore = caseNote.getNote();
           // Restore through Zotero only: no KB restore or explicit audit call.
           caseNote.deleted = false; await caseNote.saveTx();
@@ -1758,8 +1821,42 @@ function runQuitTest() {
           if (!copyImage || copyImage.key === migratedImage.key || !(await copyImage.fileExists())) throw new Error("Copy did not create independent native image attachments");
           const copiedCard = await kb.api.saveEditorCard({ noteID: copyNote.id, title: "Copied note", body: closeBody, sourceMode: false });
           await kb.api.releaseNativeNote(copyNote.id);
-          await kb.api.deleteZettel(copiedCard.id);
+          kb.api.setWorkbenchMode('tab');
+          kb.api.openManager({selectId:copiedCard.id});
+          let deleteWorkbench, deleteEditor;
+          for(let n=0;n<150;n++) {
+            deleteWorkbench = Zotero.getMainWindow().document.querySelector('.knowledge-base-workbench')?.contentWindow;
+            deleteEditor = deleteWorkbench?.document.getElementById('knowledge-base-workbench-editor')?.contentWindow;
+            if(deleteEditor?.knowledgeBaseCardId===copiedCard.id && deleteEditor.document.getElementById('knowledge-base-rich-frame')?.getCurrentInstance()) break;
+            await new Promise(resolve=>setTimeout(resolve,25));
+          }
+          if(deleteEditor?.knowledgeBaseCardId!==copiedCard.id) throw new Error('Delete shortcut fixture did not load');
+          await deleteEditor.setEditorMode('source');
+          const pendingBody = deleteEditor.document.getElementById('knowledge-base-editor-body');
+          pendingBody.value += "\\n\\nLast edit before moving to Trash.";
+          pendingBody.dispatchEvent(new deleteEditor.Event('input', {bubbles:true}));
+          const confirmDelete = deleteWorkbench.confirm;
+          deleteWorkbench.confirm = () => true;
+          try {
+            const noteList = deleteWorkbench.document.getElementById('knowledge-base-list');
+            noteList.focus();
+            noteList.dispatchEvent(new deleteWorkbench.KeyboardEvent('keydown', {key:'Backspace',metaKey:Zotero.isMac,ctrlKey:!Zotero.isMac,bubbles:true,cancelable:true}));
+            for(let n=0;n<200;n++) {
+              const selected = deleteWorkbench.document.querySelector('.zettel-row.active');
+              if(copyNote.deleted && selected && selected.dataset.id!==copiedCard.id && !deleteWorkbench.document.querySelector('.zettel-row[data-id="'+copiedCard.id+'"]')) break;
+              await new Promise(resolve=>setTimeout(resolve,25));
+            }
+          } finally { deleteWorkbench.confirm = confirmDelete; }
+          const deleteState = {saved:copyNote.getNote().includes('Last edit before moving to Trash.'),trashed:copyNote.deleted,selected:deleteWorkbench.document.querySelector('.zettel-row.active')?.dataset.id,visible:!!deleteWorkbench.document.querySelector('.zettel-row[data-id="'+copiedCard.id+'"]'),error:deleteWorkbench.document.getElementById('knowledge-base-error').textContent};
+          if(!deleteState.saved || !deleteState.trashed || !deleteState.selected || deleteState.selected===copiedCard.id || deleteState.visible) throw new Error('Command-Delete did not finish: '+JSON.stringify(deleteState));
+          Zotero.getMainWindow().Zotero_Tabs.close(Zotero.getMainWindow().Zotero_Tabs.selectedID);
+
           if (!copyNote.deleted || nativeNote.deleted || !(await migratedImage.fileExists())) throw new Error("Card deletion did not trash only its own note");
+          if (!(await kb.api.getZettel(copiedCard.id)) || (await kb.api.searchZettelSummaries('', {availability:'active',cardIDs:[copiedCard.id]})).items.length) throw new Error('KB deletion lost the recoverable card or left it visible');
+          copyNote.deleted = false; await copyNote.saveTx();
+          for (let n=0; n<100 && !(await kb.api.searchZettelSummaries('', {availability:'active',cardIDs:[copiedCard.id]})).items.length; n++) await new Promise(resolve=>setTimeout(resolve,25));
+          if (!(await kb.api.searchZettelSummaries('', {availability:'active',cardIDs:[copiedCard.id]})).items.length) throw new Error('Restoring a KB-deleted note did not reconnect the same card');
+          await Zotero.Items.erase(copyNote.id);
           nativeNote.deleted = true; await nativeNote.saveTx();
           try { await kb.api.acquireNativeNote({ id: rows[0].id, title: "", body: "" }); throw new Error("Missing note was silently replaced"); }
           catch (error) { if (!String(error).includes("NOTE_UNAVAILABLE")) throw error; }
@@ -1803,6 +1900,9 @@ function runQuitTest() {
         // Simulate previously unfiled linked notes so startup must organize them.
         nativeNote.parentItemID = false; await nativeNote.saveTx();
         looseNote.parentItemID = false; await looseNote.saveTx();
+        thinking.deleted = false; await thinking.saveTx();
+        note.deleted = false; await note.saveTx();
+        await kb.api.auditNativeNotes();
         const persistedThinkingID = await seedMappedNote({noteID: thinking.id, kind: "thinking"});
         const persistedLiteratureID = await seedMappedNote({noteID: note.id, kind: "literature", itemKey: item.key, libraryID: item.libraryID});
         const restartTrashNote = new Zotero.Item('note');
@@ -1810,7 +1910,8 @@ function runQuitTest() {
         const restartTrashHTML = '<div data-schema-version="9"><h1>Trash across restart</h1><p>Original native content <span class="math">$x^2$</span> <a href="knowledge-base://card/' + rows[0].id + '">Linked card</a></p></div>';
         restartTrashNote.setNote(restartTrashHTML); await restartTrashNote.saveTx({skipSelect:true});
         const restartTrashID = await seedMappedNote({noteID:restartTrashNote.id,kind:'zettel'});
-        restartTrashNote.deleted = true; await restartTrashNote.saveTx();
+        await kb.api.deleteZettel(restartTrashID);
+        if (!restartTrashNote.deleted) throw new Error("KB deletion did not trash a previously linked Zotero note");
         await kb.api.auditNativeNotes();
         if (!(await kb.api.getZettel(restartTrashID)) || (await kb.api.searchZettelSummaries('',{availability:'active',cardIDs:[restartTrashID]})).items.length) throw new Error('Trash fixture lost its mapped card before restart');
         if (thinking.getNote() !== originalThinking || thinking.parentItemID !== item.id) throw new Error("Opening changed the original project before restart");
@@ -1982,6 +2083,7 @@ try {
       restored.error ||
       code !== 0 ||
       restored.cards !== 5 ||
+      restored.hiddenCards !== 4 ||
       restored.noteKey !== state.noteKey
     )
       throw new Error("Restart validation failed: " + JSON.stringify(restored));
@@ -1990,7 +2092,7 @@ try {
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
   console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; single-row connection navigation with visible zero counts, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, body-only Reading views that preserve drafts and toolbars, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, body-only Reading views that preserve drafts and toolbars, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
   );
   console.log(
     "Graph display intervals (ms): " +

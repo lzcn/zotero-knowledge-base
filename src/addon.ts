@@ -30,7 +30,15 @@ class Addon {
         const method = Reflect.get(target, key, receiver);
         if (typeof method !== "function") return method;
         return (...args: unknown[]) => {
-          if (!this.data.alive && key !== "releaseImageDraft")
+          if (
+            !this.data.alive &&
+            ![
+              "releaseImageDraft",
+              "closePaperReading",
+              "cancelPaperReading",
+              "readingErrorMessage",
+            ].includes(String(key))
+          )
             throw new Error("Knowledge Base is shutting down.");
           return Reflect.apply(method, target, args);
         };

@@ -1,3 +1,4 @@
+import { noteSortOrder, type NoteSort } from "./note-sort";
 import { exec, getAll, transaction, type NoteKind, type ZettelRow } from "./db";
 
 function terms(text: string): Set<string> {
@@ -69,6 +70,7 @@ async function flushSearchIndex(): Promise<void> {
 
 export interface SearchOptions {
   availability?: "active" | "deleted";
+  sort?: NoteSort;
   entriesOnly?: boolean;
   kind?: NoteKind;
   limit?: number;
@@ -80,13 +82,16 @@ export interface SearchOptions {
 interface Cursor {
   scope: string;
   rank: number;
-  updated: number;
+  value: number | string;
   id: string;
 }
 
 /** Literal substring search, ranked by title/key relevance, with keyset pagination. */
 export async function searchRows(query = "", options: SearchOptions = {}) {
   const q = query.trim();
+  const sort = options.sort ?? "updated-desc";
+  const [sortField, sortDirection] = noteSortOrder(sort);
+  const comparison = sortDirection === "ASC" ? ">" : "<";
   if (
     options.kind &&
     !["literature", "zettel", "thinking"].includes(options.kind)
@@ -105,8 +110,9 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     q,
     !!options.entriesOnly,
     options.kind ?? null,
-    options.availability ?? null,
+    options.availability ?? "active",
     options.cardIDs ?? null,
+    sort,
   ]);
   let cursor: Cursor | undefined;
   if (options.cursor) {
@@ -115,8 +121,10 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       !cursor ||
       cursor.scope !== scope ||
       typeof cursor.id !== "string" ||
-      !Number.isFinite(cursor.rank) ||
-      !Number.isSafeInteger(cursor.updated)
+      !Number.isSafeInteger(cursor.rank) ||
+      (sortField === "title_folded"
+        ? typeof cursor.value !== "string"
+        : !Number.isSafeInteger(cursor.value))
     )
       throw new Error("Invalid search cursor");
   }
@@ -163,35 +171,34 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     );
     params.push(...options.cardIDs);
   }
-  if (options.availability) {
-    if (!["active", "deleted"].includes(options.availability))
-      throw new Error("Invalid note availability");
-    filters.push(
-      `${options.availability === "active" ? "NOT " : ""}EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)`,
-    );
-  }
+  const availability = options.availability ?? "active";
+  if (!["active", "deleted"].includes(availability))
+    throw new Error("Invalid note availability");
+  filters.push(
+    `${availability === "active" ? "NOT " : ""}EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)`,
+  );
   const projection = options.summary
     ? "id, title, title_folded, SUBSTR(body, 1, 2048) AS body, item_key, library_id, annotation_key, kind, custom_key, created_at, updated_at, search_rank"
     : "*";
   const continuation = cursor
-    ? "WHERE (search_rank > ? OR (search_rank = ? AND (updated_at < ? OR (updated_at = ? AND id < ?))))"
+    ? `WHERE (search_rank > ? OR (search_rank = ? AND (sort_value ${comparison} ? OR (sort_value = ? AND id ${comparison} ?))))`
     : "";
   if (cursor) {
     params.push(
       cursor.rank,
       cursor.rank,
-      cursor.updated,
-      cursor.updated,
+      cursor.value,
+      cursor.value,
       cursor.id,
     );
   }
   params.push(limit + 1);
   const rows = await getAll<ZettelRow & { search_rank: number }>(
-    `WITH candidates AS (SELECT z.*, ${rank} AS search_rank FROM zettels z
+    `WITH candidates AS (SELECT z.*, ${rank} AS search_rank, z.${sortField} AS sort_value FROM zettels z
      ${indexed ? "JOIN search_documents d ON d.card_id = z.id" : ""}
      ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""})
      SELECT ${projection} FROM candidates ${continuation}
-     ORDER BY search_rank ASC, updated_at DESC, id DESC LIMIT ?`,
+     ORDER BY search_rank ASC, sort_value ${sortDirection}, id ${sortDirection} LIMIT ?`,
     params,
   );
   const page = rows.slice(0, limit);
@@ -203,7 +210,10 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
         ? JSON.stringify({
             scope,
             rank: last.search_rank,
-            updated: last.updated_at,
+            value:
+              sortField === "title_folded"
+                ? last.title.toLowerCase()
+                : last[sortField],
             id: last.id,
           } satisfies Cursor)
         : null,

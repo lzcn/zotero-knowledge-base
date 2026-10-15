@@ -21,8 +21,11 @@ const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const outputRoot = join(root, "dist");
 const addonDirectory = join(root, "build", "addon");
 const sourceCSS = await readFile(join(root, "addon/content/manager.css"));
+const readingCSS = await readFile(
+  join(root, "addon/content/paper-reading.css"),
+);
 const nativeEditor = await readFile(join(root, "src/ui/native-editor.ts"));
-const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).update(nativeEditor).digest("hex").slice(0, 12)}`;
+const styleVersion = `${pkg.version}-${createHash("sha256").update(sourceCSS).update(readingCSS).update(nativeEditor).digest("hex").slice(0, 12)}`;
 const replacements = {
   ...pkg.config,
   buildVersion: pkg.version,
@@ -86,7 +89,7 @@ for (const name of await readdir(join(addonDirectory, "content"))) {
   const text = await readFile(join(addonDirectory, "content", name), "utf8");
   if (!/<window[\s>]/.test(text)) continue;
   assert.ok(
-    text.includes(`manager.css?v=${styleVersion}`),
+    text.includes(`.css?v=${styleVersion}`),
     `${name}: missing stylesheet cache key`,
   );
 }

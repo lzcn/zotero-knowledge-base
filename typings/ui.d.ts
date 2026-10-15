@@ -78,6 +78,7 @@ declare global {
       ): void;
     };
     ZoteroKnowledgeBase_selectZettel?: (id: string) => void;
+    knowledgeBaseShowUnresolved?: (ref: string) => void;
     ZoteroKnowledgeBase_editNote?: (args: EditorArgs) => void;
     ZoteroKnowledgeBase_showGraph?: (id?: string) => void;
   }
@@ -153,6 +154,7 @@ export interface EditorElements {
 }
 
 export interface ManagerElements {
+  "knowledge-base-sort": HTMLSelectElement;
   "knowledge-base-kind": HTMLSelectElement;
   "knowledge-base-entries": HTMLInputElement;
   "knowledge-base-entries-label": HTMLSpanElement;
@@ -187,7 +189,7 @@ export interface ManagerElements {
   "knowledge-base-btn-edit": HTMLElementTagNameMap["button"];
   "knowledge-base-btn-local-graph": HTMLElementTagNameMap["button"];
   "knowledge-base-btn-delete": HTMLElementTagNameMap["button"];
-  "knowledge-base-unresolved": HTMLElementTagNameMap["div"];
+  "knowledge-base-unresolved": HTMLDetailsElement;
   "knowledge-base-unresolved-head": HTMLElementTagNameMap["html"];
   "knowledge-base-unresolved-list": HTMLElementTagNameMap["ul"];
   "knowledge-base-error": HTMLElementTagNameMap["div"];

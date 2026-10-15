@@ -1,3 +1,4 @@
+import { noteSortOrder, type NoteSort } from "./note-sort";
 import { config } from "../../package.json";
 import { notifyDataChange } from "./events";
 
@@ -96,6 +97,17 @@ export function setGraphLocalDepth(value: number): void {
     throw new Error("Local graph hops must be between 1 and 6");
   Zotero.Prefs.set(preferenceKey("localDepth"), value, true);
 }
+export function getNoteSort(): NoteSort {
+  const value = Zotero.Prefs.get(`${config.prefsPrefix}.noteSort`, true);
+  if (typeof value !== "string") return "updated-desc";
+  noteSortOrder(value);
+  return value as NoteSort;
+}
+export function setNoteSort(value: string): void {
+  noteSortOrder(value);
+  Zotero.Prefs.set(`${config.prefsPrefix}.noteSort`, value, true);
+}
+
 export function getWorkbenchMode(): "tab" | "window" {
   return Zotero.Prefs.get(`${config.prefsPrefix}.workbenchMode`, true) ===
     "window"

@@ -33,6 +33,10 @@ await build({
       };
       export const stopWorkbenches = () => {};
       export const closeWorkbenches = () => {};
+      export const initPaperReading = () => run("paperReading");
+      export const stopPaperReading = () => run("stopPaperReading");
+      export const closePaperReadingTasks = () => run("closePaperReadingTasks");
+      export const closePaperReadings = () => {};
       export const initLocale = () => {};
       export const getString = (key) => key;
       export const initDB = () => run("initDB");
@@ -52,6 +56,7 @@ await build({
       export const closeAssets = () => run("closeAssets");
       export const cleanupImagesAfterChange = () => run("cleanupImages");
       export const rebuildCounts = () => run("rebuildCounts");
+      export const ensureZettelKeys = () => run("zettelKeys");
       export const registerPreferences = () => run("registerPreferences");
       export const unregisterPreferences = () => {};
       export const registerItemPaneUI = () => run("registerPane");
@@ -109,6 +114,7 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
   globalThis.addon = {
     data: { alive: true },
     api: {
+      isCodexEnabled: () => false,
       openManager: () => state.calls.push("openManager"),
       openWorkbenchWindow: () => state.calls.push("openWorkbenchWindow"),
       openEditor: () => {},
@@ -135,13 +141,21 @@ test("two windows retain independent resources; duplicate registration and shutd
   try {
     await Promise.all([h.hooks.onStartup(), h.hooks.onStartup()]);
     assert.equal(h.state.calls.filter((name) => name === "initDB").length, 1);
+    assert.equal(
+      h.state.calls.filter((name) => name === "zettelKeys").length,
+      1,
+    );
+    assert.ok(
+      h.state.calls.indexOf("zettelKeys") <
+        h.state.calls.indexOf("nativeNotes"),
+    );
     assert.ok(!h.state.calls.includes("registerReader"));
     for (const dom of h.doms)
-      assert.equal(dom.window.document.querySelectorAll("menuitem").length, 2);
+      assert.equal(dom.window.document.querySelectorAll("menuitem").length, 3);
     await h.hooks.onMainWindowLoad(h.doms[1].window);
     assert.equal(
       h.doms[1].window.document.querySelectorAll("menuitem").length,
-      2,
+      3,
     );
     await h.hooks.onMainWindowUnload(h.doms[0].window);
     assert.equal(
@@ -150,7 +164,7 @@ test("two windows retain independent resources; duplicate registration and shutd
     );
     assert.equal(
       h.doms[1].window.document.querySelectorAll("menuitem").length,
-      2,
+      3,
     );
     h.doms[1].window.document
       .getElementById("knowledge-base-menu-open-manager")
