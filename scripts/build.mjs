@@ -103,6 +103,7 @@ function run(command, argv) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+console.log("Checking build inputs...");
 const before = inputs();
 let previous;
 try {
@@ -121,13 +122,16 @@ if (fresh && !args.has("--check")) {
 } else {
   // Invalidate cached success before any step that can fail.
   rmSync(stateFile, { force: true });
+  console.log("Checking types...");
   if (process.env.npm_execpath) {
     run(process.execPath, [process.env.npm_execpath, "run", "typecheck"]);
   } else {
     run(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "typecheck"]);
   }
-  if (!fresh)
+  if (!fresh) {
+    console.log("Bundling and packaging plugin...");
     run(process.execPath, [join(root, "scripts", "build-package.mjs")]);
+  }
   if (!existsSync(output))
     throw new Error(`Build did not produce output: ${output}`);
   const after = inputs();

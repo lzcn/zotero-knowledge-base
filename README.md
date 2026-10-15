@@ -66,7 +66,8 @@ Manage tags on the Zotero note or its parent. **Settings → Knowledge Base → 
 
 Use Node.js 22.13+ (22.x) or 24+. Run `npm ci`, then `npm run check`.
 
-- `npm run build`: reuse valid output when inputs have not changed.
+- `npm run build`: reuse valid output when inputs have not changed. Run `npm run build` in the parent workspace to build and install all three plugins.
+- `npm run clean`: remove generated build output; retain downloaded tools, dependencies, research data and releases.
 - `npm run build:force`: rebuild from scratch.
 - `npm run check`: formatting, lint, tests and type checking; reuse valid XPI output.
 - `npm run benchmark:graph`: compare Canvas and WebGL2 on the same 1200-node geometry in a disposable Zotero profile. Reports CPU submission time and display-frame intervals separately; `KB_GRAPH_BENCHMARK_OUTPUT` saves the JSON result.

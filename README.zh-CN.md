@@ -66,7 +66,8 @@ Codex 论文阅读**默认关闭**，关闭时隐藏操作入口，并阻止 CLI
 
 需要 Node.js 22.13+（22.x）或 24+。依次运行 `npm ci`、`npm run check`。
 
-- `npm run build`：输入未变化时复用有效产物。
+- `npm run build`：输入未变化时复用有效产物。在上级工作区运行同一命令，可统一构建并安装三个插件。
+- `npm run clean`：清理构建产物，保留已下载工具、依赖、研究数据和发布文件。
 - `npm run build:force`：强制重建。
 - `npm run check`：格式、静态检查、测试和类型检查；复用有效 XPI。
 - `npm run benchmark:graph`：在临时 Zotero 配置中对同一组 1200 节点比较 Canvas 与 WebGL2，分别记录 CPU 绘制提交耗时和显示帧间隔；使用 `KB_GRAPH_BENCHMARK_OUTPUT` 保存 JSON 结果。
