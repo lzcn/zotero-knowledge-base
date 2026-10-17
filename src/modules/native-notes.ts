@@ -432,10 +432,7 @@ export async function nativeNoteHTML(
   return `<div data-schema-version="2">${title === null ? "" : heading.outerHTML}${doc.body.innerHTML}</div>`;
 }
 
-export function getMarkdownSource(
-  html: string,
-  legacyFragments = false,
-): {
+export function getMarkdownSource(html: string): {
   title: string;
   body: string;
   fragments: string[];
@@ -448,7 +445,7 @@ export function getMarkdownSource(
   replaceSimpleCitations(doc, root);
   // Copied page defaults should not turn ordinary paragraphs into opaque objects.
   for (const node of Array.from(
-    legacyFragments ? [] : root.querySelectorAll("[style]"),
+    root.querySelectorAll("[style]"),
   ) as HTMLElement[]) {
     for (const property of ["color", "background-color"]) {
       const value = node.style.getPropertyValue(property).replaceAll(" ", "");
@@ -479,29 +476,17 @@ export function getMarkdownSource(
     )
       continue;
     const index = fragments.push(node.outerHTML) - 1;
-    const marker = doc.createElement("a");
-    marker.setAttribute(
-      "href",
-      legacyFragments ? `knowledge-base://fragment/${index}` : `zkb:${index}`,
-    );
-    marker.textContent =
-      node.getAttribute("alt") ||
-      node.textContent?.trim() ||
-      getString("editor-image");
-    if (!legacyFragments) {
-      const placeholder = doc.createElement("span");
-      placeholder.textContent = `${tokenPrefix}${index}-end`;
-      node.replaceWith(placeholder);
-    } else node.replaceWith(marker);
+    const placeholder = doc.createElement("span");
+    placeholder.textContent = `${tokenPrefix}${index}-end`;
+    node.replaceWith(placeholder);
   }
   const projected = projectNativeNote(root.outerHTML);
-  if (!legacyFragments)
-    fragments.forEach((fragment, index) => {
-      projected.body = projected.body.replaceAll(
-        `${tokenPrefix}${index}-end`,
-        fragment,
-      );
-    });
+  fragments.forEach((fragment, index) => {
+    projected.body = projected.body.replaceAll(
+      `${tokenPrefix}${index}-end`,
+      fragment,
+    );
+  });
   return { ...projected, fragments };
 }
 
@@ -514,19 +499,12 @@ function restoreMarkdownFragments(
   const originalDoc = parse(original);
   const fragments = getMarkdownSource(original).fragments;
   for (const marker of Array.from(
-    doc.querySelectorAll(
-      'a[href^="knowledge-base://fragment/"], a[href^="zkb:"]',
-    ),
+    doc.querySelectorAll('a[href^="zkb:"]'),
   ) as Element[]) {
-    const match = /^(?:knowledge-base:\/\/fragment\/|zkb:)(\d+)$/.exec(
-      marker.getAttribute("href") || "",
-    );
-    const available = marker.getAttribute("href")?.startsWith("knowledge-base:")
-      ? getMarkdownSource(original, true).fragments
-      : fragments;
-    if (!match || !available[Number(match[1])])
+    const match = /^zkb:(\d+)$/.exec(marker.getAttribute("href") || "");
+    if (!match || !fragments[Number(match[1])])
       throw new Error("CARD_CONFLICT: native fragment unavailable");
-    const fragment = parse(available[Number(match[1])]);
+    const fragment = parse(fragments[Number(match[1])]);
     const node = doc.importNode(
       fragment.body.firstElementChild!,
       true,
@@ -638,7 +616,7 @@ export async function markdownDocumentHTML(
 }
 
 export interface NoteHealth {
-  note: "available" | "legacy" | "trashed" | "missing";
+  note: "available" | "unmapped" | "trashed" | "missing";
   source: "available" | "none" | "trashed" | "missing";
   editable: boolean;
 }
@@ -730,7 +708,7 @@ export async function getNoteHealth(id: string): Promise<NoteHealth> {
     note: !card
       ? "missing"
       : !mapping
-        ? "legacy"
+        ? "unmapped"
         : !note?.isNote()
           ? "missing"
           : note.isInTrash()
@@ -917,7 +895,7 @@ export async function acquireNativeNote(
     );
     if (input.isCurrent && !input.isCurrent())
       throw new Error("NOTE_SESSION_CLOSED");
-    // Avoid opening a second native editor while legacy images are imported.
+    // Avoid opening a second native editor while local images are imported.
     await note.saveTx({ skipSelect: true });
     if (input.id)
       await exec(

@@ -2656,23 +2656,6 @@ check(
     );
   },
 );
-const legacyFragmentProjection = native_notes.getMarkdownSource(
-  copiedParagraph,
-  true,
-);
-const legacyFragmentRoundTrip = await native_notes.markdownNoteHTML(
-  legacyFragmentProjection.title,
-  legacyFragmentProjection.body + "\n\nRecovered old draft",
-  copiedParagraph,
-);
-check(
-  "Older draft fragment indices still restore the original rich formatting",
-  () => {
-    assert.ok(legacyFragmentRoundTrip.includes("Recovered old draft"));
-    assert.ok(legacyFragmentRoundTrip.includes("background-color: white"));
-    assert.ok(!legacyFragmentRoundTrip.includes("knowledge-base://fragment/"));
-  },
-);
 const documentRoundTrip = await native_notes.markdownDocumentHTML(
   "# Renamed\n\nOrdinary **editable** text\n\n$e=mc^2$",
   copiedParagraph,

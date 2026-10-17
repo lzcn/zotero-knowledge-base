@@ -38,7 +38,7 @@ const SCHEMA_TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS unavailable_notes (card_id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('missing', 'trashed')))`,
   `CREATE TABLE IF NOT EXISTS note_save_operations (id TEXT PRIMARY KEY, card_id TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS note_keys (key TEXT PRIMARY KEY, card_id TEXT NOT NULL)`,
-  `CREATE TABLE IF NOT EXISTS card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, UNIQUE(note_key, library_id))`,
+  `CREATE TABLE IF NOT EXISTS card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, external INTEGER NOT NULL DEFAULT 0, UNIQUE(note_key, library_id))`,
   `CREATE TABLE IF NOT EXISTS editor_drafts (id TEXT PRIMARY KEY, body TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_parents (card_id TEXT PRIMARY KEY, parent_id TEXT, CHECK(card_id <> parent_id))`,
   `CREATE TABLE IF NOT EXISTS meta (
@@ -156,11 +156,7 @@ async function initializeDB(): Promise<void> {
       "Knowledge Base: close database",
       shutdownDatabase,
     );
-    // WAL is a performance optimisation only. Zotero wraps this same pragma in
-    // try/catch in xpcom/db.js, and so must we: letting it abort the run would
-    // leave the database permanently stuck on its old schema. Written without
-    // a trailing semicolon, matching Zotero's usage - these are prepared as
-    // single async statements, not executed as a script.
+    // WAL improves concurrency; an unavailable journal mode must not block access.
     try {
       await _conn.execute(`PRAGMA journal_mode = WAL`);
       trace("ok   PRAGMA journal_mode = WAL");
@@ -182,49 +178,24 @@ async function initializeDB(): Promise<void> {
 }
 
 async function ensureSchema(): Promise<void> {
+  const tables = await getAll<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE ?",
+    ["sqlite_%"],
+  );
+  if (tables.length) {
+    const row = tables.some((table) => table.name === "meta")
+      ? await getOne<{ value: string }>(
+          "SELECT value FROM meta WHERE key = 'schemaVersion'",
+        )
+      : undefined;
+    if (row?.value !== String(SCHEMA_VERSION))
+      throw new Error(
+        `Knowledge Base: unsupported schema ${row?.value ?? "missing"}; expected ${SCHEMA_VERSION}`,
+      );
+  }
   for (const sql of SCHEMA_TABLES) {
     await runSchemaStatement(sql);
   }
-  const columns = await getAll<{ name: string }>("PRAGMA table_info(zettels)");
-  if (!columns.some((column) => column.name === "kind"))
-    await exec(
-      "ALTER TABLE zettels ADD COLUMN kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL)))",
-    );
-  if (!columns.some((column) => column.name === "custom_key"))
-    await exec("ALTER TABLE zettels ADD COLUMN custom_key TEXT");
-  if (!columns.some((column) => column.name === "title_folded"))
-    await exec(
-      "ALTER TABLE zettels ADD COLUMN title_folded TEXT NOT NULL DEFAULT ''",
-    );
-  const linkColumns = await getAll<{ name: string }>(
-    "PRAGMA table_info(links)",
-  );
-  if (!linkColumns.some((column) => column.name === "ref_folded"))
-    await exec(
-      "ALTER TABLE links ADD COLUMN ref_folded TEXT NOT NULL DEFAULT ''",
-    );
-  // JavaScript case folding preserves the existing Unicode title matching behavior.
-  for (const row of await getAll<{ id: string; title: string }>(
-    "SELECT id, title FROM zettels WHERE title_folded = '' AND title <> ''",
-  ))
-    await exec("UPDATE zettels SET title_folded = ? WHERE id = ?", [
-      row.title.toLowerCase(),
-      row.id,
-    ]);
-  for (const row of await getAll<{ source_id: string; ref: string }>(
-    "SELECT source_id, ref FROM links WHERE ref_folded = ''",
-  ))
-    await exec(
-      "UPDATE links SET ref_folded = ? WHERE source_id = ? AND ref = ?",
-      [row.ref.toLowerCase(), row.source_id, row.ref],
-    );
-  const mappings = await getAll<{ name: string }>(
-    "PRAGMA table_info(card_notes)",
-  );
-  if (!mappings.some((column) => column.name === "external"))
-    await exec(
-      "ALTER TABLE card_notes ADD COLUMN external INTEGER NOT NULL DEFAULT 0",
-    );
   await exec(
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_literature_source ON zettels(library_id, item_key) WHERE kind = 'literature'",
   );
@@ -236,9 +207,6 @@ async function ensureSchema(): Promise<void> {
     [String(SCHEMA_VERSION)],
   );
 
-  await exec(
-    `INSERT OR IGNORE INTO card_parents (card_id, parent_id) SELECT id, NULL FROM zettels`,
-  );
   await ensureSearchIndex();
   await assertSchema();
 }

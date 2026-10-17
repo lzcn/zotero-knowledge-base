@@ -68,44 +68,6 @@ export function isZettelID(s: string): boolean {
   return /^\d{14}(-\d+)?$/.test(s);
 }
 
-/** Public timestamp keys leave native mappings, graph IDs and old links intact. */
-export async function ensureZettelKeys(
-  shouldStop = () => false,
-): Promise<void> {
-  const changed: string[] = [];
-  await transaction(async () => {
-    const rows = await getAll<{ id: string; created_at: number }>(
-      "SELECT id, created_at FROM zettels WHERE kind = 'zettel' AND custom_key IS NULL ORDER BY created_at, id",
-    );
-    const reserved = new Set(
-      (
-        await getAll<{ id: string }>(
-          "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys",
-        )
-      ).map((row) => row.id),
-    );
-    for (const row of rows) {
-      if (shouldStop()) break;
-      if (isZettelID(row.id)) continue;
-      const key = newZettelID(reserved, new Date(row.created_at));
-      reserved.add(key);
-      await exec("UPDATE zettels SET custom_key = ? WHERE id = ?", [
-        key,
-        row.id,
-      ]);
-      await exec("INSERT INTO note_keys(key, card_id) VALUES (?, ?)", [
-        key,
-        row.id,
-      ]);
-      changed.push(row.id);
-    }
-  });
-  if (changed.length) {
-    invalidateNoteReferences();
-    notifyDataChange({ cardIDs: changed, fields: ["identity"] });
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* Link parsing                                                         */
 /* ------------------------------------------------------------------ */

@@ -32,7 +32,9 @@ await build({
         if (name === "initDB") await state().gate;
       };
       export const stopWorkbenches = () => {};
-      export const closeWorkbenches = () => {};
+      export const closeWorkbenches = () => {
+        if (state().fail === "closeWorkbenches") throw new Error("Workbench close failed");
+      };
       export const initPaperReading = () => run("paperReading");
       export const stopPaperReading = () => run("stopPaperReading");
       export const closePaperReadingTasks = () => run("closePaperReadingTasks");
@@ -56,7 +58,6 @@ await build({
       export const closeAssets = () => run("closeAssets");
       export const cleanupImagesAfterChange = () => run("cleanupImages");
       export const rebuildCounts = () => run("rebuildCounts");
-      export const ensureZettelKeys = () => run("zettelKeys");
       export const registerPreferences = () => run("registerPreferences");
       export const unregisterPreferences = () => {};
       export const registerItemPaneUI = () => run("registerPane");
@@ -141,14 +142,6 @@ test("two windows retain independent resources; duplicate registration and shutd
   try {
     await Promise.all([h.hooks.onStartup(), h.hooks.onStartup()]);
     assert.equal(h.state.calls.filter((name) => name === "initDB").length, 1);
-    assert.equal(
-      h.state.calls.filter((name) => name === "zettelKeys").length,
-      1,
-    );
-    assert.ok(
-      h.state.calls.indexOf("zettelKeys") <
-        h.state.calls.indexOf("nativeNotes"),
-    );
     assert.ok(!h.state.calls.includes("registerReader"));
     for (const dom of h.doms)
       assert.equal(dom.window.document.querySelectorAll("menuitem").length, 3);
@@ -227,6 +220,28 @@ test("disabling the plugin removes the quit observer", async () => {
     assert.equal(h.observers.size, 1);
     await h.hooks.onShutdown();
     assert.equal(h.observers.size, 0);
+  } finally {
+    h.close();
+  }
+});
+
+test("a failed window cleanup still removes UI and closes storage", async () => {
+  const h = await fixture({ fail: "closeWorkbenches" });
+  try {
+    await h.hooks.onStartup();
+    await h.hooks.onShutdown();
+    assert.ok(
+      h.state.errors.some((error) =>
+        /Workbench close failed/.test(error.message),
+      ),
+    );
+    assert.ok(h.state.calls.includes("closeDB"));
+    for (const dom of h.doms)
+      assert.equal(
+        dom.window.document.querySelectorAll("menuitem, toolbarbutton, link")
+          .length,
+        0,
+      );
   } finally {
     h.close();
   }

@@ -65,6 +65,9 @@ class Connection {
     this.db = new DatabaseSync(filename);
   }
   async execute(sql, params = null) {
+    // Match Gecko Sqlite.sys.mjs: LIKE patterns must use bound parameters.
+    if (/\bLIKE\b\s(?![@:?])/i.test(sql))
+      throw new Error("Please enter a LIKE clause with bindings");
     if (failStatement?.(sql)) throw new Error("Injected KB commit failure");
     executedStatements.push(sql);
     const bound = Array.isArray(params)
@@ -156,6 +159,9 @@ function createCurrentDatabase(file) {
     CREATE TABLE zettels (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
+      title_folded TEXT NOT NULL DEFAULT '',
+      kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
+      custom_key TEXT,
       body TEXT NOT NULL DEFAULT '',
       item_key TEXT,
       library_id INTEGER,
@@ -167,6 +173,7 @@ function createCurrentDatabase(file) {
       source_id TEXT NOT NULL,
       target_id TEXT,
       ref TEXT NOT NULL,
+      ref_folded TEXT NOT NULL DEFAULT '',
       UNIQUE(source_id, ref)
     );
     CREATE TABLE tags (
@@ -181,7 +188,7 @@ function createCurrentDatabase(file) {
     CREATE INDEX idx_zettels_item ON zettels(item_key);
   `);
   db.prepare(
-    "INSERT INTO meta (key, value) VALUES ('schemaVersion', '3')",
+    "INSERT INTO meta (key, value) VALUES ('schemaVersion', '11')",
   ).run();
   const insert = db.prepare(
     "INSERT INTO zettels (id, title, body, item_key, library_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -205,10 +212,15 @@ function createCurrentDatabase(file) {
     2,
   );
   insert.run("20260101010103", "", "", null, null, 3, 3);
+  db.exec(`
+    UPDATE zettels SET title_folded = lower(title);
+    CREATE TABLE card_parents (card_id TEXT PRIMARY KEY, parent_id TEXT, CHECK(card_id <> parent_id));
+    INSERT INTO card_parents SELECT id, NULL FROM zettels;
+  `);
   // The link index the app writes on save. Opening does not rebuild it, so
   // the fixture must carry it for the backlink assertions to be meaningful.
   db.prepare(
-    "INSERT INTO links (source_id, target_id, ref) VALUES ('20260101010102', '20260101010101', 'existing one')",
+    "INSERT INTO links (source_id, target_id, ref, ref_folded) VALUES ('20260101010102', '20260101010101', 'existing one', 'existing one')",
   ).run();
   db.close();
 }
@@ -448,73 +460,6 @@ if (currentSchema) {
         b.sourceId === "20260101010102" && b.sourceTitle === "existing two",
     ),
   );
-
-  const legacyKeys = ["note-1-PUBKEY01", "note-1-PUBKEY02"];
-  const creation = Date.UTC(2020, 1, 2, 3, 4, 5);
-  const reservedKey = zettel.newZettelID(new Set(), new Date(creation));
-  for (const id of [reservedKey, ...legacyKeys])
-    await db.exec(
-      "INSERT INTO zettels(id,title,title_folded,body,kind,created_at,updated_at) VALUES(?,?,?,'Original body','zettel',?,?)",
-      [id, id, id, creation, creation],
-    );
-  await db.exec(
-    "INSERT INTO card_notes(card_id,note_key,library_id,original_body) VALUES(?,'PUBKEY01',1,'Original body')",
-    [legacyKeys[0]],
-  );
-  await db.exec(
-    "INSERT INTO links(source_id,target_id,ref,ref_folded) VALUES(?,?,?,?)",
-    [legacyKeys[1], legacyKeys[0], legacyKeys[0], legacyKeys[0].toLowerCase()],
-  );
-  await zettel.ensureZettelKeys();
-  const normalized = await Promise.all(
-    legacyKeys.map((id) => zettel.getZettel(id)),
-  );
-  const publicRefs = await noteRefs.getNoteReferences();
-  check(
-    "Legacy Zettels get distinct timestamp keys while reserved keys and native identities remain intact",
-    normalized[0].custom_key === reservedKey + "-2" &&
-      normalized[1].custom_key === reservedKey + "-3" &&
-      normalized.every(
-        (row) => row.updated_at === creation && row.body === "Original body",
-      ) &&
-      (
-        await db.getOne("SELECT note_key FROM card_notes WHERE card_id=?", [
-          legacyKeys[0],
-        ])
-      ).note_key === "PUBKEY01" &&
-      (await zettel.getOutgoing(legacyKeys[1]))[0].targetId === legacyKeys[0] &&
-      publicRefs.byID.get(legacyKeys[0]) === normalized[0].custom_key,
-  );
-  const publicResolved = await zettel.resolveRefs([
-    legacyKeys[0],
-    normalized[0].custom_key,
-  ]);
-  check(
-    "Both old internal IDs and new public timestamp keys resolve to the original Zettel",
-    publicResolved.get(legacyKeys[0]) === legacyKeys[0] &&
-      publicResolved.get(normalized[0].custom_key) === legacyKeys[0],
-  );
-  const keyWrites = executedStatements.filter((sql) =>
-    /^(UPDATE zettels SET custom_key|INSERT INTO note_keys)/.test(sql),
-  ).length;
-  await zettel.ensureZettelKeys();
-  check(
-    "Repeated key normalization does not change timestamps or write new aliases",
-    executedStatements.filter((sql) =>
-      /^(UPDATE zettels SET custom_key|INSERT INTO note_keys)/.test(sql),
-    ).length === keyWrites,
-  );
-  await zettel.saveZettel({
-    id: legacyKeys[0],
-    title: "Updated legacy note",
-    body: "Original body",
-  });
-  check(
-    "Normal saving retains a Zettel's generated public key",
-    (await zettel.getZettel(legacyKeys[0])).custom_key ===
-      normalized[0].custom_key,
-  );
-  for (const id of [reservedKey, ...legacyKeys]) await zettel.deleteZettel(id);
 
   const searchFixtures = [];
   for (let n = 0; n < 7; n++)
@@ -756,7 +701,7 @@ if (currentSchema) {
     !(await zettel.listZettels("SearchNeedle")).length,
   );
   check(
-    "Existing content is indexed during schema migration",
+    "Missing search cache is rebuilt for existing content",
     (await zettel.listZettels("existing one")).length >= 1,
   );
 
@@ -981,18 +926,18 @@ if (currentSchema) {
   zoteroStub.Items = oldItems;
   journalDOM.window.close();
 
-  const migrated = await db.getOne(
+  const storedTitle = await db.getOne(
     "SELECT title_folded FROM zettels WHERE id = ?",
     ["20260101010101"],
   );
-  const migratedLink = await db.getOne(
+  const storedLink = await db.getOne(
     "SELECT ref_folded FROM links WHERE source_id = ?",
     ["20260101010102"],
   );
   check(
-    "Schema migration backfills title and link lookup keys without changing existing content",
-    migrated.title_folded === "existing one" &&
-      migratedLink.ref_folded === "existing one",
+    "Opening the current schema preserves title and link lookup keys",
+    storedTitle.title_folded === "existing one" &&
+      storedLink.ref_folded === "existing one",
   );
 
   const duplicateA = await zettel.saveZettel({ title: "Twin", body: "" });

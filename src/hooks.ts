@@ -18,7 +18,7 @@ import {
   stopNativeMarkdown,
   closeNativeMarkdown,
 } from "./modules/native-markdown";
-import { rebuildCounts, ensureZettelKeys } from "./modules/zettel";
+import { rebuildCounts } from "./modules/zettel";
 import {
   initNoteSessions,
   stopNoteSessions,
@@ -84,7 +84,6 @@ async function start(token: number): Promise<void> {
     initLocale();
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
-      ["zettelKeys", () => ensureZettelKeys(() => token !== generation)],
       ["initAssets", initAssets],
       ["noteSessions", initNoteSessions],
       [
@@ -245,12 +244,24 @@ async function onMainWindowLoad(win: Window): Promise<void> {
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
-  closePaperReadings(win);
-  readingMenuListeners.get(win)?.();
+  const actions = [
+    () => closePaperReadings(win),
+    readingMenuListeners.get(win),
+    () => closeWorkbenches(win),
+    ...(windows.get(win) ?? []).map((node) => () => node.remove()),
+  ];
+  // Release ownership before callbacks can trigger another unload.
   readingMenuListeners.delete(win);
-  closeWorkbenches(win);
-  for (const node of windows.get(win) ?? []) node.remove();
   windows.delete(win);
+  for (const action of actions) {
+    try {
+      action?.();
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
 }
 
 async function releaseResources(): Promise<void> {
