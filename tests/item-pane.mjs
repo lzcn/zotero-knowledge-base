@@ -13,7 +13,6 @@ const state = {
   listeners: new Set(),
   errors: [],
   opens: [],
-  codex: false,
 };
 globalThis.paneTest = state;
 await build({
@@ -68,8 +67,6 @@ globalThis.Zotero = {
 };
 globalThis.addon = {
   api: {
-    isCodexEnabled: () => state.codex,
-    onCodexEnabledChange: () => () => {},
     async getHighlights() {
       throw new Error("Broken attachment");
     },
@@ -105,15 +102,12 @@ check("Disabled paper reading leaves only the native note actions", () => {
   assert.equal(body.querySelectorAll("button").length, 2);
   assert.equal(body.textContent.includes("codex-read-paper"), false);
 });
-state.codex = true;
-state.section.onRender({ body, item: item("A") });
-await settle();
 check(
   "The source pane shows cards without requesting or importing highlights",
   () => {
     assert.equal(body.querySelector("li").textContent, "A linked idea");
-    assert.equal(body.querySelectorAll("button")[2].textContent, "section-new");
-    assert.equal(body.querySelectorAll("button").length, 3);
+    assert.equal(body.querySelectorAll("button")[1].textContent, "section-new");
+    assert.equal(body.querySelectorAll("button").length, 2);
     assert.equal(state.errors.length, 0);
   },
 );
@@ -121,10 +115,6 @@ body.querySelector("button").click();
 await settle();
 check("The source pane opens its unique Literature Note", () =>
   assert.deepEqual(state.literature, { key: "A", libraryID: 1 }),
-);
-body.querySelectorAll("button")[1].click();
-check("Paper reading targets only the selected source", () =>
-  assert.deepEqual(state.reading, { key: "A", libraryID: 1 }),
 );
 body.querySelector("li").click();
 check("A source card opens its actual editor", () =>

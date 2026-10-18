@@ -115,7 +115,6 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
   globalThis.addon = {
     data: { alive: true },
     api: {
-      isCodexEnabled: () => false,
       openManager: () => state.calls.push("openManager"),
       openWorkbenchWindow: () => state.calls.push("openWorkbenchWindow"),
       openEditor: () => {},
@@ -144,11 +143,11 @@ test("two windows retain independent resources; duplicate registration and shutd
     assert.equal(h.state.calls.filter((name) => name === "initDB").length, 1);
     assert.ok(!h.state.calls.includes("registerReader"));
     for (const dom of h.doms)
-      assert.equal(dom.window.document.querySelectorAll("menuitem").length, 3);
+      assert.equal(dom.window.document.querySelectorAll("menuitem").length, 2);
     await h.hooks.onMainWindowLoad(h.doms[1].window);
     assert.equal(
       h.doms[1].window.document.querySelectorAll("menuitem").length,
-      3,
+      2,
     );
     await h.hooks.onMainWindowUnload(h.doms[0].window);
     assert.equal(
@@ -157,7 +156,7 @@ test("two windows retain independent resources; duplicate registration and shutd
     );
     assert.equal(
       h.doms[1].window.document.querySelectorAll("menuitem").length,
-      3,
+      2,
     );
     h.doms[1].window.document
       .getElementById("knowledge-base-menu-open-manager")

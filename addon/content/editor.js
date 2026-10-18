@@ -73,7 +73,6 @@ const relationGroups = [
 ];
 let unsubscribe = null;
 let unsubscribeSourceStyle = null;
-let unsubscribeCodex = null;
 let sourceRenderVersion = 0;
 /** @type {"visual" | "source"} */
 let editorMode = "visual";
@@ -215,7 +214,6 @@ async function loadEditor() {
   await setEditorMode("visual", !zettelId && !args.draftId);
   if (disposed || window.knowledgeBaseStopping) return;
   loaded = true;
-  unsubscribeCodex = api.onCodexEnabledChange(() => updateNoteIdentity());
   if (dirty && !args.draftId) scheduleSave();
   await refreshParentItem();
   await refreshNoteTags();
@@ -358,13 +356,6 @@ async function refreshSavedCard() {
 }
 
 function updateNoteIdentity(note = null) {
-  const readingButton = /** @type {HTMLButtonElement} */ (
-    document.getElementById("knowledge-base-read-paper")
-  );
-  readingButton.hidden =
-    !api.isCodexEnabled() || noteKind !== "literature" || !zettelId;
-  readingButton.disabled =
-    recoveryPending || libraryReadOnly || noteUnavailable;
   const select = $("knowledge-base-note-kind");
   select.replaceChildren();
   for (const kind of noteKind === "literature"
@@ -456,8 +447,6 @@ function applyLocale() {
   const openWindow = document.getElementById("knowledge-base-open-window");
   openWindow.hidden = !args.embedded;
   openWindow.textContent = api.loc("editor-open-window");
-  document.getElementById("knowledge-base-read-paper").textContent =
-    api.loc("codex-read-paper");
   if (args.embedded) $("knowledge-base-editor-cancel").hidden = true;
   $("knowledge-base-src-label").textContent = api.loc("editor-source-label");
   $("knowledge-base-src-none").textContent = api.loc("editor-src-none");
@@ -543,14 +532,6 @@ function bindEvents() {
     .addEventListener("click", () =>
       run(async () => {
         if (await save(false)) api.openEditor({ zettelId, window: true });
-      }),
-    );
-  document
-    .getElementById("knowledge-base-read-paper")
-    .addEventListener("click", () =>
-      run(async () => {
-        if (source && (await save(false)))
-          api.openPaperReading(source.key, source.libraryID);
       }),
     );
   const more = /** @type {HTMLDetailsElement} */ (
@@ -1959,7 +1940,6 @@ window.addEventListener("unload", () => {
   }
   unsubscribe?.();
   unsubscribeSourceStyle?.();
-  unsubscribeCodex?.();
   clearTimeout(previewTimer);
   clearTimeout(relationsTimer);
   clearTimeout(searchTimer);

@@ -44,11 +44,7 @@ Sources are optional for Zettels and Thinking Notes. Notes with a regular item s
 
 On macOS, shortcuts use Command and leave Control available for native text editing and context clicks. Markdown saving waits for Chinese and other IME composition to finish. Two-finger scrolling pans the graph, pinch gestures zoom, and reduced-motion settings suppress layout animation.
 
-Codex paper reading is **disabled by default**. Disabled reading hides its actions and blocks CLI discovery and launch. Enable it in **Settings → Knowledge Base → Paper Reading with Codex** to read a paper manually from the source item's **Knowledge Base → Read with Codex**, its context menu, or a Literature Note's **More (…) → Read with Codex**. Turning it off cancels active readings and closes their draft windows without saving. Install and sign in to a recent Codex CLI on this computer first. Leave the executable path blank for detection or select its absolute path; an npm installation's Node shim is resolved to its bundled native executable. A model override is optional. **Test Connection** checks the executable and login without submitting a paper. The plugin uses your signed-in CLI account; it does not require a separate API key.
-
-Each request extracts text from an available local PDF and sends it to Codex. The reading uses a temporary directory, a read-only sandbox and structured output; user CLI tools and MCP configuration are not loaded. It generates Chinese prose about the paper's problem, method, supported equations, experiments and limitations, with physical PDF page citations. The current limit is 100 pages and 240,000 text characters, keeping complete pages; a partial reading is explicitly identified. This is text-based reading: figures and mathematical glyphs may be missing. Missing PDFs and scans without readable text produce an error instead of an abstract-only note.
-
-Review or edit the Markdown draft and use **Reading View** before **Save Literature Note**. Generation alone creates no note. A new reading saves as a native note beneath its source paper; existing Literature Notes use **Append to Literature Note**, preserving their original blocks and identity. Page citations become native PDF links. Concurrent changes, removal of the paper or PDF, and unavailable notes block a stale save. Repeated clicks reuse the same reading window. Cancel or close the window to stop the task; closing discards an unsaved reading draft. Disabling the plugin or quitting Zotero terminates its Codex children and removes temporary paper text. There is no automatic library-wide reading or replacement of your existing writing.
+Notes, links and search work locally without AI services or model configuration. Search waits for IME composition to finish, so partially entered Chinese text does not replace the current list. Changing filters consumes pending searches to avoid duplicate refreshes.
 
 ## Data and backup
 
@@ -68,7 +64,7 @@ Only the current database and Markdown fragment formats are supported. Other dat
 
 ### Implementation
 
-Ordinary note search uses the local SQLite character-bigram inverted index in `src/modules/search.ts`, exact key/title priority and literal substring verification; it uses no embedding model. `src/ui/graph-layout.ts` runs d3-force in a Worker. Optional paper reading uses Codex CLI: the model field overrides the CLI default; no model name is fixed in plugin code (`src/modules/codex.ts`).
+Ordinary note search uses the local SQLite character-bigram inverted index in `src/modules/search.ts`, exact key/title priority and literal substring verification; it uses no embedding model. `src/ui/graph-layout.ts` runs d3-force in a Worker.
 
 Use Node.js 22.13+ (22.x) or 24+. Run `npm ci`, then `npm run check`.
 

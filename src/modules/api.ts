@@ -1,20 +1,4 @@
 import { compareNoteSummaries } from "./note-sort";
-import {
-  getCodexSettings,
-  setCodexSetting,
-  testCodex,
-  isCodexEnabled,
-  setCodexEnabled,
-  onCodexEnabledChange,
-} from "./codex";
-import {
-  openPaperReading,
-  generatePaperReading,
-  applyPaperReading,
-  cancelPaperReading,
-  closePaperReading,
-  readingErrorMessage,
-} from "./paper-reading";
 import { isAccelKey } from "../ui/platform";
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
@@ -189,18 +173,6 @@ function mainWindow(): Window {
 const editorWindows = new Map<string, Window>();
 
 export const api = {
-  openPaperReading,
-  generatePaperReading,
-  applyPaperReading,
-  cancelPaperReading,
-  closePaperReading,
-  readingErrorMessage,
-  getCodexSettings,
-  setCodexSetting,
-  testCodex,
-  isCodexEnabled,
-  setCodexEnabled,
-  onCodexEnabledChange,
   ensureLiteratureNote,
   getNoteHealth,
   getNoteTags,

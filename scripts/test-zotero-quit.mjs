@@ -486,16 +486,7 @@ function runQuitTest() {
         await new Promise(resolve => setTimeout(resolve,50));
       }
       if (!styleMenu || styleMenu.value !== "http://www.zotero.org/styles/apa") throw new Error("Native Settings style control did not initialize");
-      const codexControl=preferences.document.getElementById("knowledge-base-codex-enabled");
-      const codexOptions=preferences.document.getElementById("knowledge-base-codex-options");
-      const codexAction=literatureEditor.document.getElementById("knowledge-base-read-paper");
-      if(kb.api.isCodexEnabled() || codexControl.checked || !codexOptions.hidden || !codexAction.hidden) throw new Error("Codex reading is not disabled by default");
-      codexControl.checked=true;codexControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
-      for(let n=0;n<100 && codexAction.hidden;n++) await new Promise(resolve=>setTimeout(resolve,25));
-      if(!kb.api.isCodexEnabled() || codexOptions.hidden || codexAction.hidden) throw new Error("Native Codex enable switch did not update the editor");
-      codexControl.checked=false;codexControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
-      for(let n=0;n<100 && !codexAction.hidden;n++) await new Promise(resolve=>setTimeout(resolve,25));
-      if(kb.api.isCodexEnabled() || !codexOptions.hidden || !codexAction.hidden || Services.wm.getMostRecentWindow("knowledge-base:paper-reading")) throw new Error("Native Codex disable switch did not hide actions without launching a reading");
+      if (preferences.document.getElementById("knowledge-base-codex-enabled") || literatureEditor.document.getElementById("knowledge-base-read-paper") || kb.api.openPaperReading) throw new Error("AI reading remains available");
       const modeMenu=preferences.document.getElementById("knowledge-base-workbench-mode");
       if(modeMenu?.value!=="tab" || modeMenu.getAttribute("native")!=="true" || !modeMenu.querySelector('menuitem[value="window"]').label) throw new Error('Native Settings workbench mode did not initialize');
       modeMenu.value="window";modeMenu.dispatchEvent(new preferences.Event("command",{bubbles:true}));

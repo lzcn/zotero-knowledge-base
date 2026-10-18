@@ -1,10 +1,4 @@
 import { config, version } from "../package.json";
-import {
-  initPaperReading,
-  stopPaperReading,
-  closePaperReadingTasks,
-  closePaperReadings,
-} from "./modules/paper-reading";
 import { getString, initLocale } from "./utils/locale";
 import { closeDB, initDB } from "./modules/db";
 import {
@@ -42,7 +36,6 @@ import {
 } from "./modules/startup-errors";
 
 const windows = new Map<Window, Element[]>();
-const readingMenuListeners = new Map<Window, () => void>();
 let ready = false;
 let generation = 0;
 let startupPromise: Promise<void> | undefined;
@@ -96,7 +89,6 @@ async function start(token: number): Promise<void> {
       ["registerItemPaneUI", registerItemPaneUI],
       ["nativeMarkdown", initNativeMarkdown],
       ["registerPreferences", registerPreferences],
-      ["paperReading", initPaperReading],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -192,51 +184,6 @@ async function onMainWindowLoad(win: Window): Promise<void> {
             : undefined,
       });
     });
-    addMenu(
-      "zotero-itemmenu",
-      "itemmenu-read-paper",
-      "codex-read-paper",
-      () => {
-        const pane = (
-          win as Window & {
-            ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
-          }
-        ).ZoteroPane;
-        const selected = pane.getSelectedItems();
-        if (selected.length !== 1) return;
-        const item = selected[0];
-        const source = item.isRegularItem() ? item : item.parentItem;
-        if (source && source.isRegularItem() && !source.isInTrash())
-          addon.api.openPaperReading(source.key, source.libraryID, win);
-      },
-    );
-    const popup = doc.getElementById("zotero-itemmenu")!;
-    const updateReadingMenu = () => {
-      const pane = (
-        win as Window & {
-          ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
-        }
-      ).ZoteroPane;
-      const selected = pane.getSelectedItems();
-      const item = selected.length === 1 ? selected[0] : undefined;
-      const source = item?.isRegularItem() ? item : item?.parentItem;
-      doc
-        .getElementById(`${config.addonRef}-itemmenu-read-paper`)
-        ?.toggleAttribute(
-          "hidden",
-          !addon.api.isCodexEnabled() ||
-            !source ||
-            !source.isRegularItem() ||
-            source.isInTrash(),
-        );
-    };
-    doc
-      .getElementById(`${config.addonRef}-itemmenu-read-paper`)!
-      .setAttribute("hidden", "true");
-    popup.addEventListener("popupshowing", updateReadingMenu);
-    readingMenuListeners.set(win, () =>
-      popup.removeEventListener("popupshowing", updateReadingMenu),
-    );
   } catch (error) {
     await onMainWindowUnload(win);
     throw error;
@@ -245,13 +192,10 @@ async function onMainWindowLoad(win: Window): Promise<void> {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   const actions = [
-    () => closePaperReadings(win),
-    readingMenuListeners.get(win),
     () => closeWorkbenches(win),
     ...(windows.get(win) ?? []).map((node) => () => node.remove()),
   ];
   // Release ownership before callbacks can trigger another unload.
-  readingMenuListeners.delete(win);
   windows.delete(win);
   for (const action of actions) {
     try {
@@ -286,7 +230,6 @@ async function releaseResources(): Promise<void> {
     },
     unregisterItemPaneUI,
     unregisterPreferences,
-    closePaperReadingTasks,
     closeNativeMarkdown,
     closeNativeNotes,
     closeNoteSessions,
@@ -306,7 +249,6 @@ async function releaseResources(): Promise<void> {
 }
 
 function onAppShutdown(): void {
-  stopPaperReading();
   stopWorkbenches();
   // Start pending draft writes before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {

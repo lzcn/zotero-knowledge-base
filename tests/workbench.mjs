@@ -139,6 +139,49 @@ try {
   assert.equal(await cancelled, false);
   console.log("PASS Clearing an editor cancels pending document loads");
 
+  let finishStaleReady, finishCurrentReady;
+  editor.contentWindow = {};
+  editor.loadURI = (location) => {
+    if (location === "about:blank") {
+      editor.contentWindow = { document: doc };
+      return;
+    }
+    const args = module.getViewArguments(
+      new URL(location).searchParams.get("context"),
+    );
+    const ready = new Promise((resolve) => {
+      if (args.zettelId === "stale-ready") finishStaleReady = resolve;
+      else finishCurrentReady = resolve;
+    });
+    editor.contentWindow = { document: doc, knowledgeBaseReady: () => ready };
+    globalThis.queueMicrotask(() => {
+      const event = new dom.window.Event("load");
+      Object.defineProperty(event, "target", { value: doc });
+      editor.dispatchEvent(event);
+    });
+  };
+  const staleReady = module.mountEditor(editor, { zettelId: "stale-ready" });
+  await new Promise((resolve) => setImmediate(resolve));
+  module.clearEditor(editor);
+  assert.equal(await staleReady, false);
+  const currentReady = module.mountEditor(editor, {
+    zettelId: "current-ready",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  finishStaleReady();
+  await new Promise((resolve) => setImmediate(resolve));
+  module.clearEditor(editor);
+  const currentResult = await Promise.race([
+    currentReady,
+    new Promise((resolve) => setTimeout(() => resolve("still loading"), 20)),
+  ]);
+  finishCurrentReady();
+  await currentReady;
+  assert.equal(currentResult, false);
+  console.log(
+    "PASS Late initialization cleanup cannot remove a newer editor's cancellation handler",
+  );
+
   const nativeStates = [
     { type: "library" },
     { type: "reader", data: { itemID: 7 } },

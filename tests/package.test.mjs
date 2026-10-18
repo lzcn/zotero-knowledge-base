@@ -100,10 +100,24 @@ test("production package excludes personal library maintenance and test fixtures
   const main = strFromU8(files["content/scripts/knowledge-base.js"]);
   assert.doesNotMatch(
     main,
-    /registerExistingNote|seedMappedNote|kb-adopt-existing|reviewed-plan\.json|\/Users\/zhi\//,
+    /registerExistingNote|seedMappedNote|kb-adopt-existing|reviewed-plan\.json|\/Users\/zhi\/|openPaperReading|generatePaperReading|testCodex/,
   );
   assert.equal(
     Object.keys(files).some((name) => /^(?:scripts|tests|src)\//.test(name)),
     false,
   );
+});
+
+test("production package contains no AI reading windows or settings", async () => {
+  const files = unzipSync(
+    await readFile(
+      new URL("../dist/zotero-knowledge-base.xpi", import.meta.url),
+    ),
+  );
+  assert.equal(
+    Object.keys(files).some((name) => /paper-reading|codex/i.test(name)),
+    false,
+  );
+  assert.doesNotMatch(strFromU8(files["content/preferences.xhtml"]), /codex/i);
+  assert.doesNotMatch(strFromU8(files["prefs.js"]), /codex/i);
 });

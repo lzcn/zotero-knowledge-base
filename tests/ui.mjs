@@ -957,8 +957,6 @@ const prefsDOM = new JSDOM(
   { contentType: "application/xhtml+xml", runScripts: "outside-only" },
 );
 const prefsWin = prefsDOM.window;
-let codexEnabled = false;
-let codexChanges = 0;
 prefsWin.document.createXULElement = (tag) =>
   prefsWin.document.createElementNS(
     "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
@@ -972,12 +970,6 @@ prefsWin.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
       ...preferences,
-      getCodexSettings: () => ({ enabled: codexEnabled, path: "", model: "" }),
-      setCodexEnabled: (enabled) => {
-        codexEnabled = enabled;
-        codexChanges++;
-      },
-      setCodexSetting() {},
       getGraphTags: async () => ["Machine learning", "中文 标签"],
       getSourceStyles: async () => [{ id: "apa", title: "APA" }],
       getSourceStyle: () => "apa",
@@ -995,30 +987,6 @@ await Promise.all([
 ]);
 const prefsCommand = (control) =>
   control.dispatchEvent(new prefsWin.Event("command", { bubbles: true }));
-const codexControl = prefsWin.document.getElementById(
-  "knowledge-base-codex-enabled",
-);
-const codexOptions = prefsWin.document.getElementById(
-  "knowledge-base-codex-options",
-);
-check("Codex reading starts disabled with its configuration hidden", () => {
-  assert.equal(codexControl.checked, false);
-  assert.equal(codexOptions.hidden, true);
-});
-codexControl.checked = true;
-prefsCommand(codexControl);
-assert.equal(codexEnabled, true);
-assert.equal(codexOptions.hidden, false);
-codexControl.checked = false;
-prefsCommand(codexControl);
-check(
-  "Native Codex switch persists once per click and hides configuration",
-  () => {
-    assert.equal(codexEnabled, false);
-    assert.equal(codexOptions.hidden, true);
-    assert.equal(codexChanges, 2);
-  },
-);
 const groupRows = () => [
   ...prefsWin.document.querySelectorAll(".graph-group-row"),
 ];
@@ -1178,8 +1146,6 @@ async function editor(args = {}, overrides = {}) {
       })),
     getBacklinks: async () => [],
     onDataChange: () => () => {},
-    isCodexEnabled: () => false,
-    onCodexEnabledChange: () => () => {},
     onNativeNoteChange: () => () => {},
     onSourceStyleChange: () => () => {},
     getSourceBibliography: async () =>
@@ -4069,7 +4035,7 @@ managerWin.Zotero = {
 managerWin.eval(previewScript);
 managerWin.eval(
   (await readFile(path.join(ROOT, "addon/content/manager.js"), "utf8")) +
-    "\nwindow.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRefreshChanged = refreshChanged; window.__managerRows = () => zettels; window.__managerRenderHealth = renderHealth;",
+    "\nwindow.__managerSafeCall = safeCall; window.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRefreshChanged = refreshChanged; window.__managerRows = () => zettels; window.__managerRenderHealth = renderHealth;",
 );
 await managerWin.__managerLoad();
 await wait();
@@ -4641,6 +4607,72 @@ check(
     );
     assert.equal(managerDoc.getElementById("knowledge-base-load-more"), null);
   },
+);
+const imeQueries = [];
+paginationAPI.searchZettelSummaries = async (query) => {
+  imeQueries.push(query);
+  return { items: [], cursor: null };
+};
+managerSearch.dispatchEvent(
+  new managerWin.CompositionEvent("compositionstart"),
+);
+managerSearch.value = "zhong";
+managerSearch.dispatchEvent(
+  new managerWin.InputEvent("input", { isComposing: true }),
+);
+await new Promise((resolve) => setTimeout(resolve, 250));
+check(
+  "IME composition keeps the current list without querying partial input",
+  () => {
+    assert.equal(imeQueries.length, 0);
+  },
+);
+managerSearch.value = "中文";
+managerSearch.dispatchEvent(new managerWin.CompositionEvent("compositionend"));
+managerSearch.dispatchEvent(new managerWin.InputEvent("input"));
+await new Promise((resolve) => setTimeout(resolve, 250));
+check(
+  "Committed Chinese search runs once after coalescing input events",
+  () => {
+    assert.deepEqual(imeQueries, ["中文"]);
+  },
+);
+const flowErrors = [];
+const oldManagerLog = managerWin.Zotero.logError;
+managerWin.Zotero.logError = (error) => flowErrors.push(error);
+await assert.doesNotReject(() =>
+  managerWin.__managerSafeCall(() => {
+    throw new Error("Sync boundary failure");
+  }),
+);
+check("Manager event boundaries catch synchronous failures once", () => {
+  assert.equal(flowErrors.length, 1);
+  assert.match(
+    managerDoc.getElementById("knowledge-base-error").textContent,
+    /Sync boundary failure/,
+  );
+});
+flowErrors.length = 0;
+paginationAPI.searchZettelSummaries = async () => {
+  throw new Error("Async boundary failure");
+};
+await managerWin.__managerSafeCall(managerWin.__managerRefresh);
+check("Nested manager operations report one asynchronous failure", () =>
+  assert.equal(flowErrors.length, 1),
+);
+managerWin.Zotero.logError = oldManagerLog;
+let explicitSearches = 0;
+paginationAPI.searchZettelSummaries = async () => {
+  explicitSearches++;
+  return { items: [], cursor: null };
+};
+managerSearch.value = "queued search";
+managerSearch.dispatchEvent(new managerWin.InputEvent("input"));
+await managerWin.__managerRefresh();
+await new Promise((resolve) => setTimeout(resolve, 250));
+check(
+  "Explicit refresh consumes a pending search instead of refreshing twice",
+  () => assert.equal(explicitSearches, 1),
 );
 for (const win of windows) {
   win.dispatchEvent(new win.Event("unload"));

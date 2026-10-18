@@ -52,9 +52,11 @@ function updateActions() {
 
 function showError(error) {
   const msg = String(error?.message || error);
-  const box = $("knowledge-base-error");
-  box.hidden = false;
-  box.textContent = "⚠ " + msg;
+  if (!window.closed) {
+    const box = $("knowledge-base-error");
+    box.hidden = false;
+    box.textContent = "⚠ " + msg;
+  }
   try {
     Zotero.logError(error?.stack ? error : new Error(msg));
   } catch (e) {
@@ -62,22 +64,11 @@ function showError(error) {
   }
 }
 
-function wrap(fn) {
-  return async function wrapped(...args) {
-    try {
-      return await fn.apply(this, args);
-    } catch (e) {
-      showError(e);
-      throw e;
-    }
-  };
-}
-
 window.addEventListener("error", (ev) => {
   showError(ev.error || ev.message);
 });
 
-const load = wrap(async function () {
+async function load() {
   api = /** @type {import("../../src/modules/api").KnowledgeBaseAPI} */ (
     new Proxy(
       {},
@@ -159,7 +150,7 @@ const load = wrap(async function () {
   });
   window.addEventListener("unload", unsubscribeStyle, { once: true });
   window.knowledgeBaseRefreshNotes();
-});
+}
 
 window.knowledgeBaseRefreshNotes = () => {
   if (managerLoaded) safeCall(() => api.auditNativeNotes());
@@ -273,7 +264,6 @@ function bindEvents() {
     { once: true },
   );
   $("knowledge-base-kind").addEventListener("change", () => {
-    invalidatePages();
     if (!args.embedded) selectedId = null;
     updateActions();
     safeCall(refresh);
@@ -414,7 +404,6 @@ function bindEvents() {
     });
   });
   $("knowledge-base-entries").addEventListener("change", () => {
-    invalidatePages();
     selectedId = null;
     updateActions();
     $("knowledge-base-detail").hidden = true;
@@ -447,17 +436,32 @@ function bindEvents() {
       else await api.openLink(href);
     });
   });
-  $("knowledge-base-btn-new").addEventListener("click", () => newZettel());
-  $("knowledge-base-search").addEventListener("input", () => {
+  $("knowledge-base-btn-new").addEventListener("click", () =>
+    safeCall(newZettel),
+  );
+  const search = $("knowledge-base-search");
+  let composing = false;
+  const searchChanged = (event) => {
     invalidatePages();
     clearTimeout(searchTimer);
-    searchTimer = setTimeout(wrap(refresh), 200);
+    if (composing || event.isComposing) return;
+    searchTimer = setTimeout(() => safeCall(refresh), 200);
+  };
+  search.addEventListener("compositionstart", () => {
+    composing = true;
+    clearTimeout(searchTimer);
+    invalidatePages();
   });
+  search.addEventListener("compositionend", (event) => {
+    composing = false;
+    searchChanged(event);
+  });
+  search.addEventListener("input", searchChanged);
   $("knowledge-base-btn-edit").addEventListener("click", () => {
-    if (selectedId) openEditor(selectedId);
+    if (selectedId) safeCall(openEditor, selectedId);
   });
   $("knowledge-base-btn-delete").addEventListener("click", () => {
-    if (selectedId) removeZettel(selectedId);
+    if (selectedId) safeCall(removeZettel, selectedId);
   });
 }
 
@@ -540,7 +544,9 @@ async function refreshChanged(cardIDs, referencesChanged) {
   await refreshUnresolved();
 }
 
-const refresh = wrap(async function (preserve = listScope === currentScope()) {
+async function refresh(preserve = listScope === currentScope()) {
+  clearTimeout(searchTimer);
+  searchTimer = null;
   const position = preserve ? captureListPosition() : null;
   invalidatePages();
   const version = listVersion;
@@ -561,7 +567,7 @@ const refresh = wrap(async function (preserve = listScope === currentScope()) {
   $("knowledge-base-list").setAttribute("aria-busy", "true");
   await loadPage(version, query, options, false, position);
   if (version === listVersion) await refreshUnresolved();
-});
+}
 
 async function loadPage(version, query, options, append, position = null) {
   try {
@@ -768,13 +774,15 @@ function renderList() {
   if (focusedID) getRenderedRow(focusedID)?.focus({ preventScroll: true });
 }
 
-function safeCall(fn, ...args) {
-  return Promise.resolve(fn.apply(null, args)).catch((e) => {
-    showError(e);
-  });
+async function safeCall(fn, ...args) {
+  try {
+    return await fn(...args);
+  } catch (error) {
+    showError(error);
+  }
 }
 
-const refreshUnresolved = wrap(async function () {
+async function refreshUnresolved() {
   const version = ++unresolvedVersion;
   const refs = await api.getUnresolvedRefs();
   if (version !== unresolvedVersion || window.closed) return;
@@ -851,7 +859,7 @@ const refreshUnresolved = wrap(async function () {
     ul.appendChild(li);
     if (expanded.has(r.ref)) details.open = true;
   }
-});
+}
 
 window.knowledgeBaseShowUnresolved = (ref) => {
   if (!managerLoaded) {
@@ -958,7 +966,7 @@ async function refreshDrafts() {
   document.getElementById("knowledge-base-drafts").hidden = !drafts.length;
 }
 
-const renderDetail = wrap(async function (id) {
+async function renderDetail(id) {
   const version = ++detailVersion;
   const [z, family, outgoing, backlinks, health] = await Promise.all([
     api.getZettel(id),
@@ -1089,7 +1097,7 @@ const renderDetail = wrap(async function (id) {
     $("knowledge-base-preview"),
     z.body,
   );
-});
+}
 
 async function showInlineEditor(options) {
   const frame = document.getElementById("knowledge-base-workbench-editor");
@@ -1152,7 +1160,7 @@ function newZettel(title = "") {
   });
 }
 
-const removeZettel = wrap(async function (id) {
+async function removeZettel(id) {
   if (deleting) return;
   deleting = true;
   updateActions();
@@ -1205,9 +1213,9 @@ const removeZettel = wrap(async function (id) {
     deleting = false;
     updateActions();
   }
-});
+}
 
-window.addEventListener("load", load);
+window.addEventListener("load", () => safeCall(load));
 
 function renderHealth(box, health, id) {
   box.replaceChildren();

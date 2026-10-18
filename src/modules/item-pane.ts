@@ -74,12 +74,8 @@ export async function registerItemPaneUI(): Promise<void> {
             return;
           void refresh().catch((error: Error) => Zotero.logError(error));
         });
-        const unsubscribeCodex = addon.api.onCodexEnabledChange(() => {
-          void refresh().catch((error: Error) => Zotero.logError(error));
-        });
         subscriptions.set(body, () => {
           unsubscribeData();
-          unsubscribeCodex();
         });
       },
       onDestroy: ({ body }: { body: HTMLElement }) => {
@@ -140,20 +136,6 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
         .catch((error: Error) => Zotero.logError(error));
     });
     container.appendChild(literature);
-    if (addon.api.isCodexEnabled()) {
-      const read = el(container, "button");
-      read.className = "knowledge-base-mini-btn";
-      read.style.marginInlineStart = "6px";
-      read.textContent = getString("codex-read-paper");
-      read.addEventListener("click", () =>
-        addon.api.openPaperReading(
-          item.key,
-          item.libraryID,
-          container.ownerDocument.defaultView!,
-        ),
-      );
-      container.appendChild(read);
-    }
   }
 
   const head = el(container, "div");

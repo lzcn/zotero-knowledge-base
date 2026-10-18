@@ -204,7 +204,7 @@ export async function mountEditor(
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {
         browser.removeEventListener("load", onLoad, true);
-        cancelLoads.delete(element);
+        if (cancelLoads.get(element) === cancel) cancelLoads.delete(element);
       };
       const onLoad = (event: Event) => {
         if (event.target !== browser.contentWindow.document) return;
@@ -217,10 +217,11 @@ export async function mountEditor(
         }
         Promise.resolve().then(ready).then(resolve, reject).finally(cleanup);
       };
-      cancelLoads.set(element, () => {
+      const cancel = () => {
         cleanup();
         resolve();
-      });
+      };
+      cancelLoads.set(element, cancel);
       browser.addEventListener("load", onLoad, true);
       try {
         loadView(element, "editor", { ...args, embedded: true });

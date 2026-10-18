@@ -13,59 +13,6 @@ window.KnowledgeBasePreferences = (() => {
       const popup = doc.getElementById("knowledge-base-source-styles");
       const error = doc.getElementById("knowledge-base-preferences-error");
       try {
-        const codex = api.getCodexSettings();
-        const enabled = /** @type {HTMLElement & {checked: boolean}} */ (
-          doc.getElementById("knowledge-base-codex-enabled")
-        );
-        const options = doc.getElementById("knowledge-base-codex-options");
-        enabled.checked = codex.enabled;
-        options.hidden = !codex.enabled;
-        if (!menus.has(enabled)) {
-          menus.add(enabled);
-          enabled.addEventListener("command", () => {
-            api.setCodexEnabled(enabled.checked);
-            options.hidden = !enabled.checked;
-            doc.getElementById("knowledge-base-codex-status").hidden = true;
-          });
-        }
-        for (const key of ["path", "model"]) {
-          const input = /** @type {HTMLInputElement} */ (
-            doc.getElementById(`knowledge-base-codex-${key}`)
-          );
-          input.value = codex[key];
-          if (!menus.has(input)) {
-            menus.add(input);
-            input.addEventListener("change", () => {
-              try {
-                api.setCodexSetting(
-                  /** @type {"path" | "model"} */ (key),
-                  input.value,
-                );
-              } catch (failure) {
-                error.textContent = api.readingErrorMessage(failure);
-                error.hidden = false;
-              }
-            });
-          }
-        }
-        const test = doc.getElementById("knowledge-base-codex-test");
-        if (!menus.has(test)) {
-          menus.add(test);
-          test.addEventListener("command", async () => {
-            if (test.hasAttribute("disabled")) return;
-            test.setAttribute("disabled", "true");
-            const status = doc.getElementById("knowledge-base-codex-status");
-            status.textContent = api.loc("codex-checking");
-            status.hidden = false;
-            try {
-              status.textContent = await api.testCodex();
-            } catch (failure) {
-              status.textContent = api.readingErrorMessage(failure);
-            } finally {
-              test.removeAttribute("disabled");
-            }
-          });
-        }
         const labelLength = /** @type {HTMLInputElement} */ (
           doc.getElementById("knowledge-base-graph-label-length")
         );
