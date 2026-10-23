@@ -472,6 +472,13 @@ if (currentSchema) {
             : 'SearchNeedle 中文检索示例 literal_100% quote" OR syntax',
       }),
     );
+  for (const [index, key] of [
+    [0, "zz-ID"],
+    [1, "aa-ID"],
+  ]) {
+    const card = await zettel.getZettel(searchFixtures[index]);
+    await zettel.saveZettel({ ...card, customKey: key });
+  }
   for (const id of searchFixtures)
     await db.exec("UPDATE zettels SET updated_at = 42 WHERE id = ?", [id]);
   for (const sort of [
@@ -481,6 +488,8 @@ if (currentSchema) {
     "created-asc",
     "title-asc",
     "title-desc",
+    "id-asc",
+    "id-desc",
   ]) {
     const all = await zettel.searchZettels("SearchNeedle", {
       sort,
@@ -588,10 +597,14 @@ if (currentSchema) {
     getNote: () =>
       '<div data-schema-version="9"><h1>Changed search fixture</h1><p>Replacement phrase</p></div>',
   };
+  let auditNoteReads = 0;
   zoteroStub.Items = {
     ...originalItems,
-    getByLibraryAndKeyAsync: async (_library, key) =>
-      key === auditNote.key ? auditNote : false,
+    getByLibraryAndKeyAsync: async (_library, key) => {
+      if (key !== auditNote.key) return false;
+      auditNoteReads++;
+      return auditNote;
+    },
   };
   for (const [index, key] of [
     [1, "AUDITNOTE"],
@@ -609,6 +622,21 @@ if (currentSchema) {
     auditFirst === auditCoalesced,
   );
   await auditFirst;
+  check(
+    "Concurrent workbench audits perform one scan rather than scheduling a duplicate",
+    auditNoteReads === 1,
+  );
+  const beforeRescan = auditNoteReads;
+  const rescan = nativeNotes.auditNativeNotes();
+  check(
+    "Availability changes can request a fresh pass during an active audit",
+    nativeNotes.auditNativeNotes(true) === rescan,
+  );
+  await rescan;
+  check(
+    "Requested availability rescans run after the current pass",
+    auditNoteReads === beforeRescan + 2,
+  );
   check(
     "Trash retains the original mapping while confirmed permanent deletion removes its card and mapping",
     (
@@ -689,6 +717,16 @@ if (currentSchema) {
     !executedStatements
       .slice(unchangedAuditStart)
       .some((sql) => /^(INSERT|UPDATE|DELETE)/.test(sql)),
+  );
+  check(
+    "Repeated audits reuse their mapping snapshot and skip unchanged note projections",
+    !executedStatements
+      .slice(unchangedAuditStart)
+      .some(
+        (sql) =>
+          sql.startsWith("SELECT * FROM card_notes WHERE note_key") ||
+          sql.startsWith("SELECT state FROM unavailable_notes WHERE card_id"),
+      ),
   );
   for (const id of searchFixtures.slice(1, 4))
     await db.exec("DELETE FROM card_notes WHERE card_id = ?", [id]);
@@ -1058,6 +1096,13 @@ if (currentSchema) {
     customKey: "ProjectPlan",
   });
   check(
+    "Timestamp collisions advance seconds across day boundaries without suffixes",
+    zettel.newZettelID(
+      new Set(["20261031235959", "20261101000000"]),
+      new Date(2026, 9, 31, 23, 59, 59),
+    ) === "20261101000001" && !zettel.isZettelID("20261031235959-2"),
+  );
+  check(
     "Thinking notes store editable keys separately from automatic IDs",
     (await zettel.getZettel(thinkingKeyId)).custom_key === "ProjectPlan" &&
       thinkingKeyId !== "ProjectPlan",
@@ -1095,6 +1140,18 @@ if (currentSchema) {
     }
     check("Invalid or occupied Thinking key is rejected: " + key, rejected);
   }
+  check(
+    "Key preflight permits own aliases and rejects another note's reserved aliases",
+    (await zettel.checkNoteKey("RevisedPlan", thinkingKeyId)) === null &&
+      (await zettel.checkNoteKey("RevisedPlan", betaId)) === "exists" &&
+      (await zettel.checkNoteKey("bad key", betaId)) === "invalid",
+  );
+  const availableID = await zettel.getAvailableNoteID();
+  check(
+    "A suggested ID is an unreserved plain timestamp",
+    /^\d{14}$/.test(availableID) &&
+      (await zettel.checkNoteKey(availableID)) === null,
+  );
   await zettel.saveZettel({
     id: thinkingKeyId,
     title: "Project renamed",
@@ -1351,7 +1408,7 @@ if (currentSchema) {
       ),
   );
   check(
-    "Literature references use source keys while Zettels keep their unique IDs",
+    "Literature defaults to its citekey while Zettels retain timestamp IDs",
     (
       await noteRefs.withNoteReferences([
         { id: literature },
@@ -1360,7 +1417,7 @@ if (currentSchema) {
       ])
     )
       .map((row) => row.reference)
-      .join("|") === `@Study2026|${firstCard}|${secondCard}`,
+      .join("|") === `Study2026|${firstCard}|${secondCard}`,
   );
   check(
     "Citation-key wiki links resolve independently of note titles",
@@ -1368,6 +1425,48 @@ if (currentSchema) {
       "@Study2026",
     ) === literature,
   );
+  check(
+    "A plain Literature citekey is a reserved Note ID",
+    (await zettel.resolveRefs(["Study2026"])).get("Study2026") === literature &&
+      (await zettel.checkNoteKey("Study2026", thought)) === "exists" &&
+      (await zettel.checkNoteKey("Study2026", literature)) === null,
+  );
+  check(
+    "Searching a default Literature ID supports exact and literal substring matches",
+    (await zettel.searchZettels("Study2026")).items[0]?.id === literature &&
+      (await zettel.searchZettels("udy202")).items.some(
+        (row) => row.id === literature,
+      ),
+  );
+  for (const sort of ["id-asc", "id-desc"]) {
+    const all = await zettel.searchZettels("", {
+      kind: "literature",
+      sort,
+      limit: 100,
+    });
+    const expected = (await noteRefs.withNoteReferences(all.items)).sort(
+      (a, b) => noteSort.compareNoteSummaries(a, b, sort),
+    );
+    let page = await zettel.searchZettels("", {
+      kind: "literature",
+      sort,
+      limit: 1,
+    });
+    const ids = page.items.map((row) => row.id);
+    while (page.cursor) {
+      page = await zettel.searchZettels("", {
+        kind: "literature",
+        sort,
+        limit: 1,
+        cursor: page.cursor,
+      });
+      ids.push(...page.items.map((row) => row.id));
+    }
+    check(
+      "Literature ID pagination uses current citekeys: " + sort,
+      JSON.stringify(ids) === JSON.stringify(expected.map((row) => row.id)),
+    );
+  }
   await zettel.saveZettel({
     id: thought,
     title: "Survey edited",
@@ -1384,7 +1483,7 @@ if (currentSchema) {
   check(
     "Changing a citation key preserves the internal ID and indexed links",
     (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
-      "@Renamed2026" &&
+      "Renamed2026" &&
       (await zettel.resolveRefs(["@Study2026"])).get("@Study2026") ===
         literature &&
       (await zettel.getOutgoing(thought))[0].targetId === literature,
@@ -1534,6 +1633,50 @@ if (currentSchema) {
     changedURL.includes('href="zotero://select/library/items/SYNC0001"') &&
       !changedURL.includes('title="[['),
   );
+  const literatureBeforeID = await zettel.getZettel(literature);
+  const changeLiteratureID = (customKey) =>
+    zettel.saveZettel({
+      id: literature,
+      title: literatureBeforeID.title,
+      body: literatureBeforeID.body,
+      kind: "literature",
+      itemKey: literatureBeforeID.item_key,
+      libraryID: literatureBeforeID.library_id,
+      customKey,
+    });
+  await changeLiteratureID("ReadingNote2026");
+  const changedIDHTML = await nativeNotes.normalizeNoteLinks(renamedHTML);
+  check(
+    "A Literature Note ID updates default link text and Markdown references while retaining native URLs and custom labels",
+    changedIDHTML.includes(
+      `href="${stableURL}" title="[[ReadingNote2026]]">ReadingNote2026</a>`,
+    ) &&
+      changedIDHTML.includes(
+        'title="[[ReadingNote2026|My words]]">My words</a>',
+      ) &&
+      nativeNotes
+        .getMarkdownDocument(changedIDHTML)
+        .includes("[[ReadingNote2026]]") &&
+      (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
+        "ReadingNote2026",
+  );
+  await changeLiteratureID("ReadingRevised2026");
+  const previousIDHTML = await nativeNotes.normalizeNoteLinks(changedIDHTML);
+  check(
+    "Repeated ID edits preserve historical links and update the same note without changing its content",
+    previousIDHTML.includes(
+      'title="[[ReadingRevised2026]]">ReadingRevised2026</a>',
+    ) &&
+      (
+        await zettel.resolveRefs([
+          "ReadingNote2026",
+          "ReadingRevised2026",
+          literature,
+        ])
+      ).size === 3 &&
+      (await zettel.getZettel(literature)).body === literatureBeforeID.body,
+  );
+  await changeLiteratureID(null);
   zoteroStub.getMainWindow = priorWindow;
   linksDOM.window.close();
   await zettel.saveZettel({
@@ -1638,6 +1781,59 @@ if (currentSchema) {
       (await zettel.getZettel(branchId)).outgoing === 0 &&
       (await zettel.getZettel(rootId)).incoming === 1,
   );
+  const outline = await hierarchy.getZettelOutline();
+  check(
+    "Zettel outline includes roots and exact parent identities without note bodies",
+    JSON.stringify(outline.find((row) => row.id === branchId)) ===
+      JSON.stringify({
+        id: branchId,
+        title: "Outline branch",
+        parent: { id: rootId, title: "Outline root" },
+      }) && outline.find((row) => row.id === rootId)?.parent === null,
+  );
+  await zettel.saveZettel({
+    id: branchId,
+    title: "Outline branch",
+    body: "",
+    customKey: "OutlineBranch",
+  });
+  const renamedOutline = await hierarchy.getZettelOutline();
+  check(
+    "An edited Zettel ID is searchable as a parent and exported consistently without changing hierarchy identity",
+    (await hierarchy.getParentCandidates(leafId, "OutlineBranch"))[0]?.id ===
+      branchId &&
+      renamedOutline.some((row) => row.id === "OutlineBranch") &&
+      renamedOutline.find((row) => row.id === leafId)?.parent?.id ===
+        "OutlineBranch" &&
+      (await hierarchy.getFamily(leafId)).parent?.id === branchId,
+  );
+  await zettel.saveZettel({
+    id: branchId,
+    title: "Outline branch",
+    body: "",
+    customKey: null,
+  });
+  await db.exec(
+    "INSERT INTO unavailable_notes(card_id,state) VALUES(?,'trashed')",
+    [branchId],
+  );
+  const trashOutline = await hierarchy.getZettelOutline();
+  check(
+    "Zettel outline excludes trashed notes but retains an unavailable parent's identity",
+    !trashOutline.some((row) => row.id === branchId) &&
+      trashOutline.find((row) => row.id === leafId)?.parent?.id === branchId &&
+      trashOutline.find((row) => row.id === leafId)?.parent?.unavailable ===
+        true,
+  );
+  await db.exec("DELETE FROM unavailable_notes WHERE card_id = ?", [branchId]);
+  await db.exec("UPDATE zettels SET kind='thinking' WHERE id = ?", [rootId]);
+  const mixedOutline = await hierarchy.getZettelOutline();
+  check(
+    "Zettel outline excludes other types while retaining their role as parents",
+    !mixedOutline.some((row) => row.id === rootId) &&
+      mixedOutline.find((row) => row.id === branchId)?.parent?.id === rootId,
+  );
+  await db.exec("UPDATE zettels SET kind='zettel' WHERE id = ?", [rootId]);
   check(
     "Entry points select only cards without parents before the list limit",
     (await zettel.listZettels("Outline", true))
@@ -1893,6 +2089,12 @@ if (currentSchema) {
     "full graph includes isolated cards beyond the list's 500-card limit",
     (await graph.getGraphData()).nodes.filter((node) =>
       node.id.startsWith("isolated-"),
+    ).length === 505,
+  );
+  check(
+    "Zettel outline copies all notes beyond the browser's page limit, including notes without parent rows",
+    (await hierarchy.getZettelOutline()).filter((row) =>
+      row.id.startsWith("isolated-"),
     ).length === 505,
   );
   const coldStarted = performance.now();

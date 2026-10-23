@@ -309,6 +309,24 @@ assert.equal(
   "#tag-a #tag with spaces",
 );
 
+check(
+  "Contextual note links retain native emphasis through Markdown round trips",
+  () => {
+    const html =
+      '<p>Before <a href="zotero://note/u/ABCDEFGH/" title="[[related|atomic claim]]"><strong><em>atomic claim</em></strong></a> after</p>';
+    const source = rich_text.richTextToMarkdown(html);
+    assert.match(source, /\*\*.*\[\[related\|atomic claim\]\].*\*\*/);
+    const rendered = new JSDOM(markdown.renderMarkdown(source, htmlWindow));
+    assert.equal(
+      rendered.window.document.body.textContent.trim(),
+      "Before atomic claim after",
+    );
+    assert.ok(
+      rendered.window.document.querySelector("strong em a, em strong a"),
+    );
+  },
+);
+
 const rendered = markdown.renderMarkdown(
   sample,
   htmlWindow,
@@ -367,7 +385,7 @@ check(
     );
     assert.equal(
       rich_text.richTextToMarkdown(html),
-      "[[stable-id]] [[stable-id|My label]] [[stable-id]]",
+      "[[@NewKey]] [[@NewKey|My label]] [[@NewKey]]",
     );
     assert.equal(
       rich_text.richTextToMarkdown(
@@ -403,7 +421,7 @@ check(
     assert.ok(links.every((link) => link.getAttribute("href") === target.href));
     assert.equal(
       rich_text.richTextToMarkdown(html),
-      "[[literature-1-SOURCE01]] [[literature-1-SOURCE01|My reading]] [[literature-1-SOURCE01]]",
+      "[[@Smith2026]] [[@Smith2026|My reading]] [[@Smith2026]]",
     );
   },
 );
@@ -1097,6 +1115,8 @@ async function editor(args = {}, overrides = {}) {
   let nativeHTML = "";
   const calls = { open: [], images: [], graphs: [] };
   const api = {
+    checkNoteKey: async () => null,
+    getAvailableNoteID: async () => "20261001000009",
     getPanelWidth: () => 28,
     setPanelWidth: () => {},
     getNoteTags: async () => [],
@@ -1239,6 +1259,10 @@ async function editor(args = {}, overrides = {}) {
           html = content;
           options.onChange(content);
         },
+        insertNoteLink: async (reference) => {
+          dom.window.__insertedNoteReference = reference;
+          return true;
+        },
         focus: () => {},
         destroy: () => {},
       };
@@ -1265,6 +1289,66 @@ async function editor(args = {}, overrides = {}) {
     saved: () => saved,
   };
 }
+const completionEditor = await editor();
+const completionBody = completionEditor.$("knowledge-base-editor-body");
+completionBody.value = "Before [[";
+completionBody.setSelectionRange(
+  completionBody.value.length,
+  completionBody.value.length,
+);
+completionBody.dispatchEvent(
+  new completionEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+check("Typing double brackets opens note candidates in Markdown", () => {
+  assert.equal(completionEditor.$("knowledge-base-link-drop").hidden, false);
+  assert.equal(
+    completionEditor.$("knowledge-base-link-results").children.length,
+    1,
+  );
+});
+completionBody.dispatchEvent(
+  new completionEditor.win.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+check(
+  "Enter completes the Markdown reference and replaces the bracket query",
+  () => assert.equal(completionBody.value, "Before [[20261001000000]]"),
+);
+await completionEditor.win.__editorEval('setEditorMode("visual", false)');
+completionEditor.win.__nativeEditorOptions.onNoteQuery("");
+await wait();
+check("Native bracket queries use the same candidate list", () =>
+  assert.equal(completionEditor.$("knowledge-base-link-drop").hidden, false),
+);
+completionEditor.win.__nativeEditorOptions.onNoteKeydown(
+  new completionEditor.win.KeyboardEvent("keydown", {
+    key: "Tab",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+check("Native selection inserts through the captured native range", () =>
+  assert.equal(completionEditor.win.__insertedNoteReference, "20261001000000"),
+);
+completionEditor.win.__nativeEditorOptions.onNoteQuery("");
+await wait();
+completionEditor.win.__nativeEditorOptions.onNoteKeydown(
+  new completionEditor.win.KeyboardEvent("keydown", {
+    key: "Escape",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check("Escape dismisses note completion without closing the editor", () =>
+  assert.equal(completionEditor.$("knowledge-base-link-drop").hidden, true),
+);
+completionEditor.win.close();
 check(
   "LaTeX blocks protect equals signs and underscores from heading styling",
   () => {
@@ -2278,13 +2362,13 @@ check(
   },
 );
 const typeDraft = await editor();
-check("New notes can switch type and only Thinking Notes can edit keys", () => {
+check("New notes can edit IDs and retain them when switching type", () => {
   const type = typeDraft.$("knowledge-base-note-kind");
   assert.deepEqual(
     [...type.options].map((option) => option.value),
     ["zettel", "thinking"],
   );
-  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, true);
+  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
   type.value = "thinking";
   type.dispatchEvent(new typeDraft.win.Event("change"));
   assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
@@ -2295,7 +2379,7 @@ check("New notes can switch type and only Thinking Notes can edit keys", () => {
   assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, "MyProject");
   type.value = "zettel";
   type.dispatchEvent(new typeDraft.win.Event("change"));
-  assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, null);
+  assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, "MyProject");
   assert.equal(ed.$("knowledge-base-parent-root"), null);
   assert.equal(
     ed.$("knowledge-base-src-pick").getAttribute("aria-label"),
@@ -2310,10 +2394,55 @@ check("New notes can switch type and only Thinking Notes can edit keys", () => {
     null,
   );
 });
+const keyConflict = await editor(
+  {},
+  {
+    checkNoteKey: async (key) => (key === "occupied" ? "exists" : null),
+  },
+);
+const conflictInput = keyConflict.$("knowledge-base-editor-key");
+conflictInput.value = "occupied";
+conflictInput.dispatchEvent(new keyConflict.win.Event("input"));
+await keyConflict.win.__editorEval("checkKey()");
+keyConflict.win.__editorEval('updateNoteIdentity({reference:"SavedID"})');
+check("An occupied ID has inline feedback and an explicit resolution", () => {
+  assert.equal(conflictInput.getAttribute("aria-invalid"), "true");
+  assert.equal(conflictInput.value, "occupied");
+  assert.equal(keyConflict.$("knowledge-base-key-feedback").hidden, false);
+  assert.equal(
+    keyConflict.$("knowledge-base-key-status").textContent,
+    "editor-key-exists",
+  );
+  assert.equal(
+    keyConflict.win.__editorEval("snapshot().customKey"),
+    "occupied",
+  );
+});
+keyConflict.$("knowledge-base-key-resolve").click();
+await wait();
+await wait();
+check(
+  "Resolving a conflict replaces only the ID with an available timestamp",
+  () => {
+    assert.equal(conflictInput.value, "20261001000009");
+    assert.equal(keyConflict.$("knowledge-base-key-feedback").hidden, true);
+    assert.equal(
+      keyConflict.win.__editorEval("snapshot().customKey"),
+      "20261001000009",
+    );
+  },
+);
+keyConflict.win.close();
 ed.$("knowledge-base-parent-change").click();
+await ed.win.__editorEval("refreshRelations()");
 await new Promise((resolve) => setTimeout(resolve, 230));
 check("The Parent picker uses references and a single No parent action", () => {
   assert.equal(ed.$("knowledge-base-parent-picker").hidden, false);
+  assert.equal(ed.$("knowledge-base-parent-picker").closest("[hidden]"), null);
+  assert.equal(
+    ed.win.document.activeElement,
+    ed.$("knowledge-base-parent-search"),
+  );
   assert.equal(
     ed.$("knowledge-base-parent-results").querySelector(".metadata-clear")
       .textContent,
@@ -2323,8 +2452,97 @@ check("The Parent picker uses references and a single No parent action", () => {
     .querySelector(".metadata-clear")
     .click();
   assert.equal(ed.$("knowledge-base-parent-picker").hidden, true);
+  assert.equal(
+    ed.$("knowledge-base-parent-display").parentElement.hidden,
+    true,
+  );
   assert.equal(ed.win.__editorEval("snapshot()").parentId, null);
 });
+const parentTarget = { id: "PARENT", title: "Parent concept" };
+const parentEditor = await editor(
+  { prefillTitle: "Child concept" },
+  {
+    getParentCandidates: async () => [parentTarget],
+    getZettel: async (id) => (id === parentTarget.id ? parentTarget : null),
+  },
+);
+parentEditor.$("knowledge-base-parent-change").click();
+await new Promise((resolve) => setTimeout(resolve, 230));
+parentEditor
+  .$("knowledge-base-parent-results")
+  .querySelector(".relation-link")
+  .click();
+await wait();
+await parentEditor.win.__editorEval("save(false)");
+check(
+  "Choosing a parent saves its identity and keeps the reference visible",
+  () => {
+    assert.equal(parentEditor.saved().parentId, parentTarget.id);
+    assert.equal(parentEditor.$("knowledge-base-parent-picker").hidden, true);
+    assert.equal(
+      parentEditor.$("knowledge-base-parent-display").closest("[hidden]"),
+      null,
+    );
+  },
+);
+parentEditor.$("knowledge-base-parent-change").click();
+await new Promise((resolve) => setTimeout(resolve, 230));
+parentEditor
+  .$("knowledge-base-parent-results")
+  .querySelector(".metadata-clear")
+  .click();
+await parentEditor.win.__editorEval("save(false)");
+check("No parent saves the detached hierarchy and hides the empty row", () => {
+  assert.equal(parentEditor.saved().parentId, null);
+  assert.equal(
+    parentEditor.$("knowledge-base-parent-display").parentElement.hidden,
+    true,
+  );
+});
+parentEditor.win.close();
+let finishParentSearch;
+const pendingParentEditor = await editor(
+  {},
+  {
+    getParentCandidates: () =>
+      new Promise((resolve) => {
+        finishParentSearch = resolve;
+      }),
+  },
+);
+pendingParentEditor.$("knowledge-base-parent-change").click();
+await new Promise((resolve) => setTimeout(resolve, 230));
+pendingParentEditor.$("knowledge-base-parent-search").dispatchEvent(
+  new pendingParentEditor.win.KeyboardEvent("keydown", {
+    key: "Escape",
+    bubbles: true,
+  }),
+);
+finishParentSearch([parentTarget]);
+await wait();
+check(
+  "Cancelled parent searches cannot reopen results or change the hierarchy",
+  () => {
+    assert.equal(
+      pendingParentEditor.$("knowledge-base-parent-picker").hidden,
+      true,
+    );
+    assert.equal(
+      pendingParentEditor.$("knowledge-base-parent-results").hidden,
+      true,
+    );
+    assert.equal(
+      pendingParentEditor.$("knowledge-base-parent-display").parentElement
+        .hidden,
+      true,
+    );
+    assert.equal(
+      pendingParentEditor.win.__editorEval("snapshot()").parentId,
+      null,
+    );
+  },
+);
+pendingParentEditor.win.close();
 ed.$("knowledge-base-editor-body").value = sample;
 ed.$("knowledge-base-editor-body").dispatchEvent(
   new ed.win.Event("input", { bubbles: true }),
@@ -2797,7 +3015,7 @@ const literaturePicker = await editor(
     listZettels: async () => [
       {
         id: "note-1-UNIQUE01",
-        reference: "@Author2026",
+        reference: "ReadingCustomID",
         title: "My literature synthesis",
       },
     ],
@@ -2811,16 +3029,16 @@ const literaturePickerRow = literaturePicker.$(
   "knowledge-base-link-results",
 ).firstElementChild;
 check(
-  "Literature picker shows the citation key and inserts the stable note ID",
+  "Literature picker displays and inserts the current editable note ID",
   () => {
     assert.equal(
       literaturePickerRow.querySelector(".relation-id").textContent,
-      "@Author2026",
+      "ReadingCustomID",
     );
     literaturePickerRow.click();
     assert.equal(
       literaturePicker.$("knowledge-base-editor-body").value,
-      "[[note-1-UNIQUE01]]",
+      "[[ReadingCustomID]]",
     );
   },
 );
@@ -3984,6 +4202,7 @@ managerWin.Zotero = {
       loc: (key) => labels[key] || key,
       listEditorDrafts: async () => [],
       auditNativeNotes: async () => {},
+      copyZettelList: async () => 2,
       isAccelKey: (event) => platform.isAccelKey(event, true),
       searchZettelSummaries: async (
         _query,
@@ -4044,7 +4263,7 @@ const managerDoc = managerWin.document;
 const noteSortControl = managerDoc.getElementById("knowledge-base-sort");
 check("The note list shows its current persistent sort", () => {
   assert.equal(noteSortControl.value, "updated-desc");
-  assert.equal(noteSortControl.options.length, 6);
+  assert.equal(noteSortControl.options.length, 8);
 });
 noteSortControl.value = "title-asc";
 noteSortControl.dispatchEvent(new managerWin.Event("change"));
@@ -4068,6 +4287,67 @@ await wait();
 check("The workbench has no duplicate window-opening control", () => {
   assert.equal(managerDoc.getElementById("knowledge-base-open-window"), null);
 });
+const copyZettelsButton = managerDoc.getElementById(
+  "knowledge-base-btn-copy-zettels",
+);
+const copyStatus = managerDoc.getElementById("knowledge-base-copy-status");
+const managerAPI = managerWin.Zotero.ZoteroKnowledgeBase.api;
+let finishCopy;
+let copies = 0;
+managerAPI.copyZettelList = (shouldStop) => {
+  copies++;
+  assert.equal(shouldStop(), false);
+  return new Promise((resolve) => {
+    finishCopy = resolve;
+  });
+};
+copyZettelsButton.dispatchEvent(new managerWin.Event("command"));
+copyZettelsButton.dispatchEvent(new managerWin.Event("command"));
+check(
+  "Copying all Zettels prevents duplicate operations while the clipboard is pending",
+  () => {
+    assert.equal(copies, 1);
+    assert.equal(copyZettelsButton.hasAttribute("disabled"), true);
+  },
+);
+finishCopy(2);
+await wait();
+check(
+  "A successful Zettel copy restores its control and announces completion",
+  () => {
+    assert.equal(copyZettelsButton.hasAttribute("disabled"), false);
+    assert.equal(copyStatus.hidden, false);
+    assert.equal(copyStatus.textContent, "manager-copy-zettels-done");
+  },
+);
+managerAPI.copyZettelList = async () => 0;
+copyZettelsButton.dispatchEvent(new managerWin.Event("command"));
+await wait();
+check("An empty Zettel list reports that there is nothing to copy", () => {
+  assert.equal(copyStatus.textContent, "manager-copy-zettels-empty");
+});
+const copyErrors = [];
+const copyLogError = managerWin.Zotero.logError;
+managerWin.Zotero.logError = (error) => copyErrors.push(error);
+managerAPI.copyZettelList = async () => {
+  throw new Error("Clipboard unavailable");
+};
+copyZettelsButton.dispatchEvent(new managerWin.Event("command"));
+await wait();
+check(
+  "Clipboard failures remain visible and allow retry without a stale success message",
+  () => {
+    assert.equal(copyErrors.length, 1);
+    assert.equal(copyZettelsButton.hasAttribute("disabled"), false);
+    assert.equal(copyStatus.hidden, true);
+    assert.match(
+      managerDoc.getElementById("knowledge-base-error").textContent,
+      /Clipboard unavailable/,
+    );
+  },
+);
+managerWin.Zotero.logError = copyLogError;
+managerDoc.getElementById("knowledge-base-error").hidden = true;
 check(
   "A missing original offers neither a cached copy nor a source restore",
   () => {
@@ -4104,6 +4384,23 @@ check(
     ];
     assert.equal(groups.length, 3);
     assert.ok(groups.every((group) => !group.open));
+  },
+);
+check(
+  "Panel drags cover embedded editors and release the shield on cancellation",
+  () => {
+    const handle = managerDoc.getElementById("knowledge-base-splitter");
+    handle.dispatchEvent(
+      new managerWin.MouseEvent("pointerdown", { button: 0 }),
+    );
+    assert.ok(managerDoc.querySelector(".panel-drag-shield"));
+    managerWin.dispatchEvent(new managerWin.Event("pointercancel"));
+    assert.equal(managerDoc.querySelector(".panel-drag-shield"), null);
+    handle.dispatchEvent(new managerWin.MouseEvent("dblclick"));
+    assert.equal(
+      managerDoc.getElementById("knowledge-base-list-pane").style.flexBasis,
+      "28%",
+    );
   },
 );
 check(

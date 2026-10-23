@@ -235,6 +235,7 @@ function applyLocale() {
   for (const [id, key] of [
     ["knowledge-base-btn-new", "manager-new"],
     ["knowledge-base-btn-graph", "graph-global"],
+    ["knowledge-base-btn-copy-zettels", "manager-copy-zettels"],
     ["knowledge-base-btn-edit", "manager-edit"],
     ["knowledge-base-btn-local-graph", "graph-local"],
     ["knowledge-base-btn-delete", "manager-delete"],
@@ -248,6 +249,27 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  const copyButton = document.getElementById("knowledge-base-btn-copy-zettels");
+  copyButton.addEventListener("command", () =>
+    safeCall(async () => {
+      if (copyButton.hasAttribute("disabled")) return;
+      copyButton.setAttribute("disabled", "true");
+      const status = document.getElementById("knowledge-base-copy-status");
+      status.hidden = true;
+      $("knowledge-base-error").hidden = true;
+      try {
+        const count = await api.copyZettelList(() => Boolean(window.closed));
+        if (window.closed || count === null) return;
+        status.textContent = api.loc(
+          count ? "manager-copy-zettels-done" : "manager-copy-zettels-empty",
+          { count },
+        );
+        status.hidden = false;
+      } finally {
+        if (!window.closed) copyButton.removeAttribute("disabled");
+      }
+    }),
+  );
   $("knowledge-base-list").setAttribute("role", "listbox");
   $("knowledge-base-list").tabIndex = 0;
   $("knowledge-base-list-pane").addEventListener("scroll", scheduleListRender, {

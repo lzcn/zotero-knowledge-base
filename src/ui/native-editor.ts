@@ -8,27 +8,20 @@ import type { NativeNoteChange } from "../modules/note-sessions";
 
 interface NoteLinkTarget {
   id: string;
+  reference: string;
   href: string;
   label: string;
 }
 interface NativeEditorView {
   state: {
-    doc: unknown;
+    doc: NativeTextNode;
     selection: {
       empty: boolean;
       from: number;
       to: number;
       $from: {
         parentOffset: number;
-        parent: {
-          type: { name: string };
-          textBetween(
-            from: number,
-            to: number,
-            separator: string,
-            leaf: string,
-          ): string;
-        };
+        parent: NativeTextNode;
         marks(): { type: { name: string } }[];
       };
     };
@@ -41,10 +34,43 @@ interface NativeEditorView {
         };
       };
       text(text: string, marks: unknown[]): unknown;
+      nodeFromJSON(value: unknown): unknown;
     };
-    tr: { replaceWith(from: number, to: number, node: unknown): unknown };
+    tr: {
+      doc: { content: { size: number } };
+      addMark(
+        from: number,
+        to: number,
+        mark: unknown,
+      ): NativeEditorView["state"]["tr"];
+      replaceWith(from: number, to: number, node: unknown): unknown;
+      insert(position: number, node: unknown): NativeEditorView["state"]["tr"];
+    };
   };
   dispatch(transaction: unknown): void;
+}
+
+interface NativeTextNode {
+  content: { size: number };
+  isTextblock: boolean;
+  isText: boolean;
+  isLeaf: boolean;
+  type: { name: string };
+  marks: { type: { name: string } }[];
+  textBetween(
+    from: number,
+    to: number,
+    separator: string,
+    leaf: string,
+  ): string;
+  descendants(
+    visit: (node: NativeTextNode, position: number) => boolean | void,
+  ): void;
+  nodesBetween(
+    from: number,
+    to: number,
+    visit: (node: NativeTextNode) => boolean | void,
+  ): void;
 }
 
 const NOTE_LINK_URL = /^(?:knowledge-base:\/\/|zotero:\/\/(?:select\/|note\/))/;
@@ -94,6 +120,8 @@ export interface NativeEditorOptions {
   onReading(): void;
   noteLinkLabel: string;
   onNoteLink(): void;
+  onNoteQuery(query: string | null): void;
+  onNoteKeydown(event: KeyboardEvent): boolean;
   resolveNoteLink(ref: string): Promise<NoteLinkTarget | null>;
 }
 export interface NativeEditorController {
@@ -106,6 +134,10 @@ export interface NativeEditorController {
   getTypography(): Record<string, string>;
   reload(): Promise<void>;
   insertHTML(html: string): void;
+  insertNoteLink(reference: string): Promise<boolean>;
+  linkConnections(
+    links: { anchor: string; href: string; reference: string }[],
+  ): void;
   focus(): void;
   destroy(): void;
 }
@@ -124,8 +156,18 @@ async function create(
   let removeMarkdownToggle: ReturnType<typeof attachMarkdownToggle> | undefined;
   let removeNoteLink = () => {};
   let sourceMode = false;
+  let readingMode = false;
+  let composing = false;
   let readingView: ReturnType<typeof attachReadingView> | undefined;
   let previousDisableSaving = element.getCurrentInstance()._disableSaving;
+  type LinkRange = {
+    view: NativeEditorView;
+    doc: NativeTextNode;
+    from: number;
+    to: number;
+    selectionFrom: number;
+  };
+  let linkQuery: (LinkRange & { query: string }) | null = null;
   const ownedInstances = new Set<string>();
   const unsubscribeNote = options.subscribeNote(options.item.id, (change) => {
     if (destroyed) return;
@@ -154,17 +196,100 @@ async function create(
       else options.onChange(html);
     }
   };
-  const insertWikiLink = async () => {
-    if (destroyed || readOnly || sourceMode) return;
+  const linkSelection = (): LinkRange | null => {
+    if (destroyed || readOnly || sourceMode || readingMode || composing)
+      return null;
     const view =
-      frame.wrappedJSObject._currentEditorInstance?._editorCore?.view;
-    if (!view) return;
+      frame?.wrappedJSObject._currentEditorInstance?._editorCore?.view;
+    if (!view) return null;
     const { state } = view;
     const { selection } = state;
-    if (!selection.empty || selection.$from.parent.type.name !== "paragraph")
-      return;
+    if (
+      !selection.$from.parent.isTextblock ||
+      /code|math/i.test(selection.$from.parent.type.name)
+    )
+      return null;
     const marks = selection.$from.marks();
-    if (marks.some((mark) => ["code", "link"].includes(mark.type.name))) return;
+    if (marks.some((mark) => ["code", "link"].includes(mark.type.name)))
+      return null;
+    return {
+      view,
+      doc: state.doc,
+      from: selection.from,
+      to: selection.to,
+      selectionFrom: selection.from,
+    };
+  };
+  const currentRange = (range: LinkRange) =>
+    !destroyed &&
+    !readOnly &&
+    !sourceMode &&
+    range.view ===
+      frame.wrappedJSObject._currentEditorInstance?._editorCore?.view &&
+    range.doc === range.view.state.doc;
+  const updateLinkQuery = () => {
+    const range = linkSelection();
+    let next: typeof linkQuery = null;
+    if (range && range.from === range.to) {
+      const { selection } = range.view.state;
+      const before = selection.$from.parent.textBetween(
+        0,
+        selection.$from.parentOffset,
+        "\n",
+        "\ufffc",
+      );
+      const match = /\[\[([^\][\n]*)$/.exec(before);
+      if (match && before[match.index - 1] !== "\\")
+        next = {
+          ...range,
+          from: range.from - match[0].length,
+          query: match[1],
+        };
+    }
+    const previous = linkQuery?.query ?? null;
+    linkQuery = next;
+    if ((next?.query ?? null) !== previous)
+      options.onNoteQuery(next?.query ?? null);
+  };
+  const replaceNoteLink = async (
+    reference: string,
+    range: LinkRange,
+  ): Promise<boolean> => {
+    const [ref, ...alias] = reference.split("|");
+    const target = await options.resolveNoteLink(ref.trim());
+    if (
+      !target ||
+      !currentRange(range) ||
+      range.view.state.selection.from !== range.selectionFrom ||
+      range.view.state.selection.to !== range.to
+    )
+      return false;
+    const { view } = range;
+    const { state } = view;
+    const marks = state.selection.$from.marks();
+    const label = alias.join("|").trim();
+    const attributes = frame.wrappedJSObject.JSON.parse(
+      JSON.stringify({
+        href: target.href,
+        title: `[[${target.reference}${label ? `|${label}` : ""}]]`,
+      }),
+    );
+    const link = state.schema.marks.link.create(attributes);
+    view.dispatch(
+      state.tr.replaceWith(
+        range.from,
+        range.to,
+        state.schema.text(label || target.label, marks.concat(link)),
+      ),
+    );
+    changed();
+    updateLinkQuery();
+    return true;
+  };
+  const insertWikiLink = async () => {
+    const range = linkSelection();
+    if (!range || range.from !== range.to) return;
+    const { selection } = range.view.state;
     const before = selection.$from.parent.textBetween(
       0,
       selection.$from.parentOffset,
@@ -173,38 +298,37 @@ async function create(
     );
     const match = /\[\[([^\][\n]+)\]\]$/.exec(before);
     if (!match || before[match.index - 1] === "\\") return;
-    const [ref, ...alias] = match[1].split("|");
-    const target = await options.resolveNoteLink(ref.trim());
-    if (
-      !target ||
-      destroyed ||
-      readOnly ||
-      sourceMode ||
-      view !==
-        frame.wrappedJSObject._currentEditorInstance?._editorCore?.view ||
-      view.state.doc !== state.doc ||
-      view.state.selection.from !== selection.from ||
-      view.state.selection.to !== selection.to
-    )
-      return;
-    const label = alias.join("|").trim();
-    // The content compartment cannot read objects allocated by a chrome window.
-    const attributes = frame.wrappedJSObject.JSON.parse(
-      JSON.stringify({
-        href: target.href,
-        title: `[[${target.id}${label ? `|${label}` : ""}]]`,
-      }),
-    );
-    const link = state.schema.marks.link.create(attributes);
-    // A native transaction preserves cursor mapping, undo and Zotero's autosave.
-    view.dispatch(
+    await replaceNoteLink(match[1], {
+      ...range,
+      from: range.from - match[0].length,
+    });
+  };
+  const paste = (event: ClipboardEvent) => {
+    if (!(event.target as Element | null)?.closest?.(".primary-editor")) return;
+    const text = event.clipboardData?.getData("text/plain") || "";
+    const match = /^\[\[([^\][\n]+)\]\]$/.exec(text);
+    const range = linkSelection();
+    if (!match || !range) return;
+    // Handle copied note references before the host treats the brackets as Markdown text.
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    // Insert first so a slow lookup or a concurrent edit cannot discard the paste.
+    const { state } = range.view;
+    range.view.dispatch(
       state.tr.replaceWith(
-        selection.from - match[0].length,
-        selection.from,
-        state.schema.text(label || target.label, marks.concat(link)),
+        range.from,
+        range.to,
+        state.schema.text(text, state.selection.$from.marks()),
       ),
     );
     changed();
+    const inserted = linkSelection();
+    if (inserted)
+      void replaceNoteLink(match[1], {
+        ...inserted,
+        from: range.from,
+        to: range.from + text.length,
+      }).catch((error) => Zotero.logError(error));
   };
   const input = (event: Event) => {
     queueMicrotask(() => {
@@ -214,11 +338,28 @@ async function create(
         !["historyUndo", "historyRedo"].includes(
           (event as InputEvent).inputType,
         )
-      )
+      ) {
+        updateLinkQuery();
         void insertWikiLink().catch((error) => Zotero.logError(error));
+      }
     });
   };
+  const compositionStart = () => {
+    composing = true;
+    updateLinkQuery();
+  };
+  const compositionEnd = () => {
+    composing = false;
+    queueMicrotask(updateLinkQuery);
+  };
   const keydown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing || event.keyCode === 229)
+      return;
+    if (
+      (event.target as Element | null)?.closest?.(".primary-editor") &&
+      options.onNoteKeydown(event)
+    )
+      return;
     if (!isAccelKey(event)) return;
     const key = event.key.toLowerCase();
     if (["s", "k", "w", "e"].includes(key)) {
@@ -258,11 +399,23 @@ async function create(
     if (event.key === "Escape") event.stopPropagation();
   };
   const detach = () => {
+    if (linkQuery) {
+      linkQuery = null;
+      options.onNoteQuery(null);
+    }
     readingView?.destroy();
     removeMarkdownToggle?.();
     removeNoteLink();
     if (!frame) return;
     frame.document.removeEventListener("input", input, true);
+    frame.document.removeEventListener("paste", paste, true);
+    frame.document.removeEventListener("selectionchange", updateLinkQuery);
+    frame.document.removeEventListener(
+      "compositionstart",
+      compositionStart,
+      true,
+    );
+    frame.document.removeEventListener("compositionend", compositionEnd, true);
     frame.document.removeEventListener("keydown", keydown, true);
     frame.document.removeEventListener("keydown", stopEscape);
     frame.document.removeEventListener("click", click, true);
@@ -316,6 +469,10 @@ async function create(
       );
     if (sourceMode) element.getCurrentInstance()._disableSaving = true;
     frame.document.addEventListener("input", input, true);
+    frame.document.addEventListener("paste", paste, true);
+    frame.document.addEventListener("selectionchange", updateLinkQuery);
+    frame.document.addEventListener("compositionstart", compositionStart, true);
+    frame.document.addEventListener("compositionend", compositionEnd, true);
     frame.document.addEventListener("keydown", keydown, true);
     frame.document.addEventListener("keydown", stopEscape);
     frame.document.addEventListener("click", click, true);
@@ -342,6 +499,7 @@ async function create(
       if (value && !sourceMode) previousDisableSaving = instance._disableSaving;
       instance._disableSaving = value || previousDisableSaving;
       sourceMode = value;
+      if (value) updateLinkQuery();
       removeMarkdownToggle?.setMode(value);
       const height =
         frame.document.querySelector(".toolbar")?.getBoundingClientRect()
@@ -352,6 +510,8 @@ async function create(
       );
     },
     setReadingMode(value, html) {
+      readingMode = value;
+      if (value) updateLinkQuery();
       readingView?.show(value, html);
       if (value) readingView?.focus();
     },
@@ -381,6 +541,76 @@ async function create(
       element
         .getCurrentInstance()
         ._postMessage({ action: "insertHTML", html: root.innerHTML });
+    },
+    async insertNoteLink(reference) {
+      const range = linkQuery || linkSelection();
+      return range ? replaceNoteLink(reference, range) : false;
+    },
+    linkConnections(links) {
+      if (destroyed || readOnly || sourceMode)
+        throw new Error("NOTE_SESSION_CLOSED");
+      const view =
+        frame.wrappedJSObject._currentEditorInstance?._editorCore?.view;
+      if (!view) throw new Error("NOTE_SESSION_CLOSED");
+      const ranges = links
+        .map((link) => {
+          const matches: { from: number; to: number }[] = [];
+          view.state.doc.descendants((node, position) => {
+            // Callback arguments cross back through Gecko's default Xray wrapper.
+            node = Components.utils.waiveXrays(node);
+            if (!node.isTextblock) return;
+            if (/code|math/i.test(node.type.name)) return false;
+            const text = node.textBetween(0, node.content.size, "\n", "\ufffc");
+            let start = text.indexOf(link.anchor);
+            while (start >= 0) {
+              let protectedText = false;
+              node.nodesBetween(start, start + link.anchor.length, (child) => {
+                child = Components.utils.waiveXrays(child);
+                if (
+                  (child.isLeaf && !child.isText) ||
+                  child.marks.some((mark) =>
+                    ["code", "link"].includes(mark.type.name),
+                  )
+                )
+                  protectedText = true;
+              });
+              if (!protectedText)
+                matches.push({
+                  from: position + 1 + start,
+                  to: position + 1 + start + link.anchor.length,
+                });
+              start = text.indexOf(link.anchor, start + 1);
+            }
+            return false;
+          });
+          if (matches.length !== 1) throw new Error("AI_PLAN_STALE");
+          return { ...link, ...matches[0] };
+        })
+        .sort((a, b) => a.from - b.from);
+      if (
+        ranges.some(
+          (range, index) => index > 0 && range.from < ranges[index - 1].to,
+        )
+      )
+        throw new Error("AI_PLAN_STALE");
+      let transaction = view.state.tr;
+      for (const range of ranges) {
+        const attributes = frame.wrappedJSObject.JSON.parse(
+          JSON.stringify({
+            href: range.href,
+            title: `[[${range.reference}|${range.anchor}]]`,
+          }),
+        );
+        transaction = transaction.addMark(
+          range.from,
+          range.to,
+          view.state.schema.marks.link.create(attributes),
+        );
+      }
+      if (links.length) {
+        view.dispatch(transaction);
+        changed();
+      }
     },
     focus: () => {
       void element.focus();

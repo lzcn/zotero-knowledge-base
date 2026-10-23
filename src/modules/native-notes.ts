@@ -29,6 +29,7 @@ import {
   getZettel,
   deleteZettel,
   saveEditorCard,
+  newZettelID,
   refreshItemCount,
   refreshAnnotationCount,
   type SaveCardInput,
@@ -100,13 +101,7 @@ export async function normalizeNoteLinks(
     const referenced = getCachedNoteTarget(ref);
     const target =
       wiki && !cardRefFromURL(href) ? getCachedNoteTarget(href) : referenced;
-    if (
-      !target &&
-      wiki &&
-      referenced?.id === ref &&
-      referenced.href &&
-      referenced.href !== href
-    ) {
+    if (!target && wiki && referenced?.href && referenced.href !== href) {
       // A user changed the native URL to an unmanaged note: preserve that edit.
       link.removeAttribute("title");
       changed = true;
@@ -131,7 +126,7 @@ export async function normalizeNoteLinks(
           target.sourceTitle,
         ].includes(text);
     const alias = automatic ? "" : text.replace(/[\][\n]/g, " ");
-    const title = `[[${target.id}${alias ? `|${alias}` : ""}]]`;
+    const title = `[[${target.reference}${alias ? `|${alias}` : ""}]]`;
     if (
       href !== target.href ||
       link.getAttribute("title") !== title ||
@@ -235,7 +230,9 @@ async function refreshLinkLabels(ids: string[]): Promise<void> {
   const updated = new Map<string, string>();
   ids = ids.filter((id) => {
     const target = targets.get(id);
-    const label = target ? JSON.stringify([target.label, target.href]) : "";
+    const label = target
+      ? JSON.stringify([target.reference, target.label, target.href])
+      : "";
     const changed = targetLabels.get(id) !== label;
     updated.set(id, label);
     return changed;
@@ -622,15 +619,20 @@ export interface NoteHealth {
 }
 
 /** Keep Trash mappings; remove cards only after confirming their original no longer exists. */
-export function auditNativeNotes(): Promise<void> {
+export function auditNativeNotes(rescan = false): Promise<void> {
+  if (auditing) {
+    if (rescan) auditRequested = true;
+    return auditing;
+  }
   auditRequested = true;
-  if (auditing) return auditing;
   auditing = (async () => {
     while (auditRequested && !stopping) {
       auditRequested = false;
       const changed: string[] = [];
       const itemKeys = new Set<string>();
-      const rows = await getAll<NoteMapping>("SELECT * FROM card_notes");
+      const rows = await getAll<NoteMapping & { state: string | null }>(
+        "SELECT n.*, u.state FROM card_notes n LEFT JOIN unavailable_notes u ON u.card_id = n.card_id",
+      );
       for (let index = 0; index < rows.length && !stopping; index++) {
         const row = rows[index];
         const note =
@@ -648,11 +650,7 @@ export function auditNativeNotes(): Promise<void> {
           continue;
         }
         const state = note.isInTrash() ? "trashed" : null;
-        const previous = await getOne<{ state: string }>(
-          "SELECT state FROM unavailable_notes WHERE card_id = ?",
-          [row.card_id],
-        );
-        if ((previous?.state ?? null) !== state) {
+        if (row.state !== state) {
           if (state)
             await exec(
               "INSERT OR REPLACE INTO unavailable_notes(card_id, state) VALUES (?, ?)",
@@ -669,7 +667,7 @@ export function auditNativeNotes(): Promise<void> {
           changed.push(row.card_id);
         }
         if (!state && note && !activeNotes.has(note.id))
-          await refreshNote(note);
+          await refreshNote(note, row);
         if (index % 20 === 19) await Zotero.Promise.delay(0);
       }
       if (changed.length && !stopping)
@@ -767,7 +765,7 @@ export async function restoreNote(id: string): Promise<void> {
     await restore(source);
     await restore(note);
   });
-  await auditNativeNotes();
+  await auditNativeNotes(true);
   notifyDataChange({
     cardIDs: [id],
     noteIDs: note ? [note.id] : [],
@@ -1134,13 +1132,23 @@ export async function recoverNativeSaves(
   }
 }
 
-async function refreshNote(note: Zotero.Item): Promise<void> {
+async function refreshNote(
+  note: Zotero.Item,
+  mapping?: NoteMapping,
+): Promise<void> {
   if (!note.isNote() || note.isInTrash()) return;
   await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
-  const row = await getOne<NoteMapping>(
-    "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
-    [note.key, note.libraryID],
-  );
+  if (
+    indexedHTML.get(note.id) === note.getNote() &&
+    !deferredLinkRepairs.has(note.id)
+  )
+    return;
+  const row =
+    mapping ??
+    (await getOne<NoteMapping>(
+      "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
+      [note.key, note.libraryID],
+    ));
   if (!row) return;
   await repairNativeNoteLinks(note);
   const html = note.getNote();
@@ -1198,7 +1206,10 @@ export async function initNativeNotes(): Promise<void> {
   stopping = false;
   for (const [id, target] of await getNoteLinkTargets())
     if (id === target.id)
-      targetLabels.set(id, JSON.stringify([target.label, target.href]));
+      targetLabels.set(
+        id,
+        JSON.stringify([target.reference, target.label, target.href]),
+      );
   unsubscribeLinks = onDataChange((change) => {
     if (
       stopping ||
@@ -1216,7 +1227,7 @@ export async function initNativeNotes(): Promise<void> {
       notify(event: string, _type: string, ids: number[] | string[]) {
         if (!stopping && _type === "trash" && event === "refresh") {
           // Zotero restores emit refresh/trash rather than a restore/item event.
-          void auditNativeNotes().catch(reportAuditError);
+          void auditNativeNotes(true).catch(reportAuditError);
           return;
         }
         if (
@@ -1234,7 +1245,7 @@ export async function initNativeNotes(): Promise<void> {
           .map((id) => Number(String(id).split("-")[0]))
           .filter(Number.isSafeInteger);
         if (["delete", "trash", "restore"].includes(event)) {
-          void auditNativeNotes().catch(reportAuditError);
+          void auditNativeNotes(true).catch(reportAuditError);
           notifyDataChange({ noteIDs, fields: ["availability"] });
         }
         if (_type === "item-tag") {
@@ -1405,7 +1416,7 @@ export async function trashNativeNote(id: string): Promise<boolean> {
     await note.saveTx();
   }
   // Retain the original mapping and relationships for native Zotero restoration.
-  await auditNativeNotes();
+  await auditNativeNotes(true);
   return true;
 }
 
@@ -1416,28 +1427,32 @@ export async function prepareNativePreview(body: string): Promise<void> {
       (match) => match[1],
     ),
   );
-  for (const key of keys) {
-    if (previewImages.has(key)) continue;
-    const matches = (
-      await Promise.all(
-        Zotero.Libraries.getAll().map(async (library) => {
-          if (!["user", "group"].includes(library.libraryType)) return null;
-          const item = await Zotero.Items.getByLibraryAndKeyAsync(
-            library.libraryID,
-            key,
-          );
-          return item &&
-            item.isAttachment() &&
-            !item.isInTrash() &&
-            (await item.fileExists())
-            ? item
-            : null;
-        }),
-      )
-    ).filter((item): item is Zotero.Item => !!item);
-    if (matches.length === 1)
-      previewImages.set(key, await matches[0].attachmentDataURI);
-  }
+  const libraries = Zotero.Libraries.getAll().filter((library) =>
+    ["user", "group"].includes(library.libraryType),
+  );
+  await Promise.all(
+    [...keys].map(async (key) => {
+      if (previewImages.has(key)) return;
+      const matches = (
+        await Promise.all(
+          libraries.map(async (library) => {
+            const item = await Zotero.Items.getByLibraryAndKeyAsync(
+              library.libraryID,
+              key,
+            );
+            return item &&
+              item.isAttachment() &&
+              !item.isInTrash() &&
+              (await item.fileExists())
+              ? item
+              : null;
+          }),
+        )
+      ).filter((item): item is Zotero.Item => !!item);
+      if (matches.length === 1)
+        previewImages.set(key, await matches[0].attachmentDataURI);
+    }),
+  );
 }
 
 export function nativePreviewHTML(html: string): string {
@@ -1497,7 +1512,10 @@ export async function ensureLiteratureNote(
       [itemKey, libraryID],
     );
     if (found) return found.id;
-    const id = `literature-${libraryID}-${itemKey}`;
+    const reserved = await getAll<{ id: string }>(
+      "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys UNION SELECT card_id AS id FROM note_save_operations",
+    );
+    const id = newZettelID(new Set(reserved.map((row) => row.id)));
     const now = Date.now();
     await exec(
       "INSERT INTO zettels (id, title, title_folded, body, item_key, library_id, kind, created_at, updated_at) VALUES (?, ?, ?, '', ?, ?, 'literature', ?, ?)",

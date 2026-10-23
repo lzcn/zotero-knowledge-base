@@ -22,10 +22,14 @@ type="text/css"?>
       <toolbarbutton id="knowledge-base-forward" class="kb-native-tool" />
       <toolbarbutton id="knowledge-base-btn-new" class="kb-native-tool" />
       <toolbarbutton id="knowledge-base-btn-graph" class="kb-native-tool" />
+      <toolbarbutton
+        id="knowledge-base-btn-copy-zettels"
+        class="kb-native-tool"
+      />
       <html:input id="knowledge-base-search" type="search" />
       <html:select id="knowledge-base-kind"
-        ><html:option value="" /><html:option value="literature" /><html:option
-          value="zettel" /><html:option value="thinking"
+        ><html:option value="" /><html:option value="zettel" /><html:option
+          value="literature" /><html:option value="thinking"
       /></html:select>
       <html:label
         ><html:input id="knowledge-base-entries" type="checkbox" /><html:span
@@ -52,6 +56,8 @@ type="text/css"?>
             <html:option value="created-asc" />
             <html:option value="title-asc" />
             <html:option value="title-desc" />
+            <html:option value="id-asc" />
+            <html:option value="id-desc" />
           </html:select>
         </html:div>
         <html:ul id="knowledge-base-list"></html:ul>
@@ -120,6 +126,12 @@ type="text/css"?>
       /></menulist>
       <button id="knowledge-base-restore-draft" />
     </hbox>
+    <html:div
+      id="knowledge-base-copy-status"
+      class="muted"
+      role="status"
+      hidden="hidden"
+    />
     <html:div id="knowledge-base-error" hidden="hidden"></html:div>
   </html:div>
 </window>

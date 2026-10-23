@@ -1,4 +1,8 @@
 /* global pref */
+pref("extensions.zotero.knowledge-base.ai.enabled", false);
+pref("extensions.zotero.knowledge-base.ai.provider", "deepseek");
+pref("extensions.zotero.knowledge-base.ai.deepseek.model", "deepseek-flash");
+pref("extensions.zotero.knowledge-base.ai.opencode-go.model", "glm-5.3-flash");
 pref("extensions.zotero.knowledge-base.workbenchMode", "tab");
 pref("extensions.zotero.knowledge-base.inheritParentTags", true);
 pref("extensions.zotero.knowledge-base.graph.groups", "[]");

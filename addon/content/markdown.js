@@ -207,6 +207,11 @@ window.KnowledgeBasePanels = {
   attach(handle, pane, name, api) {
     let value = api.getPanelWidth(name);
     let dragging = false;
+    let shield = null;
+    const reset = () => {
+      apply(name === "manager" ? 28 : 26);
+      api.setPanelWidth(name, value);
+    };
     handle.classList.add("panel-splitter");
     handle.tabIndex = 0;
     handle.setAttribute("role", "separator");
@@ -236,16 +241,23 @@ window.KnowledgeBasePanels = {
     const stop = () => {
       if (!dragging) return;
       dragging = false;
+      shield?.remove();
+      shield = null;
       document.documentElement.classList.remove("resizing-panels");
       apply(Math.round(value));
       api.setPanelWidth(name, value);
     };
     handle.addEventListener("pointerdown", (event) => {
-      if (event.button) return;
+      if (event.button || dragging) return;
       dragging = true;
+      // Cover embedded editors so dragging across their documents keeps working.
+      shield = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
+      shield.className = "panel-drag-shield";
+      handle.parentElement.appendChild(shield);
       document.documentElement.classList.add("resizing-panels");
       event.preventDefault();
     });
+    handle.addEventListener("dblclick", reset);
     handle.addEventListener("keydown", (event) => {
       if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
       event.preventDefault();
@@ -267,6 +279,8 @@ window.KnowledgeBasePanels = {
     window.addEventListener(
       "unload",
       () => {
+        shield?.remove();
+        document.documentElement.classList.remove("resizing-panels");
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", stop);
         window.removeEventListener("pointercancel", stop);

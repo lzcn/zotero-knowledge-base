@@ -1,4 +1,5 @@
 import { noteSortOrder, type NoteSort } from "./note-sort";
+import { getNoteReferences } from "./note-references";
 import { exec, getAll, transaction, type NoteKind, type ZettelRow } from "./db";
 
 function terms(text: string): Set<string> {
@@ -91,6 +92,10 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
   const q = query.trim();
   const sort = options.sort ?? "updated-desc";
   const [sortField, sortDirection] = noteSortOrder(sort);
+  const defaults =
+    sortField === "reference" || q
+      ? (await getNoteReferences()).defaults
+      : new Map<string, string>();
   const comparison = sortDirection === "ASC" ? ">" : "<";
   if (
     options.kind &&
@@ -122,7 +127,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       cursor.scope !== scope ||
       typeof cursor.id !== "string" ||
       !Number.isSafeInteger(cursor.rank) ||
-      (sortField === "title_folded"
+      (sortField === "title_folded" || sortField === "reference"
         ? typeof cursor.value !== "string"
         : !Number.isSafeInteger(cursor.value))
     )
@@ -131,10 +136,13 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
   const indexed = Array.from(q).length >= 2;
   if (indexed) await flushSearchIndex();
   const rank = q
-    ? "CASE WHEN z.id = ? OR z.custom_key = ? THEN 0 WHEN INSTR(z.title_folded, ?) > 0 THEN 1 ELSE 2 END"
+    ? `CASE WHEN z.id = ? OR z.custom_key = ? ${defaults.size ? "OR i.reference = ?" : ""} THEN 0 WHEN INSTR(z.title_folded, ?) > 0 THEN 1 ELSE 2 END`
     : "0";
   const filters: string[] = [];
-  const params: unknown[] = q ? [q, q, q.toLowerCase()] : [];
+  const params: unknown[] = defaults.size
+    ? [JSON.stringify(Object.fromEntries(defaults))]
+    : [];
+  if (q) params.push(q, q, ...(defaults.size ? [q] : []), q.toLowerCase());
   if (indexed) {
     const grams = [...terms(q)].slice(0, 64);
     filters.push(
@@ -156,6 +164,11 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       "(z.title LIKE ? ESCAPE '\\' OR z.body LIKE ? ESCAPE '\\' OR z.id LIKE ? ESCAPE '\\' OR z.custom_key LIKE ? ESCAPE '\\')",
     );
     params.push(like, like, like, like);
+  }
+  if (q && defaults.size) {
+    const stored = filters.splice(0).join(" AND ");
+    filters.push(`((${stored}) OR INSTR(LOWER(i.reference), ?) > 0)`);
+    params.push(q.toLowerCase());
   }
   if (options.kind) {
     filters.push("z.kind = ?");
@@ -194,7 +207,8 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
   }
   params.push(limit + 1);
   const rows = await getAll<ZettelRow & { search_rank: number }>(
-    `WITH candidates AS (SELECT z.*, ${rank} AS search_rank, z.${sortField} AS sort_value FROM zettels z
+    `WITH ${defaults.size ? "default_ids AS MATERIALIZED (SELECT key AS id, value AS reference FROM json_each(?))," : ""} candidates AS (SELECT z.*, ${rank} AS search_rank, ${sortField === "reference" ? `COALESCE(z.custom_key, ${defaults.size ? "i.reference," : ""} z.id)` : `z.${sortField}`} AS sort_value FROM zettels z
+     ${defaults.size ? "LEFT JOIN default_ids i ON i.id = z.id" : ""}
      ${indexed ? "JOIN search_documents d ON d.card_id = z.id" : ""}
      ${filters.length ? `WHERE ${filters.join(" AND ")}` : ""})
      SELECT ${projection} FROM candidates ${continuation}
@@ -211,9 +225,11 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
             scope,
             rank: last.search_rank,
             value:
-              sortField === "title_folded"
-                ? last.title.toLowerCase()
-                : last[sortField],
+              sortField === "reference"
+                ? last.custom_key || defaults.get(last.id) || last.id
+                : sortField === "title_folded"
+                  ? last.title.toLowerCase()
+                  : last[sortField],
             id: last.id,
           } satisfies Cursor)
         : null,

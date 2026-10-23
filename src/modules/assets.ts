@@ -48,10 +48,14 @@ export function cleanupUnusedImages(): Promise<number> {
       "SELECT body FROM zettels UNION ALL SELECT body FROM editor_drafts UNION ALL SELECT original_body AS body FROM card_notes",
     );
     const referenced = new Set<string>();
+    let sliceStarted = Date.now();
     for (let i = 0; i < rows.length; i++) {
       if (stopping) return 0;
       for (const name of parseAssetNames(rows[i].body)) referenced.add(name);
-      if (i % 25 === 24) await Zotero.Promise.delay(20);
+      if (Date.now() - sliceStarted >= 8) {
+        await Zotero.Promise.delay(0);
+        sliceStarted = Date.now();
+      }
     }
     if (stopping) return 0;
     const files = await IOUtils.getChildren(assetDirectory());

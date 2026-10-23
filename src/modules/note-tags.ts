@@ -1,6 +1,33 @@
 import { getAll } from "./db";
 import { getTagInheritance } from "./preferences";
 
+/** Settings needs the tag vocabulary, without building graph edges or reading note bodies. */
+export async function getGraphTags(): Promise<string[]> {
+  const rows = await getAll<{ library_id: number; note_key: string }>(
+    `SELECT n.library_id, n.note_key FROM card_notes n
+     JOIN zettels z ON z.id = n.card_id
+     WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = n.card_id)`,
+  );
+  const tags = new Set<string>();
+  const inherit = getTagInheritance();
+  for (let offset = 0; offset < rows.length; offset += 100) {
+    const loaded = await Promise.all(
+      rows
+        .slice(offset, offset + 100)
+        .map((row) =>
+          Zotero.Items.getByLibraryAndKeyAsync(row.library_id, row.note_key),
+        ),
+    );
+    const notes = loaded.filter(
+      (note): note is Zotero.Item =>
+        !!note && note.isNote() && !note.isInTrash(),
+    );
+    for (const values of (await loadNativeTags(notes, inherit)).values())
+      for (const tag of values) tags.add(tag);
+  }
+  return [...tags].sort((a, b) => a.localeCompare(b));
+}
+
 /** Read effective tags without copying inherited tags into native notes. */
 export async function loadNativeTags(
   notes: Zotero.Item[],

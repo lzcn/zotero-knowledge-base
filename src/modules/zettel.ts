@@ -43,17 +43,15 @@ export interface ResolvedLink extends ParsedLink {
 
 /**
  * Zettel ID: local timestamp "YYYYMMDDHHMMSS", e.g. 20260909122345.
- * If two cards are created within the same second, a numeric suffix
- * is appended: 20260909122345-2.
+ * Collisions advance one second, keeping every initial ID a plain timestamp.
  */
 export function newZettelID(existing: Set<string>, date = new Date()): string {
   if (!Number.isFinite(date.getTime()))
     throw new Error("Invalid note creation date");
-  const base = formatTimestamp(date);
-  if (!existing.has(base)) return base;
-  let n = 2;
-  while (existing.has(`${base}-${n}`)) n++;
-  return `${base}-${n}`;
+  const candidate = new Date(date);
+  while (existing.has(formatTimestamp(candidate)))
+    candidate.setSeconds(candidate.getSeconds() + 1);
+  return formatTimestamp(candidate);
 }
 
 function formatTimestamp(d: Date): string {
@@ -65,7 +63,36 @@ function formatTimestamp(d: Date): string {
 }
 
 export function isZettelID(s: string): boolean {
-  return /^\d{14}(-\d+)?$/.test(s);
+  return /^\d{14}$/.test(s);
+}
+
+export async function getAvailableNoteID(): Promise<string> {
+  const reserved = await getAll<{ id: string }>(
+    "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys UNION SELECT card_id AS id FROM note_save_operations",
+  );
+  const { byAlias } = await getNoteReferences();
+  return newZettelID(
+    new Set([...reserved.map((row) => row.id), ...byAlias.keys()]),
+  );
+}
+
+/** Old aliases remain reserved so existing references cannot change targets. */
+export async function checkNoteKey(
+  key: string,
+  id?: string,
+): Promise<"invalid" | "exists" | null> {
+  key = key.trim();
+  if (!key) return null;
+  if (/[\s[\]|]/.test(key) || key.startsWith("@")) return "invalid";
+  const reserved = await getAll<{ card_id: string }>(
+    "SELECT card_id FROM note_keys WHERE key = ? UNION SELECT id AS card_id FROM zettels WHERE id = ? UNION SELECT card_id FROM note_save_operations WHERE card_id = ?",
+    [key, key, key],
+  );
+  const { byAlias } = await getNoteReferences();
+  return reserved.some((row) => row.card_id !== id) ||
+    (byAlias.has(key) && byAlias.get(key) !== id)
+    ? "exists"
+    : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -128,7 +155,7 @@ export async function resolveRefs(
   );
   for (const alias of aliases)
     if (!map.has(alias.key)) map.set(alias.key, alias.card_id);
-  if (refs.some((ref) => ref.startsWith("@"))) {
+  if (refs.some((ref) => !map.has(ref))) {
     const { byAlias } = await getNoteReferences();
     if (shouldStop()) return map;
     for (const ref of refs) {
@@ -443,30 +470,19 @@ export async function saveEditorCard(
     }
     const kind = input.kind ?? previous?.kind ?? "zettel";
     let customKey =
-      kind === "thinking"
-        ? (input.customKey === undefined
-            ? previous?.custom_key
-            : input.customKey
-          )?.trim() || null
-        : kind === "zettel" && previous?.kind === "zettel"
-          ? previous.custom_key
-          : null;
-    if (customKey && (/[\s[\]|]/.test(customKey) || customKey.startsWith("@")))
-      throw new Error("NOTE_KEY_INVALID");
-    if (customKey) {
-      const reserved = await getOne<{ card_id: string }>(
-        "SELECT card_id FROM note_keys WHERE key = ?",
-        [customKey],
-      );
-      const identity = await getOne<{ id: string }>(
-        "SELECT id FROM zettels WHERE id = ?",
-        [customKey],
-      );
-      if (
-        (reserved && reserved.card_id !== input.id) ||
-        (identity && identity.id !== input.id)
-      )
-        throw new Error("NOTE_KEY_EXISTS");
+      (input.customKey === undefined
+        ? previous?.custom_key
+        : input.customKey
+      )?.trim() || null;
+    const keyError = await checkNoteKey(customKey || "", input.id);
+    if (keyError) throw new Error(`NOTE_KEY_${keyError.toUpperCase()}`);
+    if (previous && customKey !== previous.custom_key) {
+      const oldReference = (await getNoteReferences()).byID.get(previous.id);
+      if (oldReference)
+        await exec(
+          "INSERT OR IGNORE INTO note_keys (key, card_id) VALUES (?, ?)",
+          [oldReference, previous.id],
+        );
     }
     if (!["literature", "zettel", "thinking"].includes(kind))
       throw new Error("Invalid note type");
@@ -566,13 +582,13 @@ export async function saveEditorCard(
         ],
       );
     }
-    if (kind === "zettel" && !isZettelID(id) && !customKey) {
+    if (kind === "zettel" && !previous && !isZettelID(id) && !customKey) {
       const reserved = await getAll<{ id: string }>(
         "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys",
       );
       customKey = newZettelID(
         new Set(reserved.map((row) => row.id)),
-        new Date(previous?.created_at ?? now),
+        new Date(now),
       );
       await exec("UPDATE zettels SET custom_key = ? WHERE id = ?", [
         customKey,

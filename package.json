@@ -1,7 +1,7 @@
 {
   "name": "zotero-knowledge-base",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Connected idea cards for Zotero",
   "config": {
     "addonName": "Knowledge Base",
@@ -28,7 +28,11 @@
     "test:ui": "node tests/ui.mjs",
     "test:pane": "node tests/item-pane.mjs",
     "test:host": "node scripts/test-zotero-quit.mjs",
+    "test:connections:host": "node scripts/test-zotero-quit.mjs --connections",
+    "test:links:host": "node scripts/test-zotero-quit.mjs --links",
+    "test:relations:host": "node scripts/test-zotero-quit.mjs --relations",
     "benchmark:graph": "node scripts/benchmark-graph.mjs",
+    "benchmark:loading": "node scripts/benchmark-loading.mjs",
     "test:cursor": "node scripts/test-native-cursor.mjs",
     "check": "npm run lint:check && node scripts/build.mjs --check && npm test",
     "lint": "npm run lint:check",

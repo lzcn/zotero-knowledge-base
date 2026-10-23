@@ -172,7 +172,10 @@ export function createGraphCanvas(
         ctx.fill();
       }
       ctx.globalAlpha = 1;
-      const nodeBatches = new Map<string, LayoutNode[]>();
+      const nodeBatches = new Map<
+        string,
+        { fill: string; unresolved: boolean; nodes: LayoutNode[] }
+      >();
       for (const node of nodes) {
         const r = radius(node),
           sx = node.x * k + x,
@@ -190,12 +193,16 @@ export function createGraphCanvas(
             : node.kind === "unresolved"
               ? colors.bg
               : node.color || colors.accent;
-        const key = JSON.stringify([fill, node.kind === "unresolved"]);
-        if (!nodeBatches.has(key)) nodeBatches.set(key, []);
-        nodeBatches.get(key)!.push(node);
+        const unresolved = node.kind === "unresolved";
+        const key = `${fill}\0${unresolved ? 1 : 0}`;
+        let batch = nodeBatches.get(key);
+        if (!batch) {
+          batch = { fill, unresolved, nodes: [] };
+          nodeBatches.set(key, batch);
+        }
+        batch.nodes.push(node);
       }
-      for (const [key, batch] of nodeBatches) {
-        const [fill, unresolved] = JSON.parse(key) as [string, boolean];
+      for (const { fill, unresolved, nodes: batch } of nodeBatches.values()) {
         ctx.fillStyle = fill;
         ctx.strokeStyle = unresolved ? colors.muted : colors.bg;
         ctx.lineWidth = 1.5 / k;

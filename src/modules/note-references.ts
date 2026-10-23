@@ -64,16 +64,25 @@ async function loadNoteReferences() {
     };
   });
   const aliases = await getAll<{ key: string; card_id: string }>(
-    "SELECT key, card_id FROM note_keys",
+    "SELECT key, card_id FROM note_keys UNION SELECT id AS key, id AS card_id FROM zettels",
   );
   const current = await getAll<{ id: string; custom_key: string }>(
-    "SELECT id, custom_key FROM zettels WHERE kind IN ('thinking', 'zettel') AND custom_key IS NOT NULL",
+    "SELECT id, custom_key FROM zettels WHERE custom_key IS NOT NULL",
   );
   const byAlias = new Map<string, string | null>(
     aliases.map((row) => [row.key, row.card_id]),
   );
+  const reserved = new Set(byAlias.keys());
   for (const candidate of candidates) {
     if (!candidate.alias) continue;
+    const key = candidate.citationKey;
+    if (!reserved.has(key))
+      byAlias.set(
+        key,
+        byAlias.has(key) && byAlias.get(key) !== candidate.id
+          ? null
+          : candidate.id,
+      );
     byAlias.set(
       candidate.alias,
       byAlias.has(candidate.alias) &&
@@ -85,8 +94,16 @@ async function loadNoteReferences() {
   const byID = new Map<string, string>(
     current.map((row) => [row.id, row.custom_key]),
   );
-  for (const [alias, id] of byAlias)
-    if (id && alias.startsWith("@")) byID.set(id, alias);
+  const defaults = new Map<string, string>();
+  for (const candidate of candidates)
+    if (
+      candidate.alias &&
+      byAlias.get(candidate.citationKey) === candidate.id &&
+      !byID.has(candidate.id)
+    ) {
+      byID.set(candidate.id, candidate.citationKey);
+      defaults.set(candidate.id, candidate.citationKey);
+    }
   const literature = new Map(
     candidates.map((candidate) => [
       candidate.id,
@@ -97,7 +114,7 @@ async function loadNoteReferences() {
       },
     ]),
   );
-  return { byID, byAlias, literature };
+  return { byID, byAlias, literature, defaults };
 }
 
 /** Shared O(1) lookup after one batched read; labels do not define note identity. */
@@ -111,10 +128,11 @@ export function getNoteLinkTargets(): Promise<Map<string, CardReference>> {
           getAll<{
             id: string;
             title: string;
+            custom_key: string | null;
             note_key: string | null;
             note_library_id: number | null;
           }>(
-            "SELECT z.id, z.title, n.note_key, n.library_id AS note_library_id FROM zettels z LEFT JOIN card_notes n ON n.card_id = z.id",
+            "SELECT z.id, z.title, z.custom_key, n.note_key, n.library_id AS note_library_id FROM zettels z LEFT JOIN card_notes n ON n.card_id = z.id",
           ),
           getNoteReferences(),
           getAll<{ ref: string; target_id: string }>(
@@ -124,29 +142,29 @@ export function getNoteLinkTargets(): Promise<Map<string, CardReference>> {
       );
       const result = new Map<string, CardReference>();
       const titles = new Map<string, CardReference | null>();
+      const libraries = Zotero.Libraries.getAll();
       for (const row of rows) {
         const library =
           row.note_library_id == null ||
           row.note_library_id === Zotero.Libraries.userLibraryID
             ? null
-            : Zotero.Libraries.getAll().find(
-                (lib) => lib.libraryID === row.note_library_id,
-              );
+            : libraries.find((lib) => lib.libraryID === row.note_library_id);
         const scope =
           row.note_library_id === Zotero.Libraries.userLibraryID
             ? "library"
             : library?.libraryType === "group"
               ? `groups/${library.libraryTypeID}`
               : null;
+        const literatureEntry = literature.get(row.id);
         const target: CardReference = {
           id: row.id,
           title: row.title,
           label:
-            literature.get(row.id)?.label ||
-            literature.get(row.id)?.citationKey ||
-            byID.get(row.id) ||
+            row.custom_key ||
+            literatureEntry?.label ||
+            literatureEntry?.citationKey ||
             row.id,
-          sourceTitle: literature.get(row.id)?.sourceTitle || undefined,
+          sourceTitle: literatureEntry?.sourceTitle || undefined,
           reference: byID.get(row.id) || row.id,
           href:
             row.note_key && scope

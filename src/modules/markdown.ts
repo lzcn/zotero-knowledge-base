@@ -171,6 +171,72 @@ export function parseCardLinks(body: string): CardLink[] {
   return [...links.values()];
 }
 
+/** A unique, unlinked text span; never place managed links inside protected syntax. */
+export function connectionAnchor(body: string, anchor: string): number {
+  if (
+    typeof anchor !== "string" ||
+    anchor.length < 2 ||
+    anchor.length > 300 ||
+    /[\n\r[\]|]/.test(anchor)
+  )
+    return -1;
+  const start = body.indexOf(anchor);
+  if (start < 0 || body.indexOf(anchor, start + 1) !== -1) return -1;
+  const contains = (tokens: import("marked").Token[]): boolean =>
+    tokens.some((token) => {
+      const nested = token as {
+        tokens?: import("marked").Token[];
+        items?: { tokens: import("marked").Token[] }[];
+      };
+      if (
+        [
+          "code",
+          "codespan",
+          "link",
+          "wikilink",
+          "citation",
+          "inlineMath",
+          "blockMath",
+          "html",
+          "image",
+        ].includes(token.type)
+      )
+        return false;
+      if (token.type === "text" && !nested.tokens)
+        return token.raw.includes(anchor);
+      if (Array.isArray(nested.tokens) && contains(nested.tokens)) return true;
+      return (
+        token.type === "list" &&
+        !!nested.items?.some((item) => contains(item.tokens))
+      );
+    });
+  return contains(markdown.lexer(body)) ? start : -1;
+}
+
+export function linkNotePassages(
+  body: string,
+  links: { anchor: string; reference: string }[],
+): string {
+  const ranges = links
+    .map((link) => ({ ...link, start: connectionAnchor(body, link.anchor) }))
+    .sort((a, b) => b.start - a.start);
+  let boundary = body.length;
+  for (const link of ranges) {
+    if (
+      link.start < 0 ||
+      link.start + link.anchor.length > boundary ||
+      /[[\]|\r\n]/.test(link.reference)
+    )
+      throw new Error("AI_PLAN_STALE");
+    body =
+      body.slice(0, link.start) +
+      `[[${link.reference}|${link.anchor}]]` +
+      body.slice(link.start + link.anchor.length);
+    boundary = link.start;
+  }
+  return body;
+}
+
 export function parseCitationKeys(body: string): string[] {
   const keys = new Set<string>();
   markdown.walkTokens(markdown.lexer(body), (token) => {
@@ -237,6 +303,13 @@ export function noteSnippet(
 
 /** Actual image and link references, excluding examples in code blocks. */
 export function parseAssetNames(body: string): Set<string> {
+  // A managed asset always contains one of these literals, so avoid lexing
+  // ordinary notes (the common case) on every keystroke and library scan.
+  if (
+    !body.includes("knowledge-base-asset:") &&
+    !body.includes("resource://knowledge-base-assets/")
+  )
+    return new Set();
   const names = new Set<string>();
   const add = (url: string) => {
     const match =
@@ -281,11 +354,11 @@ export function renderMarkdown(
         const alias = token.raw.includes("|")
           ? token.raw.slice(2, -2).split("|").slice(1).join("|").trim()
           : "";
-        token.ref = target.id;
+        token.ref = target.reference;
         token.href = target.href;
         token.display =
           alias || target.label || target.title || target.reference;
-        token.wiki = `[[${target.id}${alias ? `|${alias}` : ""}]]`;
+        token.wiki = `[[${target.reference}${alias ? `|${alias}` : ""}]]`;
       }
     } else if (token.type === "link") {
       const ref = cardRefFromURL(token.href);
@@ -305,7 +378,7 @@ export function renderMarkdown(
         const alias = automatic ? "" : token.text.replace(/[\][\n]/g, " ");
         token.href = target.href;
         // Standard Markdown link titles round-trip through Zotero's link mark.
-        token.title = `[[${target.id}${alias ? `|${alias}` : ""}]]`;
+        token.title = `[[${target.reference}${alias ? `|${alias}` : ""}]]`;
         if (automatic) {
           const label = target.label || target.title || target.reference;
           token.text = label;

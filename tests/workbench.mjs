@@ -290,6 +290,32 @@ try {
   reopened.close = () => {
     shutdownClose = true;
   };
+  const shutdownErrors = [];
+  globalThis.Zotero.logError = (error) => shutdownErrors.push(error);
+  let finishDraft;
+  let finishedStop = false;
+  const reopenedEditor = reopened.document.createElement("browser");
+  reopenedEditor.id = "knowledge-base-workbench-editor";
+  reopenedEditor.contentWindow = {
+    knowledgeBaseFlushDraft: () =>
+      new Promise((resolve) => {
+        finishDraft = resolve;
+      }),
+    knowledgeBaseStopEditor: () => {
+      throw new Error("Fixture editor disposal failure");
+    },
+  };
+  reopened.document.body.append(reopenedEditor);
+  const stopping = module.stopWorkbenches().then(() => {
+    finishedStop = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finishedStop, false);
+  assert.equal(shutdownErrors.length, 1);
+  finishDraft();
+  await stopping;
+  assert.equal(finishedStop, true);
+  assert.equal(reopenedEditor.contentWindow.knowledgeBaseStopping, true);
   module.closeWorkbenches();
   assert.equal(shutdownClose, true);
   console.log(

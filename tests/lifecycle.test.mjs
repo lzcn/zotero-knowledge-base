@@ -31,7 +31,11 @@ await build({
         if (state().fail === name) throw new Error(name + " failed");
         if (name === "initDB") await state().gate;
       };
-      export const stopWorkbenches = () => {};
+      const stop = name => {
+        state().calls.push(name);
+        if (state().fail === name) throw new Error(name + " failed");
+      };
+      export const stopWorkbenches = async () => stop("stopWorkbenches");
       export const closeWorkbenches = () => {
         if (state().fail === "closeWorkbenches") throw new Error("Workbench close failed");
       };
@@ -40,21 +44,25 @@ await build({
       export const closePaperReadingTasks = () => run("closePaperReadingTasks");
       export const closePaperReadings = () => {};
       export const initLocale = () => {};
+      export const initAI = () => {};
+      export const stopAI = () => stop("stopAI");
+      export const closeAI = () => run("closeAI");
+      export const closeConnections = () => {};
       export const getString = (key) => key;
       export const initDB = () => run("initDB");
       export const closeDB = () => run("closeDB");
       export const initNativeMarkdown = () => run("nativeMarkdown");
-      export const stopNativeMarkdown = () => run("stopNativeMarkdown");
+      export const stopNativeMarkdown = () => stop("stopNativeMarkdown");
       export const closeNativeMarkdown = () => run("closeNativeMarkdown");
       export const initNoteSessions = () => run("noteSessions");
-      export const stopNoteSessions = () => run("stopNoteSessions");
+      export const stopNoteSessions = () => stop("stopNoteSessions");
       export const closeNoteSessions = () => run("closeNoteSessions");
       export const initNativeNotes = () => run("nativeNotes");
       export const recoverNativeSaves = () => run("recoverNativeSaves");
-      export const stopNativeNotes = () => run("stopNativeNotes");
+      export const stopNativeNotes = () => stop("stopNativeNotes");
       export const closeNativeNotes = () => run("closeNativeNotes");
       export const initAssets = () => run("initAssets");
-      export const stopAssets = () => run("stopAssets");
+      export const stopAssets = () => stop("stopAssets");
       export const closeAssets = () => run("closeAssets");
       export const cleanupImagesAfterChange = () => run("cleanupImages");
       export const rebuildCounts = () => run("rebuildCounts");
@@ -101,6 +109,17 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
     getMainWindows: () => doms.map((dom) => dom.window),
     logError: (e) => state.errors.push(e),
   };
+  const blockers = new Map();
+  globalThis.ChromeUtils = {
+    importESModule: () => ({
+      AsyncShutdown: {
+        quitApplicationGranted: {
+          addBlocker: (name, callback) => blockers.set(callback, name),
+          removeBlocker: (callback) => blockers.delete(callback),
+        },
+      },
+    }),
+  };
   const observers = new Map();
   globalThis.Services = {
     wm: { getEnumerator: () => [] },
@@ -132,6 +151,7 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
     doms,
     resolve,
     observers,
+    blockers,
     close: () => doms.forEach((dom) => dom.window.close()),
   };
 }
@@ -317,3 +337,49 @@ test(
     }
   },
 );
+
+test("the confirmed-quit barrier drains cancelled AI and local writes before storage shutdown", async () => {
+  const h = await fixture();
+  try {
+    await h.hooks.onStartup();
+    assert.equal(h.blockers.size, 1);
+    const [finish] = h.blockers.keys();
+    await finish();
+    assert.equal(h.blockers.size, 0);
+    assert.ok(h.state.calls.includes("closeAI"));
+    assert.ok(h.state.calls.includes("closeNativeMarkdown"));
+    assert.ok(h.state.calls.includes("closeNoteSessions"));
+    assert.equal(h.state.calls.includes("closeDB"), false);
+    await finish();
+    assert.equal(h.state.calls.filter((name) => name === "closeAI").length, 1);
+  } finally {
+    h.close();
+  }
+});
+
+test("one failing stop action cannot skip remaining quit cleanup", async () => {
+  for (const fail of [
+    "stopAI",
+    "stopWorkbenches",
+    "stopNativeMarkdown",
+    "stopNativeNotes",
+    "stopNoteSessions",
+    "stopAssets",
+  ]) {
+    const h = await fixture({ fail });
+    try {
+      await h.hooks.onStartup();
+      assert.doesNotThrow(() => h.hooks.onAppShutdown(), fail);
+      assert.equal(globalThis.addon.data.alive, false);
+      assert.ok(h.state.calls.includes("stopAssets"));
+      assert.ok(h.state.calls.includes("stopNoteSessions"));
+      const [finish] = h.blockers.keys();
+      await finish();
+      assert.equal(h.blockers.size, 0);
+      assert.ok(h.state.calls.includes("closeNoteSessions"));
+      assert.ok(h.state.errors.some((error) => error.message.includes(fail)));
+    } finally {
+      h.close();
+    }
+  }
+});

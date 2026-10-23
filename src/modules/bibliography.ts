@@ -1,11 +1,14 @@
 import createDOMPurify from "dompurify";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
+import { getSourceRevision } from "./events";
 
 const stylePreference = `${config.prefsPrefix}.sourceStyle`;
 const defaultStyle = "http://www.zotero.org/styles/apa";
-let paneID: string | undefined;
+const paneIDs: string[] = [];
 let active = false;
+let bibliographyVersion = "";
+const bibliographies = new Map<string, Promise<string>>();
 
 export function getSourceStyle(): string {
   return String(Zotero.Prefs.get(stylePreference, true) || defaultStyle);
@@ -39,20 +42,42 @@ export function onSourceStyleChange(listener: () => void): () => void {
 }
 
 /** CSL owns bibliographic content; the host interface owns spacing and wrapping. */
-export async function getSourceBibliography(
+export function getSourceBibliography(
   key: string,
   libraryID: number | null,
 ): Promise<string> {
-  const item = await Zotero.Items.getByLibraryAndKeyAsync(
-    libraryID || Zotero.Libraries.userLibraryID,
-    key,
-  );
+  const styleID = getSourceStyle();
+  const version = JSON.stringify([getSourceRevision(), styleID, Zotero.locale]);
+  if (version !== bibliographyVersion) {
+    bibliographyVersion = version;
+    bibliographies.clear();
+  }
+  const library = libraryID || Zotero.Libraries.userLibraryID;
+  const cacheKey = JSON.stringify([library, key]);
+  let result = bibliographies.get(cacheKey);
+  if (!result) {
+    result = formatSourceBibliography(key, library, styleID).catch((error) => {
+      if (bibliographies.get(cacheKey) === result)
+        bibliographies.delete(cacheKey);
+      throw error;
+    });
+    bibliographies.set(cacheKey, result);
+  }
+  return result;
+}
+
+async function formatSourceBibliography(
+  key: string,
+  libraryID: number,
+  styleID: string,
+): Promise<string> {
+  const item = await Zotero.Items.getByLibraryAndKeyAsync(libraryID, key);
   if (!item || item.deleted)
     throw new Error(getString("manager-source-missing"));
   if (item.isNote()) return "";
   await Zotero.Styles.init();
   await Zotero.Items.loadDataTypes([item], ["itemData", "creators"]);
-  const style = Zotero.Styles.get(getSourceStyle());
+  const style = Zotero.Styles.get(styleID);
   if (!style) throw new Error(getString("source-style-missing"));
   const engine = style.getCiteProc(Zotero.locale);
   try {
@@ -103,12 +128,27 @@ export async function registerPreferences(): Promise<void> {
     src: `chrome://${config.addonRef}/content/preferences.xhtml`,
     scripts: [`chrome://${config.addonRef}/content/preferences.js`],
   });
-  if (active) paneID = id;
-  else Zotero.PreferencePanes.unregister(id);
+  if (!active) {
+    Zotero.PreferencePanes.unregister(id);
+    return;
+  }
+  paneIDs.push(id);
+  const aiID = await Zotero.PreferencePanes.register({
+    pluginID: config.addonID,
+    id: `${config.addonRef}-ai-preferences`,
+    parent: id,
+    label: getString("pref-ai-heading"),
+    src: `chrome://${config.addonRef}/content/ai-preferences.xhtml`,
+    scripts: [`chrome://${config.addonRef}/content/ai-settings.js`],
+  });
+  if (active) paneIDs.push(aiID);
+  else Zotero.PreferencePanes.unregister(aiID);
 }
 
 export function unregisterPreferences(): void {
   active = false;
-  if (paneID) Zotero.PreferencePanes.unregister(paneID);
-  paneID = undefined;
+  bibliographies.clear();
+  bibliographyVersion = "";
+  for (const id of paneIDs.splice(0).reverse())
+    Zotero.PreferencePanes.unregister(id);
 }

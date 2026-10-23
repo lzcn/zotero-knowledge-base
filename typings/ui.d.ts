@@ -12,6 +12,25 @@ declare global {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
   }
   interface Window {
+    KnowledgeBaseAISettings: { start(doc: Document): Promise<void> };
+    KnowledgeBaseConnections: {
+      create(options: {
+        button: HTMLButtonElement;
+        panel: HTMLElement;
+        api: KnowledgeBaseAPI;
+        available(): boolean;
+        prepare(): Promise<{ id: string; token: string }>;
+        isCurrent(token: string): boolean;
+        apply(
+          plan: import("../src/modules/connections").ConnectionPlan,
+          selection: {
+            parent: boolean;
+            links: { id: string }[];
+          },
+          token: string,
+        ): Promise<void>;
+      }): { refresh(): void; destroy(): void };
+    };
     KnowledgeBasePreferences: { start(doc: Document): Promise<void> };
     KnowledgeBaseMarkdownSource: {
       create(
@@ -102,6 +121,9 @@ export interface EditorElements {
   "knowledge-base-kind-label": HTMLLabelElement;
   "knowledge-base-key-label": HTMLLabelElement;
   "knowledge-base-editor-key": HTMLInputElement;
+  "knowledge-base-key-feedback": HTMLDivElement;
+  "knowledge-base-key-status": HTMLSpanElement;
+  "knowledge-base-key-resolve": HTMLButtonElement;
   "knowledge-base-parent-change": HTMLButtonElement;
   "knowledge-base-parent-picker": HTMLDivElement;
   "knowledge-base-editor-children-label": HTMLElement;

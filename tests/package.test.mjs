@@ -108,7 +108,7 @@ test("production package excludes personal library maintenance and test fixtures
   );
 });
 
-test("production package contains no AI reading windows or settings", async () => {
+test("production package supports connection providers without restoring AI paper reading", async () => {
   const files = unzipSync(
     await readFile(
       new URL("../dist/zotero-knowledge-base.xpi", import.meta.url),
@@ -118,6 +118,17 @@ test("production package contains no AI reading windows or settings", async () =
     Object.keys(files).some((name) => /paper-reading|codex/i.test(name)),
     false,
   );
-  assert.doesNotMatch(strFromU8(files["content/preferences.xhtml"]), /codex/i);
+  const ai = strFromU8(files["content/ai-preferences.xhtml"]);
+  for (const provider of ["deepseek", "opencode-go", "codex"])
+    assert.ok(ai.includes(`value="${provider}"`));
+  assert.doesNotMatch(
+    ai,
+    /value="opencode(?:-api)?"|codex-enabled|read-paper/i,
+  );
+  assert.doesNotMatch(
+    strFromU8(files["content/preferences.xhtml"]),
+    /knowledge-base-ai-provider|knowledge-base-ai-key/,
+  );
+  assert.match(strFromU8(files["prefs.js"]), /ai.enabled", false/);
   assert.doesNotMatch(strFromU8(files["prefs.js"]), /codex/i);
 });

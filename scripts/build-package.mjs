@@ -74,9 +74,11 @@ async function copyAssets(relative = "") {
   }
 }
 await copyAssets();
-for (const options of buildOptions(pkg, "production", addonDirectory)) {
-  await build({ ...options, absWorkingDir: root });
-}
+await Promise.all(
+  buildOptions(pkg, "production", addonDirectory).map((options) =>
+    build({ ...options, absWorkingDir: root }),
+  ),
+);
 assert.deepEqual(
   await readFile(join(addonDirectory, "content/manager.css")),
   sourceCSS,

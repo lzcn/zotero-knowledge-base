@@ -81,6 +81,7 @@ globalThis.IOUtils = {
 const items = new Map();
 globalThis.Zotero = {
   DataDirectory: { dir },
+  Promise: { delay: async () => {} },
   logError: (error) => {
     throw error;
   },

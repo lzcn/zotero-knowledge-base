@@ -1,0 +1,97 @@
+<vbox
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  onload="window.KnowledgeBaseAISettings.start(document)"
+  onshowing="window.KnowledgeBaseAISettings.start(document)"
+>
+  <vbox class="main-section" id="knowledge-base-ai-settings">
+    <html:label style="display: flex; align-items: center; gap: 6px">
+      <html:input id="knowledge-base-ai-enabled" type="checkbox" />
+      <html:span data-l10n-id="knowledge-base-pref-ai-enabled" />
+    </html:label>
+    <description data-l10n-id="knowledge-base-pref-ai-enabled-help" />
+    <vbox id="knowledge-base-ai-controls" hidden="true">
+      <hbox align="center" style="margin-block: 4px">
+        <label
+          control="knowledge-base-ai-provider"
+          data-l10n-id="knowledge-base-pref-ai-provider"
+          style="width: 6em"
+        />
+        <menulist
+          id="knowledge-base-ai-provider"
+          native="true"
+          style="min-width: 20em"
+        >
+          <menupopup>
+            <menuitem value="deepseek" label="DeepSeek" />
+            <menuitem value="opencode-go" label="OpenCode Go" />
+            <menuitem value="codex" label="Codex CLI" />
+          </menupopup>
+        </menulist>
+      </hbox>
+      <hbox align="center" style="margin-block: 4px">
+        <label
+          control="knowledge-base-ai-model"
+          data-l10n-id="knowledge-base-pref-ai-model"
+          style="width: 6em"
+        />
+        <html:input
+          id="knowledge-base-ai-model"
+          type="text"
+          style="flex: 1; min-width: 10em; max-width: 24em; margin-inline: 0"
+        />
+        <button id="knowledge-base-ai-list" />
+        <menupopup id="knowledge-base-ai-models" />
+      </hbox>
+      <hbox
+        id="knowledge-base-ai-key-row"
+        align="center"
+        style="margin-block: 4px"
+      >
+        <label
+          control="knowledge-base-ai-key"
+          data-l10n-id="knowledge-base-pref-ai-key"
+          style="width: 6em"
+        />
+        <html:input
+          id="knowledge-base-ai-key"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          style="width: 24em"
+        />
+        <button id="knowledge-base-ai-toggle-key" aria-pressed="false" />
+        <button
+          id="knowledge-base-ai-remove-key"
+          hidden="true"
+          data-l10n-id="knowledge-base-ai-remove-key"
+        />
+      </hbox>
+      <html:details id="knowledge-base-ai-path-row" hidden="hidden">
+        <html:summary data-l10n-id="knowledge-base-pref-ai-advanced" />
+        <hbox align="center" style="margin-block: 6px">
+          <label
+            control="knowledge-base-ai-path"
+            data-l10n-id="knowledge-base-pref-ai-path"
+            style="width: 6em"
+          />
+          <html:input
+            id="knowledge-base-ai-path"
+            type="text"
+            style="width: 24em"
+          />
+        </hbox>
+      </html:details>
+      <description id="knowledge-base-ai-help" />
+      <hbox align="center">
+        <button id="knowledge-base-ai-test" />
+        <description
+          id="knowledge-base-ai-status"
+          role="status"
+          style="flex: 1; margin-inline-start: 8px"
+        />
+      </hbox>
+      <description data-l10n-id="knowledge-base-pref-ai-privacy" />
+    </vbox>
+  </vbox>
+</vbox>

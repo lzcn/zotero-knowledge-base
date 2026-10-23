@@ -1,4 +1,5 @@
 import { exec, getAll, getOne } from "./db";
+import { getNoteReferences } from "./note-references";
 
 export interface CardIdentity {
   id: string;
@@ -8,6 +9,37 @@ export interface CardIdentity {
 export interface CardFamily {
   parent: CardIdentity | null;
   children: CardIdentity[];
+}
+
+/** Read every active Zettel and its stored parent in one database snapshot. */
+export async function getZettelOutline() {
+  const { byID } = await getNoteReferences();
+  const rows = await getAll<{
+    id: string;
+    title: string;
+    parent_id: string | null;
+    parent_title: string | null;
+    parent_unavailable: number;
+  }>(`SELECT COALESCE(z.custom_key, z.id) AS id, z.title,
+      COALESCE(parent.custom_key, p.parent_id) AS parent_id, parent.title AS parent_title,
+      EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = parent.id) AS parent_unavailable
+    FROM zettels z
+    LEFT JOIN card_parents p ON p.card_id = z.id
+    LEFT JOIN zettels parent ON parent.id = p.parent_id
+    WHERE z.kind = 'zettel'
+      AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)
+    ORDER BY z.title_folded, z.id`);
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    parent: row.parent_id
+      ? {
+          id: byID.get(row.parent_id) || row.parent_id,
+          title: row.parent_title,
+          ...(row.parent_unavailable ? { unavailable: true } : {}),
+        }
+      : null,
+  }));
 }
 
 /** null is the virtual knowledge root; every card has exactly one parent slot. */
@@ -76,8 +108,9 @@ export async function getParentCandidates(
     id: string;
     title: string;
     parent_id: string | null;
+    custom_key: string | null;
   }>(
-    `SELECT z.id, z.title, p.parent_id FROM zettels z JOIN card_parents p ON p.card_id = z.id ORDER BY z.title, z.id`,
+    `SELECT z.id, z.title, z.custom_key, p.parent_id FROM zettels z JOIN card_parents p ON p.card_id = z.id ORDER BY z.title, z.id`,
   );
   const children = new Map<string, string[]>();
   for (const row of rows)
@@ -99,7 +132,9 @@ export async function getParentCandidates(
     .filter(
       (row) =>
         !excluded.has(row.id) &&
-        `${row.id} ${row.title}`.toLowerCase().includes(search),
+        `${row.id} ${row.custom_key ?? ""} ${row.title}`
+          .toLowerCase()
+          .includes(search),
     )
     .slice(0, 100)
     .map((row) => ({ id: row.id, title: row.title }));

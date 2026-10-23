@@ -1,4 +1,16 @@
 import { compareNoteSummaries } from "./note-sort";
+import { getGraphTags } from "./note-tags";
+import {
+  isAIEnabled,
+  setAIEnabled,
+  onAIEnabledChange,
+  getAISettings,
+  getAIModels,
+  setAISettings,
+  testAIConnection,
+  cancelAIJob,
+} from "./ai";
+import { establishConnections, validateConnectionPlan } from "./connections";
 import { isAccelKey } from "../ui/platform";
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
@@ -60,6 +72,7 @@ import {
   nativeNoteRefFromURL,
   renderMarkdown,
   noteSnippet,
+  linkNotePassages,
 } from "./markdown";
 import { prepareCitations, getCitation, resolveCitation } from "./references";
 import {
@@ -69,7 +82,7 @@ import {
   updateImageDraft,
   releaseImageDraft,
 } from "./assets";
-import { getFamily, getParentCandidates } from "./hierarchy";
+import { getFamily, getParentCandidates, getZettelOutline } from "./hierarchy";
 import { getGraphData } from "./graph";
 import {
   getGraphOptions,
@@ -112,6 +125,8 @@ import {
   resolveRefs,
   parseLinks,
   saveZettel,
+  checkNoteKey,
+  getAvailableNoteID,
   type Backlink,
   type ResolvedLink,
   type Zettel,
@@ -173,6 +188,19 @@ function mainWindow(): Window {
 const editorWindows = new Map<string, Window>();
 
 export const api = {
+  linkNotePassages,
+  isAIEnabled,
+  setAIEnabled,
+  onAIEnabledChange,
+  getAISettings,
+  getAIModels,
+  setAISettings,
+  testAIConnection,
+  cancelAIJob,
+  establishConnections,
+  validateConnectionPlan,
+  checkNoteKey,
+  getAvailableNoteID,
   ensureLiteratureNote,
   getNoteHealth,
   getNoteTags,
@@ -225,6 +253,7 @@ export const api = {
     return target?.href
       ? {
           id: target.id,
+          reference: target.reference,
           href: target.href,
           label: target.label || target.reference,
         }
@@ -277,6 +306,17 @@ export const api = {
   copyNoteReference(reference: string): void {
     Zotero.Utilities.Internal.copyTextToClipboard(`[[${reference}]]`);
   },
+  async copyZettelList(shouldStop: () => boolean): Promise<number | null> {
+    await auditNativeNotes();
+    if (shouldStop()) return null;
+    const rows = await getZettelOutline();
+    if (shouldStop()) return null;
+    if (rows.length)
+      Zotero.Utilities.Internal.copyTextToClipboard(
+        rows.map((row) => `- ${JSON.stringify(row)}`).join("\n"),
+      );
+    return rows.length;
+  },
   onDataChange,
   onNativeNoteChange,
   mergeMarkdownDocuments,
@@ -305,12 +345,7 @@ export const api = {
   setTagInheritance,
   getGraphGroups,
   setGraphGroups,
-  async getGraphTags(): Promise<string[]> {
-    const graph = await getGraphData();
-    return [...new Set(graph.nodes.flatMap((node) => node.tags || []))].sort(
-      (a, b) => a.localeCompare(b),
-    );
-  },
+  getGraphTags,
 
   openImage(url: string): void {
     if (

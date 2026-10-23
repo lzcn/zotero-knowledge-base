@@ -84,35 +84,23 @@ html {
 }
 
 html|button {
-  appearance: none;
-  max-height: none;
+  appearance: auto;
   margin: 0;
-  padding: 4px 12px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: ButtonFace;
-  color: ButtonText;
+  padding: 3px 10px;
   font: inherit;
   cursor: default;
-}
-
-html|button:hover {
-  background: var(--hover);
-}
-
-html|button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: AccentColorText;
 }
 
 html|button.primary.dirty {
   opacity: 0.75;
 }
 
-html|button.danger {
-  color: var(--danger);
-  border-color: var(--danger);
+/* Links and compact toolbar actions are not dialog buttons. */
+html|button.icon-button,
+html|button.relation-link,
+.action-menu-items html|button,
+#knowledge-base-parent-results html|button {
+  appearance: none;
 }
 
 /* ---------- layout ---------- */
@@ -1177,6 +1165,8 @@ html|button.icon-button[aria-pressed="true"] {
 }
 .relation-link {
   height: auto;
+  /* Wrapped references must not inherit the host's single-line button limit. */
+  max-height: none;
   min-height: 0;
   display: block;
   width: 100%;
@@ -1365,10 +1355,10 @@ summary {
   padding: 10px 12px;
   border: 0;
   border-left: 2px solid transparent;
-  border-radius: 3px;
+  border-radius: 6px;
 }
 #knowledge-base-list .zettel-row.active {
-  background: var(--hover);
+  background: var(--active);
   border-left-color: var(--accent);
 }
 #knowledge-base-list .zettel-row.active .title {
@@ -1587,6 +1577,22 @@ summary {
 }
 #knowledge-base-btn-new {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/plus.svg");
+}
+#knowledge-base-btn-copy-zettels {
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/copy.svg");
+}
+#knowledge-base-editor-reference {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  font-size: 0;
+  background: url("chrome://knowledge-base/content/icons/ui/copy.svg") center /
+    16px no-repeat;
+  fill: currentColor;
+  -moz-context-properties: fill;
+}
+#knowledge-base-copy-status {
+  padding: 4px 12px;
 }
 #knowledge-base-back {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/back.svg");
@@ -1974,7 +1980,14 @@ summary {
 }
 .panel-splitter:hover,
 .panel-splitter:focus-visible {
-  background-color: var(--accent-soft);
+  background-color: var(--active);
+}
+.panel-drag-shield {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  cursor: col-resize;
+  touch-action: none;
 }
 .resizing-panels,
 .resizing-panels * {
@@ -2221,11 +2234,16 @@ summary {
 }
 .note-identity-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 6px 20px;
+  padding: 8px 20px;
+  flex-wrap: wrap;
   color: var(--muted);
   font-size: 12px;
+}
+.note-identity-row > label,
+#knowledge-base-note-kind-text {
+  line-height: 28px;
 }
 .note-identity-row .note-reference {
   min-width: 0;
@@ -2246,7 +2264,7 @@ summary {
 .editor-more > summary {
   list-style: none;
   cursor: pointer;
-  padding: 2px 8px;
+  padding: 4px 8px;
   font-size: 20px;
   line-height: 1;
 }
@@ -2298,25 +2316,67 @@ summary {
   max-width: 160px;
   margin-right: 12px;
   font: inherit;
+  height: 28px;
 }
 #knowledge-base-editor-key {
-  flex: 1;
-  max-width: 260px;
-  min-width: 100px;
-  padding: 3px 0;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 80px;
+  padding: 5px 8px;
   font-size: 12px;
   border: 0;
   background: transparent;
   color: inherit;
-  font-family: inherit;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
 }
 #knowledge-base-editor-key:hover {
-  text-decoration: underline;
-  text-underline-offset: 4px;
+  background: var(--hover);
 }
 #knowledge-base-editor-key:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 3px;
+  outline: none;
+}
+.note-key-group {
+  flex: 0 1 290px;
+  min-width: 150px;
+}
+.note-key-control {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-subtle);
+}
+.note-key-control:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.note-key-control:has([aria-invalid="true"]) {
+  border-color: var(--danger);
+}
+#knowledge-base-key-feedback {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding-top: 5px;
+  color: var(--danger);
+  font-size: 11px;
+}
+#knowledge-base-key-resolve {
+  padding: 0;
+  border: 0;
+  color: var(--accent);
+  background: transparent;
+  font-size: inherit;
+  cursor: pointer;
+}
+#knowledge-base-key-label {
+  display: inline;
+}
+.note-key-control .note-reference {
+  flex: none;
+  margin-inline-end: 3px;
 }
 #knowledge-base-parent-picker {
   position: absolute;
@@ -2365,8 +2425,7 @@ summary {
 }
 
 /* Keep writing separate from its navigable context. */
-#knowledge-base-kind-label,
-#knowledge-base-key-label {
+#knowledge-base-kind-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -2493,7 +2552,7 @@ summary {
 }
 .note-reference-text > .relation-id {
   display: inline;
-  white-space: nowrap;
+  white-space: normal;
   margin: 0;
   font: inherit;
   color: var(--muted);
@@ -2625,4 +2684,76 @@ summary {
   height: 26px;
   font: inherit;
   color: CanvasText;
+}
+/* Connection review stays in the note; proposals are inert until selected. */
+.connection-review {
+  border: 1px solid var(--material-border, #aaa);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin: 6px 12px;
+  max-height: 38vh;
+  overflow: auto;
+}
+.connection-review[hidden] {
+  display: none;
+}
+.connection-review p {
+  margin: 4px 0;
+  white-space: pre-wrap;
+}
+.connection-suggestion {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.connection-suggestion label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.connection-suggestion strong {
+  display: block;
+  margin-bottom: 4px;
+}
+.connection-suggestion blockquote {
+  margin: 6px 12px;
+  white-space: pre-wrap;
+}
+.connection-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  position: sticky;
+  bottom: -8px;
+  padding-block: 8px;
+  background: var(--bg);
+}
+.connection-actions button,
+#knowledge-base-establish-connections {
+  appearance: auto;
+  font: menu;
+  padding: 3px 10px;
+  min-height: 24px;
+}
+
+.connection-evidence {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+  margin: 8px 0;
+}
+.connection-evidence > div {
+  min-width: 0;
+}
+.connection-evidence blockquote {
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border);
+  background: var(--surface-subtle);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.connection-evidence mark {
+  color: inherit;
+  background: var(--active);
 }

@@ -5,7 +5,7 @@
   onshowing="window.KnowledgeBasePreferences.start(document)"
 >
   <vbox class="main-section">
-    <html:h3 data-l10n-id="knowledge-base-pref-workbench-heading" />
+    <html:h3 data-l10n-id="knowledge-base-pref-general-heading" />
     <hbox align="center">
       <label
         control="knowledge-base-workbench-mode"
@@ -24,9 +24,6 @@
         </menupopup>
       </menulist>
     </hbox>
-  </vbox>
-  <vbox class="main-section">
-    <html:h3 data-l10n-id="knowledge-base-pref-source-heading" />
     <hbox align="center">
       <label
         control="knowledge-base-source-style"
@@ -41,6 +38,11 @@
       </menulist>
     </hbox>
     <description data-l10n-id="knowledge-base-pref-source-help" />
+    <hbox
+      ><button
+        id="knowledge-base-ai-open"
+        data-l10n-id="knowledge-base-pref-ai-open"
+    /></hbox>
   </vbox>
   <vbox class="main-section">
     <html:h3 data-l10n-id="knowledge-base-pref-tags-heading" />
@@ -51,40 +53,43 @@
     />
     <description data-l10n-id="knowledge-base-pref-inherit-tags-help" />
     <html:h3 data-l10n-id="knowledge-base-pref-groups-heading" />
-    <hbox align="center">
-      <label
-        id="knowledge-base-graph-label-length-label"
-        control="knowledge-base-graph-label-length"
-        data-l10n-id="knowledge-base-pref-graph-label-length"
-      />
-      <html:input
-        id="knowledge-base-graph-label-length"
-        type="number"
-        min="8"
-        max="80"
-        step="1"
-        style="width: 5em"
-        aria-labelledby="knowledge-base-graph-label-length-label"
-      />
-      <label data-l10n-id="knowledge-base-pref-graph-label-length-unit" />
-    </hbox>
+    <html:details id="knowledge-base-graph-appearance">
+      <html:summary data-l10n-id="knowledge-base-pref-graph-appearance" />
+      <hbox align="center">
+        <label
+          id="knowledge-base-graph-label-length-label"
+          control="knowledge-base-graph-label-length"
+          data-l10n-id="knowledge-base-pref-graph-label-length"
+        />
+        <html:input
+          id="knowledge-base-graph-label-length"
+          type="number"
+          min="8"
+          max="80"
+          step="1"
+          style="width: 5em"
+          aria-labelledby="knowledge-base-graph-label-length-label"
+        />
+        <label data-l10n-id="knowledge-base-pref-graph-label-length-unit" />
+      </hbox>
+      <hbox align="center">
+        <label
+          id="knowledge-base-graph-local-depth-label"
+          control="knowledge-base-graph-local-depth"
+          data-l10n-id="knowledge-base-pref-graph-local-depth"
+        />
+        <html:input
+          id="knowledge-base-graph-local-depth"
+          type="number"
+          min="1"
+          max="6"
+          step="1"
+          style="width: 5em"
+          aria-labelledby="knowledge-base-graph-local-depth-label"
+        />
+      </hbox>
+    </html:details>
     <description data-l10n-id="knowledge-base-pref-groups-help" />
-    <hbox align="center">
-      <label
-        id="knowledge-base-graph-local-depth-label"
-        control="knowledge-base-graph-local-depth"
-        data-l10n-id="knowledge-base-pref-graph-local-depth"
-      />
-      <html:input
-        id="knowledge-base-graph-local-depth"
-        type="number"
-        min="1"
-        max="6"
-        step="1"
-        style="width: 5em"
-        aria-labelledby="knowledge-base-graph-local-depth-label"
-      />
-    </hbox>
     <vbox id="knowledge-base-graph-groups" />
     <hbox
       ><button

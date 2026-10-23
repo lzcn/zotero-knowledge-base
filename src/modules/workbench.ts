@@ -253,13 +253,14 @@ export function clearEditor(element: Element): void {
   });
 }
 
-function stopWorkbench(win: Window): void {
+function stopWorkbench(win: Window): Promise<void> | undefined {
   const record = workbenches.get(win);
   if (!record) return;
-  stopWorkbenchBrowser(record.browser);
+  return stopWorkbenchBrowser(record.browser);
 }
 
-function stopWorkbenchBrowser(browser: Browser): void {
+function stopWorkbenchBrowser(browser: Browser): Promise<void> | undefined {
+  let writing: Promise<void> | undefined;
   const manager = browser.contentWindow;
   const editorBrowser = manager?.document.getElementById(
     "knowledge-base-workbench-editor",
@@ -269,21 +270,54 @@ function stopWorkbenchBrowser(browser: Browser): void {
     mounts.set(editorBrowser, (mounts.get(editorBrowser) || 0) + 1);
     cancelLoads.get(editorBrowser)?.();
   }
-  if (editor?.knowledgeBaseFlushDraft && !editor.knowledgeBaseStopping) {
-    editor.knowledgeBaseFlushDraft().catch((error) => Zotero.logError(error));
+  if (editor && !editor.knowledgeBaseStopping) {
+    try {
+      writing = editor
+        .knowledgeBaseFlushDraft?.()
+        .catch((error) => Zotero.logError(error));
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
     editor.knowledgeBaseStopping = true;
-    editor.knowledgeBaseStopEditor?.();
+    try {
+      editor.knowledgeBaseStopEditor?.();
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
   }
   for (const view of [browser, editorBrowser]) {
     const token = view && pending.get(view);
     if (token) contexts.delete(token);
     if (view) pending.delete(view);
   }
+  return writing;
 }
 
-export function stopWorkbenches(): void {
-  for (const win of workbenches.keys()) stopWorkbench(win);
-  if (workbenchWindow?.browser) stopWorkbenchBrowser(workbenchWindow.browser);
+export async function stopWorkbenches(): Promise<void> {
+  const writes: (Promise<void> | undefined)[] = [];
+  for (const win of workbenches.keys()) {
+    try {
+      writes.push(stopWorkbench(win));
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+  if (workbenchWindow?.browser) {
+    try {
+      writes.push(stopWorkbenchBrowser(workbenchWindow.browser));
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  }
+  await Promise.allSettled(writes);
 }
 
 export function closeWorkbenches(win?: Window): void {

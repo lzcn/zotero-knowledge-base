@@ -5,6 +5,8 @@ const NOTE_SORTS = {
   "created-asc": ["created_at", "ASC"],
   "title-asc": ["title_folded", "ASC"],
   "title-desc": ["title_folded", "DESC"],
+  "id-asc": ["reference", "ASC"],
+  "id-desc": ["reference", "DESC"],
 } as const;
 
 export type NoteSort = keyof typeof NOTE_SORTS;
@@ -20,6 +22,8 @@ interface NoteSummary {
   updated_at: number;
   created_at: number;
   searchRank?: number;
+  custom_key?: string | null;
+  reference?: string;
 }
 
 // SQLite orders folded titles by Unicode code point, including supplementary characters.
@@ -40,9 +44,14 @@ export function compareNoteSummaries(
   const [field, direction] = noteSortOrder(sort);
   const rank = (a.searchRank ?? 0) - (b.searchRank ?? 0);
   const value =
-    field === "title_folded"
-      ? compareText(a.title.toLowerCase(), b.title.toLowerCase())
-      : (a[field] ?? 0) - (b[field] ?? 0);
+    field === "reference"
+      ? compareText(
+          a.custom_key || a.reference || a.id,
+          b.custom_key || b.reference || b.id,
+        )
+      : field === "title_folded"
+        ? compareText(a.title.toLowerCase(), b.title.toLowerCase())
+        : (a[field] ?? 0) - (b[field] ?? 0);
   return (
     rank || (direction === "ASC" ? 1 : -1) * (value || compareText(a.id, b.id))
   );

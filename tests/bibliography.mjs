@@ -9,7 +9,11 @@ import { pathToFileURL } from "node:url";
 const root = await mkdtemp(join(tmpdir(), "knowledge-base-csl-"));
 try {
   await build({
-    entryPoints: ["src/modules/bibliography.ts"],
+    stdin: {
+      contents:
+        'export * from "./src/modules/bibliography.ts"; export {notifyDataChange} from "./src/modules/events.ts";',
+      resolveDir: process.cwd(),
+    },
     bundle: true,
     platform: "node",
     format: "esm",
@@ -55,24 +59,56 @@ try {
   const bibliography = await import(
     pathToFileURL(join(root, "bibliography.mjs"))
   );
-  const html = await bibliography.getSourceBibliography("ITEM0001", 1);
+  const initial = await Promise.all(
+    Array.from({ length: 3 }, () =>
+      bibliography.getSourceBibliography("ITEM0001", 1),
+    ),
+  );
+  const html = initial[0];
+  assert.deepEqual(initial, Array(3).fill(html));
   assert.match(html, /<i>Title<\/i>/);
   assert.match(html, /href="https:\/\/example.com"/);
   assert.doesNotMatch(html, /metadata|Z3988|script|onerror|style=/);
   assert.equal(released, 1);
+  assert.deepEqual(
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        bibliography.getSourceBibliography("ITEM0001", 1),
+      ),
+    ),
+    Array(3).fill(html),
+  );
+  assert.equal(released, 1);
+  bibliography.notifyDataChange({ fields: ["identity"] });
+  await bibliography.getSourceBibliography("ITEM0001", 1);
+  assert.equal(released, 1);
+  bibliography.notifyDataChange({ fields: ["source"] });
   fails = true;
   await assert.rejects(
     bibliography.getSourceBibliography("ITEM0001", 1),
     /CSL failure/,
   );
   assert.equal(released, 2);
+  fails = false;
+  await bibliography.getSourceBibliography("ITEM0001", 1);
+  assert.equal(released, 3);
   preference = "missing-style";
   await assert.rejects(
     bibliography.getSourceBibliography("ITEM0001", 1),
     /source-style-missing/,
   );
+  preference = "http://www.zotero.org/styles/apa";
+  bibliography.notifyDataChange({ fields: ["availability"] });
+  item.deleted = true;
+  await assert.rejects(
+    bibliography.getSourceBibliography("ITEM0001", 1),
+    /manager-source-missing/,
+  );
+  item.deleted = false;
+  await bibliography.getSourceBibliography("ITEM0001", 1);
+  assert.equal(released, 4);
   console.log(
-    "PASS CSL emphasis and links survive sanitization; removed metadata and failed renders release engines",
+    "PASS Shared CSL rendering preserves emphasis and links, invalidates on source/style/availability changes and retries failed renders with released engines",
   );
 
   dom.window.eval(await readFile("addon/content/markdown.js", "utf8"));

@@ -13,6 +13,15 @@ window.KnowledgeBasePreferences = (() => {
       const popup = doc.getElementById("knowledge-base-source-styles");
       const error = doc.getElementById("knowledge-base-preferences-error");
       try {
+        const aiSettings = doc.getElementById("knowledge-base-ai-open");
+        if (!menus.has(aiSettings)) {
+          menus.add(aiSettings);
+          aiSettings.addEventListener("command", () =>
+            Zotero.Utilities.Internal.openPreferences(
+              "knowledge-base-ai-preferences",
+            ),
+          );
+        }
         const labelLength = /** @type {HTMLInputElement} */ (
           doc.getElementById("knowledge-base-graph-label-length")
         );

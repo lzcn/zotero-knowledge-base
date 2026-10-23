@@ -1,4 +1,6 @@
 import { config, version } from "../package.json";
+import { initAI, stopAI, closeAI } from "./modules/ai";
+import { closeConnections } from "./modules/connections";
 import { getString, initLocale } from "./utils/locale";
 import { closeDB, initDB } from "./modules/db";
 import {
@@ -41,6 +43,15 @@ let generation = 0;
 let startupPromise: Promise<void> | undefined;
 let shutdownPromise: Promise<void> | undefined;
 let observingQuit = false;
+let quitClient:
+  | {
+      addBlocker(name: string, blocker: () => Promise<void>): void;
+      removeBlocker(blocker: () => Promise<void>): void;
+    }
+  | undefined;
+let appShutdownPromise: Promise<void> | undefined;
+let draftWrites: Promise<unknown>[] = [];
+let stopping = false;
 let cancelReadiness: (() => void) | undefined;
 const quitObserver = { observe: () => onAppShutdown() };
 
@@ -52,6 +63,14 @@ function removeQuitObserver(): void {
 
 async function onStartup(): Promise<void> {
   if (startupPromise) return startupPromise;
+  const { AsyncShutdown } = ChromeUtils.importESModule(
+    "resource://gre/modules/AsyncShutdown.sys.mjs",
+  );
+  quitClient = AsyncShutdown.quitApplicationGranted;
+  quitClient!.addBlocker(
+    "Knowledge Base: finish local writes and stop AI",
+    finishAppShutdown,
+  );
   Services.obs.addObserver(quitObserver, "quit-application-granted");
   observingQuit = true;
   const token = ++generation;
@@ -77,6 +96,7 @@ async function start(token: number): Promise<void> {
     initLocale();
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
+      ["initAI", initAI],
       ["initAssets", initAssets],
       ["noteSessions", initNoteSessions],
       [
@@ -230,12 +250,15 @@ async function releaseResources(): Promise<void> {
     },
     unregisterItemPaneUI,
     unregisterPreferences,
+    closeAI,
     closeNativeMarkdown,
     closeNativeNotes,
     closeNoteSessions,
     closeAssets,
+    closeConnections,
     () => ztoolkit.unregisterAll(),
     closeDB,
+    removeQuitBlocker,
   ];
   for (const action of actions) {
     try {
@@ -249,7 +272,23 @@ async function releaseResources(): Promise<void> {
 }
 
 function onAppShutdown(): void {
-  stopWorkbenches();
+  if (stopping) return;
+  stopping = true;
+  const stop = (action: () => unknown) => {
+    try {
+      action();
+    } catch (error) {
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+  };
+  stop(stopAI);
+  stop(() => {
+    draftWrites.push(
+      stopWorkbenches().catch((error) => Zotero.logError(error)),
+    );
+  });
   // Start pending draft writes before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {
     const editor = win as unknown as Window & {
@@ -258,9 +297,9 @@ function onAppShutdown(): void {
       knowledgeBaseStopEditor?: () => void;
     };
     try {
-      editor
-        .knowledgeBaseFlushDraft?.()
-        .catch((error) => Zotero.logError(error));
+      const writing = editor.knowledgeBaseFlushDraft?.();
+      if (writing)
+        draftWrites.push(writing.catch((error) => Zotero.logError(error)));
       editor.knowledgeBaseStopEditor?.();
     } catch (error) {
       Zotero.logError(
@@ -269,15 +308,48 @@ function onAppShutdown(): void {
     }
     editor.knowledgeBaseStopping = true;
   }
-  stopNativeMarkdown();
-  stopNativeNotes();
-  stopNoteSessions();
+  for (const action of [stopNativeMarkdown, stopNativeNotes, stopNoteSessions])
+    stop(action);
   ++generation;
   ready = false;
   addon.data.alive = false;
-  stopAssets();
-  cancelReadiness?.();
-  removeQuitObserver();
+  stop(stopAssets);
+  stop(() => cancelReadiness?.());
+  stop(removeQuitObserver);
+}
+
+function removeQuitBlocker(): void {
+  quitClient?.removeBlocker(finishAppShutdown);
+  quitClient = undefined;
+}
+
+function finishAppShutdown(): Promise<void> {
+  if (appShutdownPromise) return appShutdownPromise;
+  onAppShutdown();
+  // Complete local persistence before Sqlite's later shutdown phase closes storage.
+  // Remote requests are cancelled, never awaited for a successful response.
+  appShutdownPromise = (async () => {
+    await Promise.allSettled(draftWrites);
+    draftWrites = [];
+    for (const close of [
+      closeAI,
+      () => closeNativeMarkdown(false),
+      closeNativeNotes,
+      closeNoteSessions,
+      closeAssets,
+      closeConnections,
+    ]) {
+      try {
+        await close();
+      } catch (error) {
+        Zotero.logError(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+      }
+    }
+    removeQuitBlocker();
+  })();
+  return appShutdownPromise;
 }
 
 async function onShutdown(): Promise<void> {

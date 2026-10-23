@@ -18,13 +18,48 @@ import { unzipSync, zipSync, strFromU8, strToU8 } from "fflate";
 const binary =
   process.env.ZOTERO_BINARY || "/Applications/Zotero.app/Contents/MacOS/zotero";
 await access(binary);
-const xpi = resolve(process.argv[2] || "dist/zotero-knowledge-base.xpi");
+const args = process.argv.slice(2);
+const linksOnly = args.includes("--links");
+const relationsOnly = args.includes("--relations");
+const connectionsOnly =
+  args.includes("--connections") || linksOnly || relationsOnly;
+const xpi = resolve(
+  args.find((arg) => !arg.startsWith("--")) || "dist/zotero-knowledge-base.xpi",
+);
 const files = unzipSync(await readFile(xpi));
 const root = await mkdtemp(join(tmpdir(), "knowledge-base-quit-"));
 const profile = join(root, "profile");
 const data = join(root, "data");
 const marker = join(root, "result.json");
 const restartMarker = join(root, "restart.json");
+const fakeAI = join(root, "fake-ai-cli");
+const aiRequests = join(root, "ai-requests.jsonl");
+await writeFile(
+  fakeAI,
+  `#!${process.execPath}
+if(process.argv.includes("models")){console.log(process.argv.includes("debug")?JSON.stringify({models:[{slug:"fixture"}]}):"fixture");process.exit(0);}
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  if (process.argv.includes("fixture-hang")) {setInterval(() => {}, 1000); return;}
+  require("node:fs").appendFileSync(${JSON.stringify(aiRequests)}, JSON.stringify({input})+"\\n");
+  let result;
+  if (input.includes('"ok":true')) result = {ok: true};
+  else if (input.startsWith("Summarize")) result = {summaries: JSON.parse(input.split("\\n").at(-1)).notes.map(note => ({id: note.id, summary: note.body.slice(0,160)}))};
+  else {
+    const data = JSON.parse(input.trim().split("\\n").at(-1));
+    if (data.titles) result = {ids: data.titles.filter(note => note[1] === "AI fixture parent").map(note => note[0]), queries:["atomic claim"]};
+    else if (data.candidates) result = {parents:[data.candidates.find(note => note.title === "AI fixture parent").id], links:[data.candidates.find(note => note.title === "AI fixture related").id]};
+    else result = {parent: {id: data.parentCandidateIDs[0], reason: "Organizes the atomic claim", currentEvidence: "atomic claim", targetEvidence: "Organizes the bounded idea"}, links: [{id: data.linkCandidateIDs[0], relation:"qualifies", reason: "Qualifies the claim", anchor: "atomic claim", currentEvidence:"atomic claim", targetEvidence:"The claim requires this setting"}]};
+  }
+  if (input.startsWith("Summarize") && process.argv.includes("fixture-bad-summary")) result.summaries[1] = result.summaries[0];
+  const text = JSON.stringify(result);
+  console.log(JSON.stringify(process.argv.includes("exec") ? {type: "item.completed", item: {type: "agent_message", text}} : {type: "text", part: {type:"text",text}}));
+});
+`,
+  { mode: 0o700 },
+);
 await mkdir(join(profile, "extensions"), { recursive: true });
 await mkdir(data);
 const prefs = {
@@ -98,9 +133,99 @@ function runQuitTest() {
         setTimeout(run, 250);
         return;
       }
+      if (${relationsOnly}) {
+        if(await IOUtils.exists(${JSON.stringify(marker)})) {
+          await kb.hooks.onShutdown();
+          await IOUtils.writeUTF8(${JSON.stringify(restartMarker)},JSON.stringify({connectionsOnly:true}));
+          Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+        }
+        const center=await kb.api.saveZettel({kind:"zettel",title:"Responsive relations",body:"Central idea"});
+        const native=await kb.api.acquireNativeNote({id:center,kind:"zettel",title:"Responsive relations",body:"Central idea"});
+        await kb.api.releaseNativeNote(native.noteID);
+        const titles=["Unsupervised Multiple-Change Detection in Very High Resolution Multisensor Images Via Deep-Learning Based Adaptation", "Large-Area Land-Cover Changes Monitoring With Time-Series Remote Sensing Images Using Transferable Deep Models", "窄窗口下用于验证长标题和笔记标识自动换行而且不重叠的中文笔记"];
+        for(let i=0;i<titles.length;i++) {
+          const input={kind:"zettel",title:titles[i],body:'[['+center+']]',customKey:i===2?'Layout'+"LongUnbrokenReference".repeat(8):'LayoutReference'+i,parentId:center};
+          const id=await kb.api.saveZettel(input);
+          const note=await kb.api.acquireNativeNote({id,...input});await kb.api.releaseNativeNote(note.noteID);
+        }
+        await kb.api.openEditor({window:true,zettelId:center});
+        const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+        let viewer;
+        for(let n=0;n<200;n++) {
+          viewer=[...Services.wm.getEnumerator('knowledge-base:editor')].find(win=>win.knowledgeBaseCardId===center);
+          if(viewer?.knowledgeBaseReady){await viewer.knowledgeBaseReady();break;}
+          await pause(25);
+        }
+        if(!viewer) throw new Error("Relation layout editor did not open");
+        await viewer.refreshRelations();
+        const metrics=[];
+        for(const width of [1100,640,360]) {
+          viewer.resizeTo(width,760);await pause(150);
+          for(const group of ["children","backlinks"]) {
+            viewer.document.getElementById('knowledge-base-editor-'+group+'-label').click();
+            await pause(50);
+            const list=viewer.document.getElementById('knowledge-base-editor-'+(group==='children'?'family':group));
+            const buttons=[...list.querySelectorAll('.relation-link')];
+            if(buttons.length!==3) throw new Error("Relation layout fixtures missing: "+group+" "+buttons.length);
+            let previous=-Infinity;
+            const rows=buttons.map(button=>{
+              const text=button.querySelector('.note-reference-text');
+              const bounds=button.getBoundingClientRect(),content=text.getBoundingClientRect(),style=viewer.getComputedStyle(button);
+              const row={top:bounds.top,bottom:bounds.bottom,height:bounds.height,contentHeight:content.height,contentBottom:content.bottom,parentHeight:button.parentElement.getBoundingClientRect().height,maxHeight:style.maxHeight,boxSizing:style.boxSizing,display:style.display};
+              const overlaps=previous>bounds.top+1 || content.bottom>bounds.bottom+1;
+              previous=bounds.bottom;
+              if(overlaps || button.scrollWidth>button.clientWidth+1 || text.scrollWidth>text.clientWidth+1) row.invalid=true;
+              return row;
+            });
+            metrics.push({width,actualWidth:viewer.innerWidth,group,rows});
+            const shots=${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
+            if(shots && group==='backlinks') {
+              await IOUtils.makeDirectory(shots,{ignoreExisting:true});
+              const section=viewer.document.getElementById('knowledge-base-editor-relations');
+              const image=await viewer.browsingContext.currentWindowGlobal.drawSnapshot(section.getBoundingClientRect(),1,'white');
+              const canvas=viewer.document.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=image.width;canvas.height=image.height;canvas.getContext('2d').drawImage(image,0,0);image.close();
+              const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));await IOUtils.write(PathUtils.join(shots,'relations-'+width+'.png'),new Uint8Array(await blob.arrayBuffer()));
+            }
+          }
+        }
+        if(metrics.some(item=>item.rows.some(row=>row.invalid))) throw new Error("Wrapped relation rows overlap or overflow: "+JSON.stringify(metrics));
+        await viewer.knowledgeBasePrepareNavigation();viewer.close();
+        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify({connectionsOnly:true,relationsOnly:true,metrics}));
+        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+      }
       if (await IOUtils.exists(${JSON.stringify(marker)})) {
         restarting = true;
         const first = JSON.parse(await IOUtils.readUTF8(${JSON.stringify(marker)}));
+        if (first.linksOnly) {
+          const card = await kb.api.getZettel(first.cardID);
+          const restoredNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID,first.noteKey);
+          if(!card || !restoredNote || !kb.api.getMarkdownSource(restoredNote.getNote()).body.includes('[[ProxyThinkerTestTimeGuidanceXiao26]]') || (restoredNote.getNote().split('title="[[ProxyThinkerTestTimeGuidanceXiao26]]"').length-1)!==3 || !(await kb.api.getOutgoing(first.cardID)).some(link=>link.targetId===first.targetID)) throw new Error("Restart lost pasted or completed note links");
+          await kb.hooks.onShutdown();
+          await IOUtils.writeUTF8(${JSON.stringify(restartMarker)},JSON.stringify({connectionsOnly:true}));
+          Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+        }
+        if (first.connectionsOnly) {
+          if(kb.api.isAIEnabled())throw new Error("Restart lost the disabled AI preference");
+          if(Zotero.Prefs.get("extensions.zotero.knowledge-base.ai.opencode-api.model",true)!=="saved-console-model" || Zotero.Prefs.get("extensions.zotero.knowledge-base.ai.opencode.model",true)!=="saved-cli-model" || Services.logins.findLogins("chrome://knowledge-base","","OpenCode API")[0]?.password!=="retained-console-key")throw new Error("Removed OpenCode choices lost stored configuration or key");
+          await kb.api.setAISettings({provider:"opencode-go"});
+          if(kb.api.getAISettings().model!=="deepseek-v4.1-flash" || !kb.api.getAISettings().hasStoredKey || Services.logins.findLogins("chrome://knowledge-base","","OpenCode Go API")[0]?.password!=="retained-go-key")throw new Error("Restart lost the retained Go configuration");
+          let disabledRejected=false;try{await kb.api.testAIConnection("restart-disabled");}catch(error){disabledRejected=String(error).includes(kb.api.loc("ai-disabled"));}
+          if(!disabledRejected)throw new Error("Restart allowed disabled AI work");
+          kb.api.setAIEnabled(true);
+          const saved=await kb.api.getZettel(first.currentID);
+          if(saved?.body!==first.body || (await kb.api.getFamily(first.currentID)).parent?.id!==first.parentID || !(await kb.api.getOutgoing(first.currentID)).some(link=>link.targetId===first.relatedID)) throw new Error("Restart lost reviewed AI connections");
+          const cache=JSON.parse(await IOUtils.readUTF8(PathUtils.join(Zotero.DataDirectory.dir,"knowledge-base-ai-summaries.json")));
+          if(cache.format!==1 || cache.notes.length<2) throw new Error("Restart lost AI summary cache");
+          await kb.api.setAISettings({provider:"codex",path:${JSON.stringify(fakeAI)},model:"fixture-hang"});
+          const cancelledMessage=kb.api.loc("ai-cancelled");
+          const task=kb.api.testAIConnection("host-ai-shutdown").then(()=>false,error=>String(error).includes(cancelledMessage));
+          await new Promise(resolve=>setTimeout(resolve,200));
+          await kb.hooks.onShutdown();
+          const cancelled=await task;
+          if(!cancelled || Zotero.ZoteroKnowledgeBase || Zotero.getMainWindow().document.getElementById("knowledge-base-menu-open-manager")) throw new Error("Plugin shutdown did not cancel AI and remove its UI");
+          await IOUtils.writeUTF8(${JSON.stringify(restartMarker)},JSON.stringify({connectionsOnly:true}));
+          Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+        }
         if(kb.api.getNoteSort()!=='created-desc') throw new Error('Restart lost the note sort preference');
         if(kb.api.getWorkbenchMode()!=="window") throw new Error('Restart lost the workbench opening preference');
         if(kb.api.getGraphLabelLength()!==18) throw new Error("Restart lost the graph title length");
@@ -174,7 +299,19 @@ function runQuitTest() {
         return;
       }
       if ((await kb.api.listZettels()).length) throw new Error("Fresh install contains preloaded user cards");
+      const emptyClipboard = Zotero.Utilities.Internal.getClipboard("text/plain");
+      if (await kb.api.copyZettelList(()=>false) !== 0 || Zotero.Utilities.Internal.getClipboard("text/plain") !== emptyClipboard) throw new Error("Copying an empty Zettel list replaced the clipboard");
       const mainWindow=Zotero.getMainWindow();
+      {
+        const source = new Zotero.Item("journalArticle");
+        source.libraryID = Zotero.Libraries.userLibraryID;
+        source.setField("title", "Initial Literature ID fixture");
+        await source.saveTx();
+        const initialID = await kb.api.ensureLiteratureNote(source.key, source.libraryID);
+        if (!/^[0-9]{14}$/.test(initialID) || (await kb.api.getZettel(initialID)).reference !== initialID || await kb.api.ensureLiteratureNote(source.key, source.libraryID) !== initialID) throw new Error("New Literature Notes do not retain a unique initial timestamp ID");
+        await eraseFixtureCard(initialID);
+        await Zotero.Items.erase(source.id);
+      }
       const entryButton=mainWindow.document.getElementById("knowledge-base-toolbar-button");
       if(entryButton?.parentElement.id!=="zotero-items-toolbar" || entryButton.getBoundingClientRect().width<20 || !mainWindow.getComputedStyle(entryButton).listStyleImage.includes("icon-20.svg") || mainWindow.document.getElementById("knowledge-base-menu-open-workbench-window")) throw new Error('Knowledge Base did not have one menu entry and its native library toolbar icon');
       async function openMarkdownToolbar(frameWindow) {
@@ -401,13 +538,13 @@ function runQuitTest() {
       for (let n = 0; n < 100 && literatureEditor.document.getElementById("knowledge-base-editor-root")?.dataset.mode !== "visual"; n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (literatureEditor.document.getElementById("knowledge-base-note-kind").value !== "literature" || !literatureEditor.document.getElementById("knowledge-base-note-kind").disabled || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
       const literatureReference = literatureEditor.document.getElementById("knowledge-base-editor-reference");
-      if (literatureReference.textContent !== "@Host2026" || (await kb.api.getZettel(literatureID)).reference !== "@Host2026") throw new Error("Literature Note reference is missing");
+      if (literatureReference.textContent !== "Host2026" || (await kb.api.getZettel(literatureID)).reference !== "Host2026" || literatureEditor.document.getElementById("knowledge-base-editor-key").hidden) throw new Error("An existing Literature Note has no editable ID");
       literatureReference.click();
-      if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[" + literatureID + "]]") throw new Error("Reference copy did not write a stable wiki link: " + JSON.stringify({plain: Zotero.Utilities.Internal.getClipboard("text/plain"), unicode: Zotero.Utilities.Internal.getClipboard("text/unicode")}));
+      if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[Host2026]]") throw new Error("Reference copy did not write a stable wiki link: " + JSON.stringify({plain: Zotero.Utilities.Internal.getClipboard("text/plain"), unicode: Zotero.Utilities.Internal.getClipboard("text/unicode")}));
       if ((await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Literature citation-key navigation failed");
       const noteLink = "[[@Host2026]]";
       const noteLinkHTML = await kb.api.nativeNoteHTML("", noteLink);
-      if (!kb.api.getMarkdownSource(noteLinkHTML).body.includes("[[" + literatureID + "]]") || !noteLinkHTML.includes('href="zotero://select/library/items/' + note.key + '"') || (await kb.api.getDraftLinks(noteLink + " [@Host2026]")).length !== 1) throw new Error("Native Markdown roundtrip confused note links with item citations");
+      if (!kb.api.getMarkdownSource(noteLinkHTML).body.includes("[[Host2026]]") || !noteLinkHTML.includes('href="zotero://select/library/items/' + note.key + '"') || (await kb.api.getDraftLinks(noteLink + " [@Host2026]")).length !== 1) throw new Error("Native Markdown roundtrip confused note links with item citations");
       if(!noteLinkHTML.includes('>Smith 2026</a>') || !(await kb.api.nativeNoteHTML('', '[[' + literatureID + '|My reading]]')).includes('>My reading</a>')) throw new Error('Literature native link labels do not use author-year or lost explicit aliases');
       await kb.api.saveZettel({id: thinkingID, kind: "thinking", title: "Existing project", body: noteLink});
       if ((await kb.api.getOutgoing(thinkingID))[0]?.targetId !== literatureID || !(await kb.api.getBacklinks(literatureID)).some(link => link.sourceId === thinkingID)) throw new Error("Literature reference was not indexed into backlinks");
@@ -450,8 +587,8 @@ function runQuitTest() {
       item.setField("extra", "Citation Key: HostRenamed2026");
       if (Zotero.ItemFields.getID("citationKey")) item.setField("citationKey", "HostRenamed2026");
       await item.saveTx();
-      for (let n = 0; n < 100 && literatureReference.textContent !== "@HostRenamed2026"; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (literatureReference.textContent !== "@HostRenamed2026" || (await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Citation-key change lost the stable note reference or left its display stale");
+      for (let n = 0; n < 100 && (!(await kb.api.resolveCardLink("knowledge-base://card/%40HostRenamed2026"))?.targetId || literatureReference.textContent !== "HostRenamed2026"); n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (literatureReference.textContent !== "HostRenamed2026" || (await kb.api.resolveCardLink("knowledge-base://card/%40Host2026"))?.targetId !== literatureID) throw new Error("Citation-key change lost the stable note reference");
       item.setField("publicationTitle", "Journal of Test Studies");
       item.setField("DOI", "10.1000/host-test");
       item.setField("extra", "Citation Key: Host2026");
@@ -478,6 +615,12 @@ function runQuitTest() {
       }
       kb.api.setSourceStyle("http://www.zotero.org/styles/apa");
       if (!Zotero.PreferencePanes.pluginPanes.some(pane => pane.id === "knowledge-base-preferences") || note.getNote() !== originalLiteratureHTML) throw new Error("Source Settings are missing or rendering rewrote the note");
+      await kb.api.setAISettings({provider:"opencode-go",model:"deepseek-v4.1-flash",key:"retained-go-key"});
+      const oldConsole = Cc["@mozilla.org/login-manager/loginInfo;1"].createInstance(Ci.nsILoginInfo);
+      oldConsole.init("chrome://knowledge-base",null,"OpenCode API","opencode-api","retained-console-key","","");
+      await Services.logins.addLoginAsync(oldConsole);
+      Zotero.Prefs.set("extensions.zotero.knowledge-base.ai.opencode-api.model","saved-console-model",true);
+      Zotero.Prefs.set("extensions.zotero.knowledge-base.ai.opencode.model","saved-cli-model",true);
       const preferences = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
       let styleMenu;
       for (let n=0; n<100; n++) {
@@ -486,7 +629,180 @@ function runQuitTest() {
         await new Promise(resolve => setTimeout(resolve,50));
       }
       if (!styleMenu || styleMenu.value !== "http://www.zotero.org/styles/apa") throw new Error("Native Settings style control did not initialize");
+      if(preferences.document.getElementById("knowledge-base-ai-provider")) throw new Error("AI configuration remains embedded in ordinary Settings");
+      if(kb.api.isAIEnabled()) throw new Error("AI must default to disabled even with saved keys");
+      for(const operation of [()=>kb.api.testAIConnection("host-disabled-test"),()=>kb.api.getAIModels("host-disabled-models"),()=>kb.api.establishConnections("missing","host-disabled-connections",()=>{})]) {
+        let rejected=false;try {await operation();} catch(error) {rejected=String(error).includes(kb.api.loc("ai-disabled"));}
+        if(!rejected)throw new Error("Disabled AI operation was accepted");
+      }
+      preferences.document.getElementById("knowledge-base-ai-open").dispatchEvent(new preferences.Event("command"));
+      let aiEnabled;
+      for(let n=0;n<100;n++) {
+        aiEnabled=preferences.document.getElementById("knowledge-base-ai-enabled");
+        if(aiEnabled && preferences.document.getElementById("knowledge-base-ai-test")?.label)break;
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      if(!aiEnabled || aiEnabled.checked || !preferences.document.getElementById("knowledge-base-ai-controls").hidden)throw new Error("Independent AI Settings did not start disabled");
+      const connectionShots = ${JSON.stringify(process.env.KB_HOST_SCREENSHOTS || "")};
+      const captureAIWindow=async(name,view)=>{
+        if(!connectionShots)return;
+        await IOUtils.makeDirectory(connectionShots,{ignoreExisting:true});
+        const image=await view.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,"white");
+        const canvas=view.document.createElementNS("http://www.w3.org/1999/xhtml","canvas");
+        canvas.width=image.width;canvas.height=image.height;canvas.getContext("2d").drawImage(image,0,0);image.close();
+        const blob=await new Promise(resolve=>canvas.toBlob(resolve));
+        await IOUtils.write(PathUtils.join(connectionShots,name+".png"),new Uint8Array(await blob.arrayBuffer()));
+      };
+      await captureAIWindow("ai-disabled",preferences);
+      aiEnabled.click();
+      if(!kb.api.isAIEnabled() || preferences.document.getElementById("knowledge-base-ai-controls").hidden)throw new Error("Native AI switch did not enable controls");
+      const aiProvider = preferences.document.getElementById("knowledge-base-ai-provider");
+      if (!aiProvider || aiProvider.querySelectorAll("menuitem").length !== 3 || aiProvider.querySelector('menuitem[value="opencode-api"],menuitem[value="opencode"]')) throw new Error("AI service list is not simplified");
+      if(preferences.document.getElementById("knowledge-base-ai-model").value!=="deepseek-v4.1-flash" || !kb.api.getAISettings().hasStoredKey)throw new Error("Opening independent Settings changed the saved Go configuration");
+      const apiWindow=Zotero.getMainWindow();const realFetch=apiWindow.fetch;
+      apiWindow.fetch=async(url,options)=>{
+        if(url!=="https://opencode.ai/inference/go/openai/v1/chat/completions" || options.headers.Authorization!=="Bearer retained-go-key" || JSON.parse(options.body).thinking.type!=="disabled") throw new Error("Go request used the wrong endpoint or credential");
+        return {ok:true,json:async()=>({choices:[{finish_reason:"stop",message:{content:'{"ok":true}'}}]})};
+      };
+      try {await kb.api.testAIConnection("host-go-restored");} finally {apiWindow.fetch=realFetch;}
+      aiProvider.value="deepseek";
+      aiProvider.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      for(let n=0;n<100 && preferences.document.getElementById("knowledge-base-ai-test").disabled;n++)await new Promise(resolve=>setTimeout(resolve,20));
+      if(preferences.document.getElementById("knowledge-base-ai-test").disabled || !preferences.document.getElementById("knowledge-base-ai-list").label) throw new Error("Choosing a supported provider did not recover native Settings");
+      const aiKey = preferences.document.getElementById("knowledge-base-ai-key");
+      const aiToggle = preferences.document.getElementById("knowledge-base-ai-toggle-key");
+      if (aiKey.type !== "password" || aiToggle.getAttribute("aria-pressed") !== "false") throw new Error("AI key visibility did not start hidden");
+      aiToggle.dispatchEvent(new preferences.Event("command"));
+      if (aiKey.type !== "text" || aiToggle.getAttribute("aria-pressed") !== "true") throw new Error("AI key visibility did not toggle on");
+      aiToggle.dispatchEvent(new preferences.Event("command"));
+      if (aiKey.type !== "password" || aiToggle.getAttribute("aria-pressed") !== "false") throw new Error("AI key visibility did not toggle off");
+      await kb.api.setAISettings({provider:"deepseek",key:"disposable-key",model:"test-model"});
+      if (!kb.api.getAISettings().hasKey) throw new Error("DeepSeek key was not stored in login manager");
+      const fetchWindow = Zotero.getMainWindow();
+      const originalAIFetch = fetchWindow.fetch;
+      let deepSeekRequested = false;
+      fetchWindow.fetch = async function(url, options) {
+        if(url!=="https://api.deepseek.com/chat/completions" || options.headers.Authorization!=="Bearer disposable-key" || JSON.parse(options.body).response_format.type!=="json_object") throw new Error("DeepSeek request boundary failed");
+        deepSeekRequested = true;
+        return {ok:true,json:async()=>({choices:[{finish_reason:"stop",message:{content:'{"ok":true}'}}]})};
+      };
+      try {await kb.api.testAIConnection("host-deepseek-test");} finally {fetchWindow.fetch=originalAIFetch;}
+      if(!deepSeekRequested) throw new Error("DeepSeek transport was not called");
+      await kb.api.setAISettings({provider:"codex",path:${JSON.stringify(fakeAI)},model:"fixture"});
+      await kb.api.testAIConnection("host-codex-test");
+      const codexModels=await kb.api.getAIModels("host-codex-models");
+      if(codexModels.join(",")!=="fixture")throw new Error("Codex models were not listed");
+      aiProvider.value="codex";
+      aiProvider.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      for(let n=0;n<100 && preferences.document.getElementById("knowledge-base-ai-model").value!=="fixture";n++)await new Promise(resolve=>setTimeout(resolve,20));
+      if(!preferences.document.getElementById("knowledge-base-ai-key-row").hidden || preferences.document.getElementById("knowledge-base-ai-path-row").hidden || preferences.document.getElementById("knowledge-base-ai-path-row").open) throw new Error("CLI Settings did not hide the key and collapse the path override");
+      const modelListButton=preferences.document.getElementById("knowledge-base-ai-list");
+      modelListButton.dispatchEvent(new preferences.Event("command"));
+      for(let n=0;n<100 && !preferences.document.querySelector('#knowledge-base-ai-models menuitem[value="fixture"]');n++)await new Promise(resolve=>setTimeout(resolve,20));
+      const listed=preferences.document.querySelector('#knowledge-base-ai-models menuitem[value="fixture"]');
+      if(!listed)throw new Error("Native model list did not populate");
+      listed.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      for(let n=0;n<100 && kb.api.getAISettings().model!=="fixture";n++)await new Promise(resolve=>setTimeout(resolve,20));
+      if(kb.api.getAISettings().model!=="fixture")throw new Error("Selecting a listed model did not autosave");
+      preferences.document.getElementById("knowledge-base-ai-models").hidePopup();
+      await kb.api.setAISettings({provider:"deepseek"});
+      if(!kb.api.getAISettings().hasStoredKey)throw new Error("CLI configuration changed the DeepSeek credential");
+      await kb.api.setAISettings({provider:"deepseek",key:""});
+      if(kb.api.getAISettings().hasStoredKey)throw new Error("DeepSeek key was not removed");
+      const aiParent = await kb.api.saveZettel({title:"AI fixture parent",body:"Organizes the bounded idea",kind:"thinking"});
+      const aiRelated = await kb.api.saveZettel({title:"AI fixture related",body:"The claim requires this setting",kind:"zettel"});
+      const aiCurrent = await kb.api.saveZettel({title:"AI fixture current",body:"An **atomic claim**",kind:"zettel"});
+      for (const id of [aiParent,aiRelated]) {
+        const card = await kb.api.getZettel(id);
+        const acquired = await kb.api.acquireNativeNote({id,title:card.title,body:card.body,kind:card.kind});
+        await kb.api.releaseNativeNote(acquired.noteID);
+      }
+      await kb.api.setAISettings({provider:"codex",path:${JSON.stringify(fakeAI)},model:"fixture"});
+      await kb.api.testAIConnection("host-codex-test");
+      await kb.api.setAISettings({provider:"codex",model:"fixture-hang"});
+      const cancelledAI = kb.api.testAIConnection("host-cancel-ai");
+      await new Promise(resolve=>setTimeout(resolve,200));kb.api.setAIEnabled(false);
+      let aiCancelled=false;
+      try {await cancelledAI;} catch(error) {aiCancelled=String(error).includes(kb.api.loc("ai-cancelled"));}
+      if(!aiCancelled) throw new Error("Disabling AI did not cancel the CLI in the real host");
+      if(!preferences.document.getElementById("knowledge-base-ai-controls").hidden)throw new Error("Disabling did not hide provider controls");
+      if(Services.logins.findLogins("chrome://knowledge-base","","OpenCode Go API")[0]?.password!=="retained-go-key" || Services.logins.findLogins("chrome://knowledge-base","","OpenCode API")[0]?.password!=="retained-console-key")throw new Error("Disabling AI altered a saved key");
+      kb.api.setAIEnabled(true);
+      await kb.api.setAISettings({provider:"codex",model:"fixture-bad-summary"});
+      let invalidSummaryRejected=false;
+      try {await kb.api.establishConnections(aiCurrent,"host-bad-summary",()=>{});} catch(error) {invalidSummaryRejected=String(error).includes(kb.api.loc("ai-response-invalid"));}
+      if(!invalidSummaryRejected) throw new Error("Invalid summary batch was accepted");
+      await kb.api.setAISettings({provider:"codex",model:"fixture"});
+      let connectionPlan = await kb.api.establishConnections(aiCurrent,"host-connections",()=>{});
+      const summaryRequests = (await IOUtils.readUTF8(${JSON.stringify(aiRequests)})).trim().split("\\n").map(line=>JSON.parse(line).input).filter(input=>input.startsWith("Summarize"));
+      if(summaryRequests.length<2 || !summaryRequests.some(input=>JSON.parse(input.split("\\n").at(-1)).notes.length>=2)) throw new Error("Candidates were not summarized together or an invalid batch polluted the cache");
+      if(connectionPlan.parent?.id!==aiParent || connectionPlan.links[0]?.id!==aiRelated || !connectionPlan.read.includes(aiRelated) || !connectionPlan.read.includes(aiParent)) throw new Error("Progressive connection planning failed in the real host");
+      if((await kb.api.getFamily(aiCurrent)).parent || (await kb.api.getZettel(aiCurrent)).body!=="An **atomic claim**") throw new Error("AI analysis modified note data before review");
+
+      kb.api.openEditor({zettelId:aiCurrent,window:true});
+      let aiEditor;
+      for(let n=0;n<100;n++) {
+        aiEditor=[...Services.wm.getEnumerator("knowledge-base:editor")].find(win=>win.knowledgeBaseCardId===aiCurrent);
+        if(aiEditor?.knowledgeBaseReady) {await aiEditor.knowledgeBaseReady();break;}
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      if(!aiEditor || aiEditor.document.querySelectorAll("#knowledge-base-establish-connections").length!==1) throw new Error("Connection entry missing or duplicated");
+      aiEditor.document.getElementById("knowledge-base-establish-connections").click();
+      const review = aiEditor.document.getElementById("knowledge-base-connections");
+      for(let n=0;n<200 && review.querySelectorAll('input[type="checkbox"]').length<2;n++) await new Promise(resolve=>setTimeout(resolve,50));
+      if(review.querySelectorAll('input[type="checkbox"]').length!==2)throw new Error("Review did not initialize");
+      kb.api.setAIEnabled(false);
+      if(!review.hidden || review.querySelector('input') || !aiEditor.document.getElementById("knowledge-base-establish-connections").hidden)throw new Error("Disabling did not clear review and hide the AI action");
+      let disabledPlanRejected=false;try{await kb.api.validateConnectionPlan(connectionPlan);}catch(error){disabledPlanRejected=String(error).includes(kb.api.loc("ai-disabled"));}
+      if(!disabledPlanRejected)throw new Error("Disabled AI allowed an old plan to apply");
+      kb.api.setAIEnabled(true);
+      if(aiEditor.document.getElementById("knowledge-base-establish-connections").hidden)throw new Error("Re-enabling did not restore the single AI action");
+      aiEditor.document.getElementById("knowledge-base-establish-connections").click();
+      for(let n=0;n<200 && review.querySelectorAll('input[type="checkbox"]').length<2;n++)await new Promise(resolve=>setTimeout(resolve,50));
+      const checks = [...review.querySelectorAll('input[type="checkbox"]')];
+      if(checks.length!==2 || checks.some(input=>input.checked)) throw new Error("Review did not show unchecked parent and contextual link suggestions: "+review.textContent);
+      if(review.querySelectorAll('.connection-evidence').length!==2 || !review.textContent.includes('Organizes the bounded idea') || !review.textContent.includes('The claim requires this setting') || !review.querySelector('mark') || !review.textContent.includes(kb.api.loc('ai-relation-qualifies'))) throw new Error("Review did not expose the two verified source passages and relation type");
+      for(const width of [600,1000]) {
+        aiEditor.resizeTo(width,720);await new Promise(resolve=>setTimeout(resolve,100));
+        for(const pair of review.querySelectorAll('.connection-evidence')) {
+          const bounds=pair.getBoundingClientRect();
+          for(const passage of pair.children) {
+            const cell=passage.getBoundingClientRect();
+            if(cell.width>bounds.width+1 || passage.scrollWidth>passage.clientWidth+1) throw new Error("Evidence passages overflow a narrow review panel");
+          }
+        }
+      }
+      const cachedSummaryRequests = (await IOUtils.readUTF8(${JSON.stringify(aiRequests)})).trim().split("\\n").map(line=>JSON.parse(line).input).filter(input=>input.startsWith("Summarize"));
+      if(cachedSummaryRequests.length!==summaryRequests.length) throw new Error("Unchanged candidate summaries were regenerated");
+      if(connectionShots) {
+        review.querySelectorAll('.connection-suggestion')[1].scrollIntoView({block:"nearest"});
+        aiProvider.value="opencode-go";
+        aiProvider.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+        for(let n=0;n<100 && preferences.document.getElementById("knowledge-base-ai-model").value!=="deepseek-v4.1-flash";n++) await new Promise(resolve=>setTimeout(resolve,20));
+        for(const [name,view] of [["ai-review",aiEditor],["ai-settings",preferences]]) await captureAIWindow(name,view);
+      }
+      checks.forEach(input=>input.click());
+      const applyConnections = [...review.querySelectorAll("button")].find(button=>button.textContent===kb.api.loc("ai-apply"));
+      applyConnections.click();
+      for(let n=0;n<200 && !review.textContent.includes(kb.api.loc("ai-applied"));n++) await new Promise(resolve=>setTimeout(resolve,50));
+      if(!review.textContent.includes(kb.api.loc("ai-applied"))) throw new Error("Reviewed connections did not apply: "+review.textContent+" nativeDoc="+JSON.stringify(aiEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._iframeWindow.wrappedJSObject._currentEditorInstance._editorCore.view.state.doc.toJSON()));
+      if((await kb.api.getFamily(aiCurrent)).parent?.id!==aiParent || !(await kb.api.getOutgoing(aiCurrent)).some(link=>link.targetId===aiRelated)) throw new Error("Applied parent or reference was not indexed");
+      const aiSaved = await kb.api.getZettel(aiCurrent);
+      if(!aiSaved.body.includes("**[[") || !aiSaved.body.includes("|atomic claim]]**") || aiSaved.body.includes("This qualification")) throw new Error("Application failed to link the original passage in place");
+      let staleRejected=false;
+      try {await kb.api.validateConnectionPlan(connectionPlan);} catch(error) {staleRejected=String(error).includes(kb.api.loc("ai-plan-stale"));}
+      if(!staleRejected) throw new Error("Changed connection plan remained applicable");
+      await aiEditor.knowledgeBasePrepareNavigation(); aiEditor.close();
+      if(${connectionsOnly && !linksOnly}) {
+        kb.api.setAIEnabled(false);
+        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify({connectionsOnly:true,currentID:aiCurrent,parentID:aiParent,relatedID:aiRelated,body:aiSaved.body}));
+        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+      }
+      await eraseFixtureCard(aiCurrent);await eraseFixtureCard(aiRelated);await eraseFixtureCard(aiParent);
+      await kb.api.setAISettings({provider:"deepseek"});
       if (preferences.document.getElementById("knowledge-base-codex-enabled") || literatureEditor.document.getElementById("knowledge-base-read-paper") || kb.api.openPaperReading) throw new Error("AI reading remains available");
+      Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
+      for(let n=0;n<100 && !preferences.document.getElementById("knowledge-base-workbench-mode")?.getBoundingClientRect().width;n++) await new Promise(resolve=>setTimeout(resolve,20));
       const modeMenu=preferences.document.getElementById("knowledge-base-workbench-mode");
       if(modeMenu?.value!=="tab" || modeMenu.getAttribute("native")!=="true" || !modeMenu.querySelector('menuitem[value="window"]').label) throw new Error('Native Settings workbench mode did not initialize');
       modeMenu.value="window";modeMenu.dispatchEvent(new preferences.Event("command",{bubbles:true}));
@@ -497,6 +813,7 @@ function runQuitTest() {
       if (kb.api.getSourceStyle() !== "http://www.zotero.org/styles/ieee") throw new Error("Native Settings did not persist the style");
       styleMenu.value = "http://www.zotero.org/styles/apa";
       styleMenu.dispatchEvent(new preferences.Event("command", {bubbles:true}));
+      preferences.document.getElementById("knowledge-base-graph-appearance").open=true;
       const labelLengthControl=preferences.document.getElementById("knowledge-base-graph-label-length");
       if(labelLengthControl?.value !== "20" || labelLengthControl.getBoundingClientRect().width < 30) throw new Error('Graph title length setting is missing or invisible');
       labelLengthControl.value="18";labelLengthControl.dispatchEvent(new preferences.Event("change",{bubbles:true}));
@@ -510,6 +827,8 @@ function runQuitTest() {
       inheritanceControl.checked=false;inheritanceControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
       if(kb.api.getTagInheritance()) throw new Error('Native Settings did not save tag inheritance');
       inheritanceControl.checked=true;inheritanceControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      const expectedGraphTags=[...new Set((await kb.api.getGraph()).nodes.flatMap(node=>node.tags||[]))].sort((a,b)=>a.localeCompare(b));
+      if(JSON.stringify(await kb.api.getGraphTags())!==JSON.stringify(expectedGraphTags)) throw new Error("Settings tag vocabulary differs from graph inheritance");
       const addGroup=preferences.document.getElementById("knowledge-base-add-group");
       if(!addGroup.label || !addGroup.querySelector(".button-text")) throw new Error('Native Add Group button lost its localized label or content');
       const configureGroup=async (color)=>{
@@ -571,14 +890,14 @@ function runQuitTest() {
       const quickRange = quickFrame.document.createRange(); quickRange.selectNodeContents(quickParagraph); quickRange.collapse(false);
       quickFrame.getSelection().removeAllRanges(); quickFrame.getSelection().addRange(quickRange);
       await new Promise(resolve=>setTimeout(resolve,50));
-      quickFrame.document.execCommand('insertText',false,' [[' + literatureID + ']]');
-      for(let n=0;n<150 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length !== 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
-      if([...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length !== 2) throw new Error('Typing [[id]] in the native KB editor did not insert the resolved native link: ' + quickFrame.document.querySelector('.primary-editor').innerHTML);
+      quickFrame.document.execCommand('insertText',false,' [[Host2026]]');
+      for(let n=0;n<150 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[Host2026]]').length !== 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if([...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[Host2026]]').length !== 2) throw new Error('Typing [[id]] in the native KB editor did not insert the resolved native link: ' + quickFrame.document.querySelector('.primary-editor').innerHTML);
       if(!quickFrame.wrappedJSObject.doUndo()) throw new Error('Native undo cannot reverse inline wiki insertion');
-      for(let n=0;n<100 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length === 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
-      if([...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length === 2) throw new Error('Native undo left the inserted wiki link unchanged');
+      for(let n=0;n<100 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[Host2026]]').length === 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if([...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[Host2026]]').length === 2) throw new Error('Native undo left the inserted wiki link unchanged');
       if(!quickFrame.wrappedJSObject.doRedo()) throw new Error('Native redo cannot restore inline wiki insertion');
-      for(let n=0;n<100 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[' + literatureID + ']]').length !== 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      for(let n=0;n<100 && [...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[Host2026]]').length !== 2;n++) await new Promise(resolve=>setTimeout(resolve,25));
       if(!(await quickLinkEditor.save(false)) || referenceNote.getNoteTitle() !== 'Reference label probe' || !referenceNote.getNote().includes('>Jones 2027</a>') || !referenceNote.getNote().includes('$x^2$')) throw new Error('Inline wiki input did not save a native link while preserving title and math');
       const quickCore = quickFrame.wrappedJSObject._currentEditorInstance._editorCore;
       const readStarted = quickFrame.performance.now();
@@ -590,8 +909,59 @@ function runQuitTest() {
       Zotero.debug('KB editor snapshot timing: ' + JSON.stringify(editorSnapshotTiming));
       const quickSelection = quickFrame.getSelection();
       if(!quickSelection.isCollapsed || quickSelection.anchorNode?.parentElement?.closest('h1')) throw new Error('Inline wiki replacement reset the editing cursor');
+      if(${linksOnly}) {
+        const targetID=await kb.api.saveZettel({kind:"zettel",customKey:"ProxyThinkerTestTimeGuidanceXiao26",title:"Link completion target",body:"A linked idea"});
+        const target=await kb.api.acquireNativeNote({id:targetID,kind:"zettel",title:"Link completion target",body:"A linked idea"});await kb.api.releaseNativeNote(target.noteID);
+        const waitFor=async(fn,label)=>{for(let n=0;n<200;n++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,25));}throw new Error(label);};
+        const countLinks=()=>[...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[ProxyThinkerTestTimeGuidanceXiao26]]').length;
+        const endParagraph=async()=>{const surface=quickFrame.document.querySelector('.primary-editor');surface.focus();const range=quickFrame.document.createRange();range.selectNodeContents(surface.lastElementChild);range.collapse(false);quickFrame.getSelection().removeAllRanges();quickFrame.getSelection().addRange(range);await new Promise(resolve=>setTimeout(resolve,50));quickFrame.document.execCommand('insertParagraph');await new Promise(resolve=>setTimeout(resolve,80));};
+        await endParagraph();
+        quickFrame.document.execCommand('insertText',false,'[[');
+        await waitFor(()=>!quickLinkEditor.document.getElementById('knowledge-base-link-drop').hidden && quickLinkEditor.document.getElementById('knowledge-base-link-results').children.length,"Native [[ did not show candidates");
+        quickFrame.document.execCommand('insertText',false,'ProxyThinker');
+        await waitFor(()=>quickLinkEditor.document.getElementById('knowledge-base-link-results').firstElementChild?.textContent.includes('ProxyThinkerTestTimeGuidanceXiao26'),"Native note query did not filter by ID");
+        quickFrame.document.querySelector('.primary-editor').dispatchEvent(new quickFrame.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
+        await waitFor(()=>countLinks()===1,"Native autocomplete did not replace the query");
+        await endParagraph();
+        await kb.api.copyNoteReference('ProxyThinkerTestTimeGuidanceXiao26');
+        quickFrame.document.querySelector('.primary-editor').focus();
+        const pasteStarted=quickFrame.document.execCommand('paste');
+        await waitFor(()=>countLinks()===2,"Pasted note ID did not become a native link; paste command="+pasteStarted);
+        if(!quickFrame.wrappedJSObject.doUndo()) throw new Error("Cannot undo pasted note link");
+        await waitFor(()=>countLinks()<2,"Undo retained the pasted link");
+        if(!quickFrame.wrappedJSObject.doRedo()) throw new Error("Cannot redo pasted note link");
+        await waitFor(()=>countLinks()===2,"Redo did not restore pasted link");
+        await quickLinkEditor.setEditorMode('source');
+        const source=quickLinkEditor.document.getElementById('knowledge-base-editor-body');
+        if(!source.value.includes('[[ProxyThinkerTestTimeGuidanceXiao26]]') || source.value.includes('\\\\[\\\\[ProxyThinker')) throw new Error("Native link round trip escaped the wiki reference");
+        source.value+='\\n\\n[[ProxyThinker';source.setSelectionRange(source.value.length,source.value.length);source.dispatchEvent(new quickLinkEditor.Event('input',{bubbles:true}));
+        await waitFor(()=>!quickLinkEditor.document.getElementById('knowledge-base-link-drop').hidden && quickLinkEditor.document.getElementById('knowledge-base-link-results').firstElementChild?.textContent.includes('ProxyThinkerTestTimeGuidanceXiao26'),"Markdown [[ did not show candidates");
+        source.dispatchEvent(new quickLinkEditor.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
+        await waitFor(()=>source.value.endsWith('[[ProxyThinkerTestTimeGuidanceXiao26]]'),"Markdown completion did not replace the query");
+        if(!(await quickLinkEditor.save(false))) throw new Error("Completed links did not save");
+        await quickLinkEditor.setEditorMode('visual');
+        const finalFrame=quickLinkEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()._iframeWindow;
+        if([...finalFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[ProxyThinkerTestTimeGuidanceXiao26]]').length!==3) throw new Error("Mode switch lost completed links");
+        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify({connectionsOnly:true,linksOnly:true,cardID:referenceID,noteKey:referenceNote.key,targetID}));
+        await quickLinkEditor.knowledgeBasePrepareNavigation();quickLinkEditor.close();
+        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+      }
       quickLinkEditor.close();
       for(let n=0;n<100 && !quickLinkEditor.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
+      {
+        const editableID = literatureEditor.document.getElementById("knowledge-base-editor-key");
+        const beforeIDHTML = note.getNote();
+        editableID.value = "HostLiteratureID";
+        editableID.dispatchEvent(new literatureEditor.Event("input",{bubbles:true}));
+        if (!(await literatureEditor.save(false))) throw new Error("Literature ID edit did not save");
+        for(let n=0;n<150 && !referenceNote.getNote().includes('title="[[HostLiteratureID]]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
+        if ((await kb.api.getZettel(literatureID)).reference !== "HostLiteratureID" || note.getNote() !== beforeIDHTML || !referenceNote.getNote().includes('>HostLiteratureID</a>') || !referenceNote.getNote().includes('title="[[HostLiteratureID|Pinned label]]"') || !kb.api.getMarkdownSource(referenceNote.getNote()).body.includes('[[HostLiteratureID]]') || (await kb.api.resolveCardLink("knowledge-base://card/"+literatureID))?.targetId !== literatureID) throw new Error("Literature ID edit did not preserve native content, custom labels, references and note identity");
+        literatureReference.click();
+        if (Zotero.Utilities.Internal.getClipboard("text/plain") !== "[[HostLiteratureID]]") throw new Error("Literature reference copy kept the previous ID");
+        editableID.value = literatureID;
+        editableID.dispatchEvent(new literatureEditor.Event("input",{bubbles:true}));
+        if (!(await literatureEditor.save(false)) || (await kb.api.resolveCardLink("knowledge-base://card/HostLiteratureID"))?.targetId !== literatureID) throw new Error("Resetting an ID broke its historical alias");
+      }
       await eraseFixtureCard(referenceID);
       item.setCreators([{firstName:'A',lastName:'Smith',creatorType:'author'}]); item.setField('date','2026'); await item.saveTx();
       // Explicitly detach this fixture to cover a surviving note with a trashed source.
@@ -622,8 +992,8 @@ function runQuitTest() {
       const linkInstance = await Zotero.Notes.open(linkSourceNote.id, null, {openInWindow:true});
       const linkWindow = linkInstance._iframeWindow.browsingContext.embedderElement.ownerDocument.defaultView;
       const nativeHref = "zotero://select/library/items/" + linkTargetNote.key;
-      for(let n=0;n<100 && !linkSourceNote.getNote().includes('title="[[' + linkTargetID + ']]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
-      if(!linkSourceNote.getNote().includes('title="[[' + linkTargetID + ']]"') || !linkSourceNote.getNote().includes('title="[[' + linkTargetID + '|My label]]"') || !linkSourceNote.getNote().includes('$$x^2$$')) throw new Error("Opening an ordinary native editor did not convert legacy links safely: " + linkSourceNote.getNote());
+      for(let n=0;n<100 && !linkSourceNote.getNote().includes('title="[[LinkTarget]]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!linkSourceNote.getNote().includes('title="[[LinkTarget]]"') || !linkSourceNote.getNote().includes('title="[[LinkTarget|My label]]"') || !linkSourceNote.getNote().includes('$$x^2$$')) throw new Error("Opening an ordinary native editor did not convert legacy links safely: " + linkSourceNote.getNote());
       // Follow the real native editor message handler through Zotero's protocol handler.
       await linkInstance._messageHandler({source:linkInstance._iframeWindow, data:{instanceID:linkInstance.instanceID, message:{action:"openURL", url:nativeHref}}});
       for(let n=0;n<100 && !Zotero.getMainWindow().ZoteroPane.getSelectedItems().some(selected=>selected.id===linkTargetNote.id);n++) await new Promise(resolve=>setTimeout(resolve,25));
@@ -636,21 +1006,21 @@ function runQuitTest() {
       for(let n=0;n<150 && !linkSourceNote.getNote().includes('>RenamedLinkTarget</a>');n++) await new Promise(resolve=>setTimeout(resolve,25));
       if(!linkSourceNote.getNote().includes('>RenamedLinkTarget</a>') || !linkSourceNote.getNote().includes('>My label</a>') || !linkSourceNote.getNote().includes(nativeHref)) throw new Error("Native key change lost link identity or did not update default labels");
       if(!linkSourceNote.getNote().includes('>Plain native label</a>')) throw new Error('An ordinary native link label was unexpectedly rewritten');
-      const linkData = linkInstance._iframeWindow.wrappedJSObject.getDataSync(false);
-      if(!linkData?.html.includes('title="[[' + linkTargetID + ']]"')) throw new Error("Zotero's native link schema discarded the stable Markdown reference: " + JSON.stringify({data:linkData, note:linkSourceNote.getNote(), dom:linkInstance._iframeWindow.document.querySelector('.primary-editor')?.innerHTML}));
       const linkFrame = linkInstance._iframeWindow;
       for(let n=0;n<100 && !linkFrame.document.querySelector('.primary-editor a')?.textContent.includes('RenamedLinkTarget');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      const linkData = linkFrame.wrappedJSObject.getDataSync(false);
+      if(!linkData?.html.includes('title="[[RenamedLinkTarget]]"')) throw new Error("Zotero's native link schema discarded the current Markdown reference: " + JSON.stringify({data:linkData, note:linkSourceNote.getNote(), dom:linkFrame.document.querySelector('.primary-editor')?.innerHTML}));
       linkWindow.focus();
       linkFrame.document.querySelector('.primary-editor').focus();
-      const editableLink = [...linkFrame.document.querySelectorAll('.primary-editor a')].find(anchor=>anchor.getAttribute('title')==='[[' + linkTargetID + ']]');
+      const editableLink = [...linkFrame.document.querySelectorAll('.primary-editor a')].find(anchor=>anchor.getAttribute('title')==='[[RenamedLinkTarget]]');
       const linkRange = linkFrame.document.createRange();
       linkRange.setStart(editableLink.firstChild, 1);
       linkRange.setEnd(editableLink.firstChild, editableLink.textContent.length - 1);
       const linkSelection = linkFrame.getSelection(); linkSelection.removeAllRanges(); linkSelection.addRange(linkRange);
       await new Promise(resolve=>setTimeout(resolve,50));
       if(!linkFrame.document.execCommand('insertText', false, 'evisedLinkTarge')) throw new Error('Native link label insertion failed');
-      for(let n=0;n<150 && !linkSourceNote.getNote().includes('title="[[' + linkTargetID + '|RevisedLinkTarget]]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
-      if(!kb.api.getMarkdownSource(linkSourceNote.getNote()).body.includes('[[' + linkTargetID + '|RevisedLinkTarget]]')) throw new Error('Editing link text in the native editor was lost instead of becoming an alias: ' + JSON.stringify({html:linkSourceNote.getNote(), dom:linkFrame.document.querySelector('.primary-editor')?.innerHTML.slice(0,500)}));
+      for(let n=0;n<150 && !linkSourceNote.getNote().includes('title="[[RenamedLinkTarget|RevisedLinkTarget]]"');n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if(!kb.api.getMarkdownSource(linkSourceNote.getNote()).body.includes('[[RenamedLinkTarget|RevisedLinkTarget]]')) throw new Error('Editing link text in the native editor was lost instead of becoming an alias: ' + JSON.stringify({html:linkSourceNote.getNote(), dom:linkFrame.document.querySelector('.primary-editor')?.innerHTML.slice(0,500)}));
       linkWindow.close();
       for(let n=0;n<100 && !linkWindow.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
       await kb.api.releaseNativeNote(linkSourceNote.id);
@@ -860,15 +1230,42 @@ function runQuitTest() {
         }
         const typePicker = keyEditor.document.getElementById("knowledge-base-note-kind");
         const keyInput = keyEditor.document.getElementById("knowledge-base-editor-key");
+        keyInput.focus();
         if (!typePicker.hidden || !typePicker.disabled || keyInput.hidden || keyEditor.document.getElementById("knowledge-base-note-kind-text").textContent !== kb.api.loc("note-kind-thinking")) throw new Error("Saved Thinking type is not static text");
         keyInput.value = "HostProject"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         if (!(await keyEditor.save(false))) throw new Error("Thinking key save failed");
+        const htmlBeforeKeyConflict = looseNote.getNote();
+        keyInput.value = rows[0].id; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
+        for(let n=0;n<80 && keyInput.getAttribute('aria-invalid')!=='true';n++) await new Promise(resolve=>setTimeout(resolve,25));
+        if(keyInput.getAttribute('aria-invalid')!=='true' || keyEditor.document.getElementById('knowledge-base-key-feedback').hidden) throw new Error('Occupied ID has no inline feedback: ' + JSON.stringify({value:keyInput.value, wanted:rows[0].id, id:unsourced.id, invalid:keyInput.getAttribute('aria-invalid'), backend:await kb.api.checkNoteKey(rows[0].id,unsourced.id)}));
+        if(await keyEditor.save(false)) throw new Error('An occupied ID was saved');
+        keyInput.blur();
+        await keyEditor.refreshRelations();
+        if(keyInput.value!==rows[0].id) throw new Error('Refreshing relationships replaced the pending ID');
+        if((await kb.api.getZettel(unsourced.id)).reference!=='HostProject' || looseNote.getNote()!==htmlBeforeKeyConflict) throw new Error('ID conflict changed the saved note');
+        if(metadataShots) {
+          const image=await keyEditor.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,'white');
+          const canvas=keyEditor.document.createElementNS('http://www.w3.org/1999/xhtml','canvas');
+          canvas.width=image.width; canvas.height=image.height; canvas.getContext('2d').drawImage(image,0,0); image.close();
+          const blob=await new Promise(resolve=>canvas.toBlob(resolve));
+          await IOUtils.write(PathUtils.join(metadataShots,'id-conflict.png'),new Uint8Array(await blob.arrayBuffer()));
+        }
+        keyEditor.document.getElementById('knowledge-base-key-resolve').click();
+        let resolvedKey;
+        for(let n=0;n<100;n++) {
+          resolvedKey=(await kb.api.getZettel(unsourced.id)).reference;
+          if(/^\\d{14}$/.test(resolvedKey) && keyEditor.document.getElementById('knowledge-base-key-feedback').hidden) break;
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        if(!/^\\d{14}$/.test(resolvedKey) || (await kb.api.resolveCardLink('knowledge-base://card/HostProject'))?.targetId!==unsourced.id) throw new Error('Available ID did not resolve the conflict with retained identity');
         keyInput.value = "HostProjectRevised"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         if (!(await keyEditor.save(false))) throw new Error("Thinking key rename failed");
         const keyed = await kb.api.getZettel(unsourced.id);
         if (keyed.kind !== "thinking" || keyed.reference !== "HostProjectRevised" || keyed.custom_key !== "HostProjectRevised" || (await kb.api.resolveCardLink("knowledge-base://card/HostProject")).targetId !== unsourced.id || keyEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== looseNote.id) throw new Error("Thinking key changed identity or broke old links");
         keyEditor.document.getElementById("knowledge-base-kind-convert").click();
-        if (!(await keyEditor.save(false)) || (await kb.api.getZettel(unsourced.id)).kind !== "zettel" || !keyInput.hidden || (await kb.api.resolveCardLink("knowledge-base://card/HostProjectRevised")).targetId !== unsourced.id || keyEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== looseNote.id) throw new Error("Converting to Zettel broke identity or old keys");
+        if (!(await keyEditor.save(false)) || (await kb.api.getZettel(unsourced.id)).kind !== "zettel" || keyInput.hidden || (await kb.api.resolveCardLink("knowledge-base://card/HostProjectRevised")).targetId !== unsourced.id || keyEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== looseNote.id) throw new Error("Converting to Zettel broke identity or old keys");
+        keyInput.value = "HostZettel"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
+        if (!(await keyEditor.save(false)) || (await kb.api.getZettel(unsourced.id)).reference !== "HostZettel" || (await kb.api.resolveCardLink("knowledge-base://card/HostProjectRevised"))?.targetId !== unsourced.id) throw new Error("Zettel ID editing lost the note or its previous references");
         keyEditor.document.getElementById("knowledge-base-kind-convert").click();
         keyInput.value = "HostProjectRevised"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         if (!(await keyEditor.save(false)) || (await kb.api.getZettel(unsourced.id)).kind !== "thinking") throw new Error("Converting back to Thinking failed");
@@ -954,6 +1351,53 @@ function runQuitTest() {
         const inlineID = inline.knowledgeBaseCardId;
         if (inlineID === unsourced.id) throw new Error("New Note reused an existing ID");
         if ((await kb.api.getZettel(inlineID)).body !== "Typed in the workbench.") throw new Error("Workbench saved the wrong content");
+        {
+        const parentPicker = inline.document.getElementById("knowledge-base-parent-picker");
+        const parentSearch = inline.document.getElementById("knowledge-base-parent-search");
+        const parentChange = inline.document.getElementById("knowledge-base-parent-change");
+        inline.document.getElementById("knowledge-base-editor-more").open = true;
+        parentChange.click();
+        await inline.refreshRelations();
+        if (parentPicker.closest("[hidden]") || parentSearch.getBoundingClientRect().width < 100 || inline.document.activeElement !== parentSearch) throw new Error("Change Parent did not reveal and focus the picker for an unparented note");
+        parentSearch.value = unsourced.id;
+        parentSearch.dispatchEvent(new inline.Event("input", {bubbles:true}));
+        let parentChoice;
+        for (let n=0; n<100; n++) {
+          parentChoice = parentPicker.querySelector(".relation-link");
+          if (parentChoice) break;
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        if (!parentChoice || parentChoice.getBoundingClientRect().height < 1) throw new Error("Parent search did not show its matching note");
+        parentChoice.click();
+        if (!(await inline.save(false)) || (await kb.api.getFamily(inlineID)).parent?.id !== unsourced.id || !parentPicker.hidden) throw new Error("Choosing a parent did not save the hierarchy");
+        {
+          const copyButton = workbench.document.getElementById("knowledge-base-btn-copy-zettels");
+          const copyStatus = workbench.document.getElementById("knowledge-base-copy-status");
+          const kindFilter = workbench.document.getElementById("knowledge-base-kind");
+          const oldFilter = kindFilter.value;
+          kindFilter.value = "literature";
+          if (copyButton.getBoundingClientRect().width < 20 || !workbench.getComputedStyle(copyButton).listStyleImage.includes("copy.svg") || !copyButton.getAttribute("aria-label")) throw new Error("Copy Zettel list has no visible native toolbar action");
+          copyButton.dispatchEvent(new workbench.Event("command"));
+          for (let n=0;n<200 && copyStatus.hidden;n++) await new Promise(resolve=>setTimeout(resolve,25));
+          kindFilter.value = oldFilter;
+          if (copyStatus.hidden || copyButton.hasAttribute("disabled")) throw new Error("Copy Zettel list did not finish");
+          const copiedText = Zotero.Utilities.Internal.getClipboard("text/plain");
+          const copiedRows = copiedText.split("\\n").map(line=>JSON.parse(line.slice(2)));
+          const copiedChild = copiedRows.find(row=>row.id===inlineID);
+          const expectedZettels = (await kb.api.listZettels("",false,"zettel")).length;
+          if (copiedRows.length!==expectedZettels || copiedRows.some(row=>Object.keys(row).join(',')!=="id,title,parent") || copiedChild?.parent?.id!==(await kb.api.getZettel(unsourced.id)).reference || copiedChild?.title!=="Workbench typing fixture" || !copiedRows.some(row=>row.parent===null)) throw new Error("Copied Zettel list lost titles, parent identities or roots, or followed the current filter: "+copiedText);
+          let cancellationChecks=0;
+          if (await kb.api.copyZettelList(()=>++cancellationChecks===2) !== null || Zotero.Utilities.Internal.getClipboard("text/plain") !== copiedText) throw new Error("A cancelled Zettel copy replaced the clipboard");
+        }
+        parentChange.click();
+        for (let n=0; n<100 && parentPicker.querySelector(".metadata-clear")?.closest("[hidden]"); n++) await new Promise(resolve=>setTimeout(resolve,25));
+        parentPicker.querySelector(".metadata-clear").click();
+        if (!(await inline.save(false)) || (await kb.api.getFamily(inlineID)).parent || !parentPicker.parentElement.hidden || (await kb.api.getZettel(inlineID)).body !== "Typed in the workbench.") throw new Error("No parent did not detach the note while preserving its content");
+        parentChange.click();
+        parentSearch.dispatchEvent(new inline.KeyboardEvent("keydown", {key:"Escape",bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,250));
+        if (!parentPicker.hidden || !parentPicker.parentElement.hidden || parentChange.getAttribute("aria-expanded") !== "false" || (await kb.api.getFamily(inlineID)).parent) throw new Error("Cancelling Change Parent left an empty row or changed the hierarchy");
+        }
         const connectionChildID = await kb.api.saveZettel({title:"A child note with a full title that remains readable across the available editor width", body:"[[" + inlineID + "]]", parentId:inlineID});
         const childNav = inline.document.getElementById("knowledge-base-editor-children-label");
         const backlinkNav = inline.document.getElementById("knowledge-base-editor-backlinks-label");
@@ -1092,7 +1536,11 @@ function runQuitTest() {
         await new Promise(resolve=>setTimeout(resolve,100));
         await kb.api.discardEditorDraft(separateDraftID);
         const sortMenu = workbench.document.getElementById('knowledge-base-sort');
-        if (sortMenu.options.length !== 6 || sortMenu.value !== 'updated-desc') throw new Error('Native note sorting is missing its default or choices');
+        if (sortMenu.options.length !== 8 || sortMenu.value !== 'updated-desc') throw new Error('Native note sorting is missing its default or choices');
+        sortMenu.value = 'id-asc';
+        sortMenu.dispatchEvent(new workbench.Event('change', {bubbles:true}));
+        for (let n=0; n<100 && workbench.document.getElementById('knowledge-base-list').getAttribute('aria-busy')!=='false'; n++) await new Promise(resolve=>setTimeout(resolve,25));
+        if(kb.api.getNoteSort() !== 'id-asc') throw new Error('ID sort did not persist');
         sortMenu.value = 'created-desc';
         sortMenu.dispatchEvent(new workbench.Event('change', {bubbles:true}));
         for (let n=0; n<100 && workbench.document.getElementById('knowledge-base-list').getAttribute('aria-busy')!=='false'; n++) await new Promise(resolve=>setTimeout(resolve,25));
@@ -1233,7 +1681,8 @@ function runQuitTest() {
         const nativeHTML = nativeNote.getNote();
         if (!nativeHTML.includes('class="math"') || !nativeHTML.includes('data-citation=')) throw new Error("Markdown did not migrate to native math and citations");
         const childID = (await kb.api.listZettels()).find(card => card.id !== rows[0].id).id;
-        const cardLink = [...richSurface.querySelectorAll("a[title]")].find(link=>link.getAttribute("title")==="[[" + childID + "]]");
+        const childReference = (await kb.api.getZettel(childID)).reference;
+        const cardLink = [...richSurface.querySelectorAll("a[title]")].find(link=>link.getAttribute("title")==="[[" + childReference + "]]");
         if (!cardLink || cardLink.textContent !== (await kb.api.getNoteLink(childID)).label || (await kb.api.resolveCardLink(cardLink.href))?.targetId !== childID) throw new Error("Native card links lost their stable target or current key");
         if (richSurface.querySelector("a[href$='" + note.key + "']")?.textContent !== "My note") throw new Error("Note labels were rewritten");
         const citation = richSurface.querySelector(".citation");
@@ -1351,11 +1800,15 @@ function runQuitTest() {
           win.addEventListener("error", onError);
           try {
             handle.dispatchEvent(new win.PointerEvent("pointerdown", {button:0, bubbles:true}));
-            win.dispatchEvent(new win.PointerEvent("pointermove", {clientX:x}));
-            win.dispatchEvent(new win.Event(end));
+            const shield = win.document.querySelector('.panel-drag-shield');
+            if (!shield || win.getComputedStyle(shield).position !== 'fixed' || shield.getBoundingClientRect().width < win.innerWidth - 2) throw new Error('Panel dragging does not cover the native editor');
+            shield.dispatchEvent(new win.PointerEvent("pointermove", {clientX:x, bubbles:true}));
+            if(end === 'blur') win.dispatchEvent(new win.Event(end));
+            else shield.dispatchEvent(new win.Event(end, {bubbles:true}));
           } finally { win.removeEventListener("error", onError); }
           if (error) throw new Error("Panel drag raised a host error: " + error);
           if (win.document.documentElement.classList.contains("resizing-panels")) throw new Error("Panel resizing state was not cleared");
+          if (win.document.querySelector('.panel-drag-shield')) throw new Error('Panel drag shield was not released');
           const expected = Math.round(Math.max(18, Math.min(55, percent)));
           const persisted = Zotero.Prefs.get("extensions.zotero.knowledge-base.panels." + name, true);
           if (!Number.isInteger(persisted) || persisted !== expected) throw new Error("Panel drag did not save an integer width: " + persisted);
@@ -1982,7 +2435,10 @@ const log = await open(join(root, "zotero.log"), "w");
 const child = spawn(
   binary,
   ["-no-remote", "-profile", profile, "-ZoteroDebugText"],
-  { stdio: ["ignore", log.fd, log.fd] },
+  {
+    stdio: ["ignore", log.fd, log.fd],
+    env: { ...process.env, DEEPSEEK_API_KEY: "", OPENCODE_API_KEY: "" },
+  },
 );
 const exited = new Promise((resolve, reject) => {
   child.once("error", reject);
@@ -2006,52 +2462,60 @@ try {
     }),
   ]);
   const state = JSON.parse(await readFile(marker, "utf8"));
-  if (
-    state.error ||
-    result.code !== 0 ||
-    state.cards !== 5 ||
-    !state.iconsVisible ||
-    !state.identitiesVisible ||
-    !state.mathVisible ||
-    !state.sourcesHidden ||
-    !state.graphControlsVisible ||
-    !state.nativeStyleUntouched ||
-    !state.compactConnections ||
-    state.nativeDialogs?.join(",") !== "cancel,accept,extra1"
-  )
+  if (state.error || result.code !== 0)
     throw new Error(JSON.stringify({ state, result }));
-  const db = new DatabaseSync(join(data, "knowledge-base.sqlite"), {
-    readOnly: true,
-  });
-  try {
+  if (!connectionsOnly) {
     if (
-      db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-      db.prepare("SELECT count(*) AS n FROM zettels").get().n !== 5
+      state.error ||
+      result.code !== 0 ||
+      state.cards !== 5 ||
+      !state.iconsVisible ||
+      !state.identitiesVisible ||
+      !state.mathVisible ||
+      !state.sourcesHidden ||
+      !state.graphControlsVisible ||
+      !state.nativeStyleUntouched ||
+      !state.compactConnections ||
+      state.nativeDialogs?.join(",") !== "cancel,accept,extra1"
     )
-      throw new Error("Saved database failed verification");
-    const migration = db
-      .prepare("SELECT original_body FROM card_notes WHERE card_id = ?")
-      .get(state.cardID);
-    if (!migration?.original_body.includes("![Migration image]"))
-      throw new Error("Original Markdown migration backup was not preserved");
-    if (
-      !db
-        .prepare("SELECT body FROM editor_drafts WHERE body = ?")
-        .get("Last keystroke before quitting")
-    )
-      throw new Error("The last pending edit was not preserved on quit");
-    if (
-      db.prepare("SELECT COUNT(*) AS n FROM note_save_operations").get().n !== 1
-    )
-      throw new Error("Interrupted-save journal did not survive shutdown");
-  } finally {
-    db.close();
+      throw new Error(JSON.stringify({ state, result }));
+    const db = new DatabaseSync(join(data, "knowledge-base.sqlite"), {
+      readOnly: true,
+    });
+    try {
+      if (
+        db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
+        db.prepare("SELECT count(*) AS n FROM zettels").get().n !== 5
+      )
+        throw new Error("Saved database failed verification");
+      const migration = db
+        .prepare("SELECT original_body FROM card_notes WHERE card_id = ?")
+        .get(state.cardID);
+      if (!migration?.original_body.includes("![Migration image]"))
+        throw new Error("Original Markdown migration backup was not preserved");
+      if (
+        !db
+          .prepare("SELECT body FROM editor_drafts WHERE body = ?")
+          .get("Last keystroke before quitting")
+      )
+        throw new Error("The last pending edit was not preserved on quit");
+      if (
+        db.prepare("SELECT COUNT(*) AS n FROM note_save_operations").get().n !==
+        1
+      )
+        throw new Error("Interrupted-save journal did not survive shutdown");
+    } finally {
+      db.close();
+    }
   }
   clearTimeout(timeout);
   const restarted = spawn(
     binary,
     ["-no-remote", "-profile", profile, "-ZoteroDebugText"],
-    { stdio: ["ignore", log.fd, log.fd] },
+    {
+      stdio: ["ignore", log.fd, log.fd],
+      env: { ...process.env, DEEPSEEK_API_KEY: "", OPENCODE_API_KEY: "" },
+    },
   );
   let restartTimeout;
   try {
@@ -2073,29 +2537,45 @@ try {
     if (
       restored.error ||
       code !== 0 ||
-      restored.cards !== 5 ||
-      restored.hiddenCards !== 4 ||
-      restored.noteKey !== state.noteKey
+      (connectionsOnly
+        ? !restored.connectionsOnly
+        : restored.cards !== 5 ||
+          restored.hiddenCards !== 4 ||
+          restored.noteKey !== state.noteKey)
     )
       throw new Error("Restart validation failed: " + JSON.stringify(restored));
   } finally {
     clearTimeout(restartTimeout);
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
-  console.log(
-    `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable Thinking keys with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, body-only Reading views that preserve drafts and toolbars, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
-  );
-  console.log(
-    "Graph display intervals (ms): " +
-      JSON.stringify(state.graphFrames) +
-      "; blank native Note opened in " +
-      state.newNoteOpenMs +
-      " ms",
-  );
-  console.log(
-    "Native editor snapshot timing (ms): " +
-      JSON.stringify(state.editorSnapshotTiming),
-  );
+  if (relationsOnly)
+    console.log(
+      "PASS Real Zotero relation layout at wide, medium and narrow widths; wrapped titles and long IDs remain within their row and retain independent click targets.",
+    );
+  else if (linksOnly)
+    console.log(
+      "PASS Real Zotero native and Markdown bracket completion, ID filtering, keyboard insertion, copied-reference paste, native undo/redo, mode round trips, saved backlinks, restart and shutdown.",
+    );
+  else if (connectionsOnly)
+    console.log(
+      "PASS Real Zotero independent default-off AI Settings; three services with OpenCode Go only; retained current and dormant credentials after restart; disable cancels CLI, hides action and clears review; title-missed body recall, batched summaries and cache reuse; full-text evidence on both sides and responsive unchecked review; selected parent and contextual link application; stale-plan rejection; saved links and hierarchy after restart; cancellation and UI cleanup on shutdown.",
+    );
+  else {
+    console.log(
+      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; three note types, unique Literature Notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable IDs for all three note types, plain timestamp initialization and refreshed Markdown references with retained aliases, restricted Literature type, original native style, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, body-only Reading views that preserve drafts and toolbars, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+    );
+    console.log(
+      "Graph display intervals (ms): " +
+        JSON.stringify(state.graphFrames) +
+        "; blank native Note opened in " +
+        state.newNoteOpenMs +
+        " ms",
+    );
+    console.log(
+      "Native editor snapshot timing (ms): " +
+        JSON.stringify(state.editorSnapshotTiming),
+    );
+  }
   passed = true;
 } finally {
   clearTimeout(timeout);

@@ -548,9 +548,12 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       stop() {
         if (closed) return;
         clearTimer();
-        void persist().catch(report);
-        closed = true;
-        ++readingVersion;
+        try {
+          void persist().catch(report);
+        } finally {
+          closed = true;
+          ++readingVersion;
+        }
       },
       async restore() {
         // Rebuild an open native editor before re-enabling its writer on plugin disable.
@@ -637,17 +640,29 @@ export function initNativeMarkdown(): void {
 }
 export function stopNativeMarkdown(): void {
   if (stopped) return;
-  for (const controller of controllers.values()) controller.stop();
+  for (const controller of controllers.values()) {
+    try {
+      controller.stop();
+    } catch (error) {
+      report(error);
+    }
+  }
   stopped = true;
   ++generation;
 }
-export async function closeNativeMarkdown(): Promise<void> {
+export async function closeNativeMarkdown(
+  restoreEditors = true,
+): Promise<void> {
   stopNativeMarkdown();
   undoHooks?.();
   undoHooks = undefined;
   await Promise.allSettled([...writes]);
-  await Promise.allSettled(
-    [...controllers.values()].map((controller) => controller.restore()),
-  );
+  if (restoreEditors) {
+    await Promise.allSettled(
+      [...controllers.values()].map((controller) => controller.restore()),
+    );
+  } else {
+    for (const controller of controllers.values()) controller.dispose();
+  }
   controllers.clear();
 }
