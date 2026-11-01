@@ -1,33 +1,26 @@
+@import url("chrome://knowledge-base/content/ui.css");
+@import url("chrome://knowledge-base/content/note-headings.css");
+
 @import url("chrome://knowledge-base/content/katex/katex.min.css");
 @namespace html url("http://www.w3.org/1999/xhtml");
 
 :root {
   color-scheme: light dark;
-  --bg: #fff;
-  --fg: #303035;
-  --surface-subtle: #f7f7f8;
-  --border: #e7e7eb;
-  --hover: #efeff2;
-  --active: #e9f1ff;
-  --accent: #2469c9;
-  --muted: #6e6e73;
-  --source: #268572;
-  --danger: #bc404b;
+  --bg: var(--ui-bg);
+  --fg: var(--ui-fg);
+  --surface-subtle: var(--ui-surface);
+  --border: var(--ui-border);
+  --hover: var(--ui-hover);
+  --active: var(--ui-active);
+  --accent: var(--ui-accent);
+  --muted: var(--ui-muted);
+  --source: var(--ui-source);
+  --danger: var(--ui-danger);
   --graph-link: #929daa;
-  --note-row-height: 112px;
+  --note-row-height: 120px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #202024;
-    --fg: #ececf0;
-    --surface-subtle: #25252a;
-    --border: #3a3a40;
-    --hover: #303036;
-    --active: #263956;
-    --accent: #6da6ff;
-    --muted: #b0b0b8;
-    --source: #66bdae;
-    --danger: #ed8f8f;
     --graph-link: #778492;
   }
 }
@@ -52,7 +45,7 @@ html {
   box-sizing: border-box;
   color: var(--fg);
   background: var(--bg);
-  font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: var(--ui-font);
 }
 
 .muted {
@@ -71,7 +64,6 @@ html {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -198,7 +190,6 @@ html|button.relation-link,
 
 #knowledge-base-detail-meta {
   font-family: ui-monospace, monospace;
-  font-size: 11px;
 }
 
 .chips {
@@ -264,7 +255,6 @@ html|button.relation-link,
   font-family: inherit;
   font-size: 12px;
   max-height: 220px;
-  overflow-y: auto;
 }
 
 #knowledge-base-detail footer {
@@ -306,7 +296,6 @@ html|button.relation-link,
   width: 100%;
   min-height: 0;
   overflow: hidden;
-  position: relative;
 }
 
 #knowledge-base-editor-toolbar {
@@ -316,16 +305,8 @@ html|button.relation-link,
   padding: 16px 24px 8px;
 }
 
-#knowledge-base-editor-toolbar .lbl {
-  flex: none;
-  font-weight: 600;
-}
-
 #knowledge-base-src-display {
   flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 #knowledge-base-src-display.placeholder {
@@ -753,7 +734,7 @@ html|button[disabled] {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  font-family: system-ui, sans-serif;
+  font-family: var(--ui-font);
   color: var(--fg);
   background: var(--bg);
   font-size: 13px;
@@ -956,19 +937,13 @@ html|button[disabled] {
 }
 
 /* One writing surface, with optional compact relations underneath. */
-#knowledge-base-editor-content {
-  flex-direction: column;
-}
 #knowledge-base-editor-content #knowledge-base-editor-workspace {
   margin-right: 24px;
 }
 #knowledge-base-editor-relations {
-  flex: 0 0 auto;
   max-height: min(140px, 25%);
   margin: 12px 24px 0;
   padding: 10px 0 0;
-  border-left: 0;
-  border-top: 1px solid var(--border);
 }
 #knowledge-base-editor-relations summary {
   cursor: pointer;
@@ -981,7 +956,6 @@ html|button[disabled] {
   flex-basis: 30%;
 }
 #knowledge-base-detail-pane {
-  background: var(--bg);
   padding: 16px;
 }
 #knowledge-base-detail h1 {
@@ -1055,7 +1029,6 @@ html|button[disabled] {
   right: 0;
   left: 0;
   z-index: 10;
-  max-height: 220px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1094,12 +1067,6 @@ html|button[disabled] {
   white-space: nowrap;
 }
 
-#graph-node-open[data-kind="card"] {
-  list-style-image: url("chrome://knowledge-base/content/icons/ui/edit.svg");
-}
-#graph-node-open[data-kind="unresolved"] {
-  list-style-image: url("chrome://knowledge-base/content/icons/ui/plus.svg");
-}
 #graph-node-kind {
   font-family: ui-monospace, monospace;
   font-size: 13px;
@@ -1348,37 +1315,59 @@ summary {
   padding: 8px;
 }
 #knowledge-base-list .zettel-row {
+  position: relative;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: 36px 30px 18px;
+  grid-template-rows: auto minmax(0, 1fr) 15px;
   gap: 4px 8px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 0;
   border-left: 2px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
+}
+#knowledge-base-list .zettel-row::after {
+  content: "";
+  position: absolute;
+  inset-inline: 14px;
+  bottom: 0;
+  height: 1px;
+  background: var(--border);
+}
+#knowledge-base-list .zettel-row.active::after {
+  background: transparent;
 }
 #knowledge-base-list .zettel-row.active {
   background: var(--active);
   border-left-color: var(--accent);
 }
 #knowledge-base-list .zettel-row.active .title {
-  color: var(--accent);
+  color: var(--fg);
 }
 #knowledge-base-list .zettel-row:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 #knowledge-base-list .title {
-  font-weight: 550;
+  font-size: 13.5px;
+  font-weight: 600;
   line-height: 1.4;
 }
 #knowledge-base-list .zid {
   grid-row: 2;
   grid-column: 1;
   text-align: left;
-  font-family: ui-monospace, "SFMono-Regular", monospace;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   font-size: 10px;
   letter-spacing: 0.01em;
+}
+.note-row-reference {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
 }
 #knowledge-base-list .badges {
   grid-row: 2;
@@ -1476,6 +1465,8 @@ summary {
   text-decoration: underline;
 }
 #knowledge-base-toolbar .card-actions {
+  min-width: 176px;
+  justify-content: flex-end;
   padding-left: 8px;
   border-left: 1px solid var(--border);
 }
@@ -1532,7 +1523,6 @@ summary {
   padding: 3px 6px;
   border: 0;
   background: transparent;
-  font-size: 11px;
   color: var(--muted);
 }
 #knowledge-base-btn-child.family-create:hover {
@@ -1581,16 +1571,7 @@ summary {
 #knowledge-base-btn-copy-zettels {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/copy.svg");
 }
-#knowledge-base-editor-reference {
-  flex: 0 0 24px;
-  width: 24px;
-  height: 24px;
-  font-size: 0;
-  background: url("chrome://knowledge-base/content/icons/ui/copy.svg") center /
-    16px no-repeat;
-  fill: currentColor;
-  -moz-context-properties: fill;
-}
+
 #knowledge-base-copy-status {
   padding: 4px 12px;
 }
@@ -1764,12 +1745,12 @@ summary {
   flex-direction: column;
   min-height: 0;
   width: 100%;
-  max-width: 780px;
+  max-width: 760px;
   margin-inline: auto;
 }
 #knowledge-base-preview,
 #knowledge-base-editor-preview {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.7;
 }
 #knowledge-base-editor-preview {
@@ -1782,11 +1763,12 @@ summary {
   padding: 24px;
 }
 #knowledge-base-list .card-snippet {
+  align-self: start;
   grid-column: 1 / -1;
   grid-row: 2;
   color: var(--muted);
-  font-size: 11.5px;
-  line-height: 15px;
+  font-size: 12px;
+  line-height: 17px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1900,29 +1882,9 @@ summary {
 .kb-native-tool:not([disabled]):hover {
   color: var(--accent);
 }
-#knowledge-base-btn-delete:hover {
+#knowledge-base-btn-delete:hover,
+#knowledge-base-empty-trash:hover {
   color: var(--danger);
-}
-
-/* The primary card actions use a larger, matching 20 px icon set. */
-#knowledge-base-btn-edit,
-#knowledge-base-btn-delete,
-#knowledge-base-btn-local-graph,
-#knowledge-base-btn-graph,
-#knowledge-base-editor-graph {
-  width: 32px;
-  min-width: 32px;
-  flex-basis: 32px;
-  height: 32px;
-  padding: 6px;
-}
-#knowledge-base-btn-edit .toolbarbutton-icon,
-#knowledge-base-btn-delete .toolbarbutton-icon,
-#knowledge-base-btn-local-graph .toolbarbutton-icon,
-#knowledge-base-btn-graph .toolbarbutton-icon,
-#knowledge-base-editor-graph .toolbarbutton-icon {
-  width: 20px;
-  height: 20px;
 }
 
 .card-connections {
@@ -2119,8 +2081,6 @@ summary {
   display: none;
 }
 #knowledge-base-editor-toolbar > #knowledge-base-src-display {
-  flex: 1 1 0;
-  width: 0;
   border: 0;
   background: transparent;
   padding: 0;
@@ -2142,8 +2102,9 @@ summary {
 /* Metadata follows the same compact reference layout for source and parent. */
 #knowledge-base-editor-toolbar,
 .metadata-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: start;
   gap: 12px;
   padding: 4px 20px;
   margin: 0;
@@ -2178,29 +2139,30 @@ summary {
   border-radius: 2px;
 }
 #knowledge-base-src-label,
-#knowledge-base-parent-label {
-  flex: 0 0 52px;
+#knowledge-base-parent-label,
+.metadata-row > label {
   font-weight: 400;
   color: var(--muted);
   font-size: 12px;
 }
-.metadata-row > label {
-  font-weight: 600;
-  color: var(--fg);
-  font-size: 13px;
+#knowledge-base-src-label,
+#knowledge-base-parent-label {
+  padding-block: 2px;
+  line-height: 20px;
 }
 #knowledge-base-parent-display,
 #knowledge-base-editor-toolbar > #knowledge-base-src-display {
-  flex: 1;
   max-width: none;
   min-width: 0;
   width: auto;
-  font-size: 13px;
+  font-size: 12px;
+  line-height: 20px;
   text-align: left;
   border: 0;
   background: transparent;
-  padding: 0;
+  padding: 2px 0;
   white-space: normal;
+  overflow: visible;
 }
 .metadata-value .relation-title {
   display: inline;
@@ -2233,31 +2195,19 @@ summary {
   display: block;
 }
 .note-identity-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto auto;
+  align-items: start;
+  gap: 12px;
   padding: 8px 20px;
-  flex-wrap: wrap;
   color: var(--muted);
   font-size: 12px;
 }
-.note-identity-row > label,
-#knowledge-base-note-kind-text {
-  line-height: 28px;
+.note-identity-row > label {
+  padding-block: 2px;
+  line-height: 20px;
 }
-.note-identity-row .note-reference {
-  min-width: 0;
-  max-width: min(70%, 480px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#knowledge-base-editor-toolbar .bibliography-reference {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
+
 .editor-more {
   position: relative;
 }
@@ -2312,47 +2262,67 @@ summary {
   border-top: 1px solid var(--border);
   margin: 4px 5px;
 }
-#knowledge-base-note-kind {
-  max-width: 160px;
-  margin-right: 12px;
-  font: inherit;
-  height: 28px;
-}
-#knowledge-base-editor-key {
-  flex: 1 1 0;
-  width: 0;
-  min-width: 80px;
-  padding: 5px 8px;
-  font-size: 12px;
+#knowledge-base-editor-key,
+#knowledge-base-key-copy {
+  appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  box-sizing: border-box;
+  resize: none;
+  overflow: hidden;
+  padding: 2px 0;
   border: 0;
+  box-shadow: none;
+  border-radius: 3px;
+  outline: none;
   background: transparent;
   color: inherit;
-  font-family: ui-monospace, "SFMono-Regular", monospace;
+  caret-color: var(--accent);
+  font:
+    12px/20px ui-monospace,
+    "SFMono-Regular",
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  text-align: start;
 }
-#knowledge-base-editor-key:hover {
-  background: var(--hover);
+#knowledge-base-key-copy {
+  width: fit-content;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  white-space: normal;
+  cursor: pointer;
 }
-#knowledge-base-editor-key:focus-visible {
-  outline: none;
+#knowledge-base-key-copy:hover {
+  color: var(--accent);
 }
-.note-key-group {
-  flex: 0 1 290px;
-  min-width: 150px;
+#knowledge-base-key-copy:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
-.note-key-control {
-  display: flex;
-  align-items: center;
+#knowledge-base-editor-key {
+  padding-inline: 6px;
+  margin-inline-start: -7px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
   background: var(--surface-subtle);
 }
-.note-key-control:focus-within {
+#knowledge-base-editor-key:focus {
+  color: var(--fg);
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
 }
-.note-key-control:has([aria-invalid="true"]) {
-  border-color: var(--danger);
+#knowledge-base-editor-key[aria-invalid="true"] {
+  text-decoration: underline wavy var(--danger);
+}
+.note-key-group {
+  min-width: 0;
+  max-width: 100%;
+}
+.note-key-control {
+  min-width: 0;
+  max-width: 64ch;
 }
 #knowledge-base-key-feedback {
   display: flex;
@@ -2373,14 +2343,11 @@ summary {
 }
 #knowledge-base-key-label {
   display: inline;
+  align-self: flex-start;
 }
-.note-key-control .note-reference {
-  flex: none;
-  margin-inline-end: 3px;
-}
+
 #knowledge-base-parent-picker {
   position: absolute;
-  top: 100%;
   left: 24px;
   right: 24px;
   z-index: 4;
@@ -2406,15 +2373,12 @@ summary {
   gap: 10px;
 }
 #knowledge-base-editor-relations .relation-link {
-  display: block;
   width: 100%;
   text-align: left;
   padding: 5px 0;
   font-size: 13px;
-  line-height: 1.6;
 }
 #knowledge-base-editor-relations .relation-title {
-  display: inline;
   font-size: inherit;
 }
 #knowledge-base-editor-relations .relation-id {
@@ -2424,14 +2388,6 @@ summary {
   font-size: 11px;
 }
 
-/* Keep writing separate from its navigable context. */
-#knowledge-base-kind-label {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-}
 #graph-legend-cards,
 #graph-legend-sources {
   color: var(--muted);
@@ -2564,10 +2520,6 @@ summary {
   text-overflow: clip;
   font: inherit;
 }
-#knowledge-base-note-kind-text {
-  font-size: 12px;
-  color: var(--muted);
-}
 
 .note-tags {
   display: flex;
@@ -2673,17 +2625,30 @@ summary {
   position: sticky;
   top: 0;
   z-index: 2;
-  height: 34px;
+  height: 48px;
   box-sizing: border-box;
-  padding: 4px 8px;
+  padding: 10px 16px;
   background: var(--surface-subtle);
   border-bottom: 1px solid var(--border);
 }
 #knowledge-base-sort {
+  appearance: none;
   width: 100%;
-  height: 26px;
+  height: 28px;
+  box-sizing: border-box;
+  margin: 0;
+  border: 0;
+  border-radius: 3px;
+  padding: 3px 22px 3px 0;
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%236e6e73' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 2px center;
   font: inherit;
-  color: CanvasText;
+  color: var(--muted);
+}
+#knowledge-base-sort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 /* Connection review stays in the note; proposals are inert until selected. */
 .connection-review {
@@ -2731,7 +2696,7 @@ summary {
 .connection-actions button,
 #knowledge-base-establish-connections {
   appearance: auto;
-  font: menu;
+  font: inherit;
   padding: 3px 10px;
   min-height: 24px;
 }
@@ -2756,4 +2721,60 @@ summary {
 .connection-evidence mark {
   color: inherit;
   background: var(--active);
+}
+
+#knowledge-base-tag-editor {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 24px 8px;
+}
+#knowledge-base-own-tags {
+  display: contents;
+}
+#knowledge-base-tag-input {
+  width: 160px;
+  min-width: 0;
+  font: inherit;
+}
+.note-tag.tag-remove {
+  border: 0;
+  font-size: 11px;
+  padding: 2px 7px;
+}
+
+#knowledge-base-btn-restore {
+  list-style-image: url("chrome://knowledge-base/content/icons/ui/restore.svg");
+}
+#knowledge-base-view {
+  max-width: 140px;
+}
+#knowledge-base-view {
+  appearance: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 4px 22px 4px 4px;
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23787470' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    no-repeat right 4px center;
+  color: var(--muted);
+  font: inherit;
+}
+#knowledge-base-trash-status {
+  margin: 0;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#knowledge-base-list .zettel-row.context-target {
+  background: var(--hover);
+}
+
+/* Note prose keeps the chosen typography; surrounding controls use the system font. */
+#knowledge-base-preview,
+#knowledge-base-editor-preview {
+  font-family: var(--ui-editor-font);
 }

@@ -1,4 +1,4 @@
-import { getAll, type ZettelRow, type LinkRow, type NoteKind } from "./db";
+import { getAll, type ZettelRow, type LinkRow } from "./db";
 import { getItemSummary } from "./zotero";
 import { getGraphGroups, getTagInheritance } from "./preferences";
 import { inheritCardTags, loadNativeTags } from "./note-tags";
@@ -12,7 +12,6 @@ export interface GraphNode {
   group?: string;
   kind: "card" | "source" | "unresolved";
   snippet: string;
-  noteKind?: NoteKind;
   citation?: string;
   parentId?: string | null;
   itemKey?: string;
@@ -36,7 +35,6 @@ export interface GraphOptions {
   includeSources?: boolean;
   includeUnresolved?: boolean;
   relationMode?: "hierarchy" | "references" | "both";
-  entriesOnly?: boolean;
 }
 
 /** No list-view LIMIT: isolated cards and cards beyond the first 500 belong
@@ -78,9 +76,15 @@ export async function getGraphData(): Promise<GraphData> {
     available.map(({ note }) => note),
     inherit,
   );
-  let nativeTags = new Map<string, string[]>();
+  let nativeTags = new Map<string, string[]>(rows.map((row) => [row.id, []]));
   for (const { row, note } of available)
     nativeTags.set(row.card_id, tagsByNote.get(note) || []);
+  for (const row of await getAll<{ zettel_id: string; tag: string }>(
+    "SELECT zettel_id, tag FROM tags",
+  )) {
+    const tags = nativeTags.get(row.zettel_id);
+    if (tags && !tags.includes(row.tag)) tags.push(row.tag);
+  }
   if (inherit) nativeTags = inheritCardTags(nativeTags, parentMap);
   const groups = getGraphGroups();
   const palette = [
@@ -119,7 +123,6 @@ export async function getGraphData(): Promise<GraphData> {
       id: row.id,
       title: row.title || row.id,
       kind: "card",
-      noteKind: row.kind,
       tags,
       color:
         group?.color || (tags.length ? colorFor(tags, libraryID) : undefined),
@@ -229,10 +232,6 @@ export function filterGraph(
           ? edge.kind !== "parent"
           : true),
   );
-  if (options.entriesOnly) {
-    nodes = nodes.filter((node) => node.kind === "card" && !node.parentId);
-    ids = new Set(nodes.map((node) => node.id));
-  }
   if (options.centerId) {
     const visited = new Set<string>(
       ids.has(options.centerId) ? [options.centerId] : [],

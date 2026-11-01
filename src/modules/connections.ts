@@ -62,10 +62,9 @@ async function catalogue(): Promise<NoteOutline[]> {
   const rows = await getAll<{
     id: string;
     title: string;
-    kind: string;
     parent_id: string | null;
     updated_at: number;
-  }>(`SELECT z.id, z.title, z.kind, p.parent_id, z.updated_at FROM zettels z
+  }>(`SELECT z.id, z.title, p.parent_id, z.updated_at FROM zettels z
     LEFT JOIN card_parents p ON p.card_id = z.id
     WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)
     ORDER BY z.title_folded, z.id`);
@@ -73,7 +72,6 @@ async function catalogue(): Promise<NoteOutline[]> {
     id: row.id,
     title: row.title,
     reference: byID.get(row.id) || row.id,
-    kind: row.kind,
     parentId: row.parent_id,
     version: row.updated_at,
     canParent: true,

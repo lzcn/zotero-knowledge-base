@@ -100,13 +100,31 @@ state.section.onRender({ body, item: item("A") });
 await settle();
 check("Disabled paper reading leaves only the native note actions", () => {
   assert.equal(body.querySelectorAll("button").length, 2);
+  assert.equal(
+    body.querySelectorAll(".knowledge-base-section-action").length,
+    2,
+  );
+  assert.equal(
+    body.querySelector(".knowledge-base-source-note").textContent,
+    "+",
+  );
+  assert.equal(
+    body
+      .querySelector(".knowledge-base-source-note")
+      .getAttribute("aria-label"),
+    "section-source-note-new",
+  );
+  assert.equal(body.querySelector(".knowledge-base-add-note").textContent, "+");
   assert.equal(body.textContent.includes("codex-read-paper"), false);
 });
 check(
   "The source pane shows cards without requesting or importing highlights",
   () => {
     assert.equal(body.querySelector("li").textContent, "A linked idea");
-    assert.equal(body.querySelectorAll("button")[1].textContent, "section-new");
+    assert.equal(
+      body.querySelector(".knowledge-base-add-note").getAttribute("aria-label"),
+      "section-new-zettel",
+    );
     assert.equal(body.querySelectorAll("button").length, 2);
     assert.equal(state.errors.length, 0);
   },
@@ -119,6 +137,44 @@ check("The source pane opens its unique Literature Note", () =>
 body.querySelector("li").click();
 check("A source card opens its actual editor", () =>
   assert.deepEqual(state.opens[0], { zettelId: "card-a" }),
+);
+body.querySelector(".knowledge-base-add-note").click();
+check("Adding a Zettel keeps the selected item as its source", () =>
+  assert.deepEqual(state.opens.at(-1), {
+    sourceItem: { key: "A", libraryID: 1 },
+  }),
+);
+state.cards.push({ id: "reading-a", title: "Paper A", source_note: 1 });
+state.section.onRender({ body, item: item("A") });
+await settle();
+check(
+  "A source note has one dedicated row and is excluded from Zettels",
+  () => {
+    assert.equal(
+      body.querySelectorAll(".knowledge-base-source-note").length,
+      1,
+    );
+    assert.equal(
+      body.querySelector(".knowledge-base-source-note").textContent,
+      "↗",
+    );
+    assert.equal(
+      body.querySelector(".knowledge-base-source-note").title,
+      "section-source-note-open",
+    );
+    assert.equal(
+      body.querySelector(".knowledge-base-add-note").previousElementSibling
+        .textContent,
+      "section-zettels1",
+    );
+    assert.equal(body.querySelectorAll("li").length, 1);
+    assert.equal(body.querySelector("li").textContent, "A linked idea");
+  },
+);
+body.querySelector(".knowledge-base-source-note").click();
+await settle();
+check("An existing source note uses the same unique-note action", () =>
+  assert.deepEqual(state.literature, { key: "A", libraryID: 1 }),
 );
 let refreshes = 0;
 state.section.onInit({
@@ -184,7 +240,7 @@ await settle();
 check("A late source response cannot overwrite a newly selected source", () =>
   assert.equal(body.querySelector("li").textContent, "Source B"),
 );
-state.unsourcedCards = [{ id: "idea", title: "My project", kind: "thinking" }];
+state.unsourcedCards = [{ id: "idea", title: "My project", source_note: 0 }];
 state.section.onRender({ body, item: item("PERSONAL") });
 await settle();
 check(

@@ -1,3 +1,4 @@
+import { textToolLabels } from "./text-tools";
 export interface TextEdit {
   start: number;
   end: number;
@@ -74,4 +75,4 @@ export function continueList(body: string, cursor: number): TextEdit | null {
   };
 }
 
-window.KnowledgeBaseEditing = { formatEdit, continueList };
+window.KnowledgeBaseEditing = { formatEdit, continueList, textToolLabels };

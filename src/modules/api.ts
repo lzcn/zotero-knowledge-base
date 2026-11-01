@@ -1,5 +1,7 @@
+import { getNewNoteBody } from "./preferences";
 import { compareNoteSummaries } from "./note-sort";
-import { getGraphTags } from "./note-tags";
+import { getDOMWindow } from "../utils/dom";
+import { getGraphTags, getOwnNoteTags } from "./note-tags";
 import {
   isAIEnabled,
   setAIEnabled,
@@ -32,11 +34,14 @@ import {
   saveNativeCard,
   releaseNativeNote,
   trashNativeNote,
+  getTrashNotes,
+  permanentlyDeleteNotes,
   duplicateNativeNote,
   prepareNativePreview,
   nativePreviewHTML,
   isExternalNote,
   ensureLiteratureNote,
+  setNoteTag,
   getNoteHealth,
   getNoteTags,
   restoreNote,
@@ -102,6 +107,11 @@ import {
   setTagInheritance,
   getGraphGroups,
   setGraphGroups,
+  getLiteratureTemplateSettings,
+  setLiteratureTemplate,
+  createLiteratureTemplate,
+  updateLiteratureTemplate,
+  deleteLiteratureTemplate,
 } from "./preferences";
 import { onDataChange } from "./events";
 import { onNativeNoteChange } from "./note-sessions";
@@ -113,7 +123,6 @@ import {
 import {
   countByAnnotationKeys,
   countByItem,
-  deleteZettel,
   getBacklinks,
   getOutgoing,
   getUnresolvedRefs,
@@ -153,7 +162,8 @@ export interface EditorArgs {
   embedded?: boolean;
   onClose?: () => void;
   onNavigate?: (args: EditorArgs) => void;
-  kind?: import("./db").NoteKind;
+  initialTags?: string[];
+  editTags?: boolean;
   zettelId?: string | null;
   draftId?: string;
   prefillTitle?: string;
@@ -182,7 +192,7 @@ export interface AnnotationPickerArgs {
 }
 
 function mainWindow(): Window {
-  return Zotero.getMainWindow();
+  return getDOMWindow();
 }
 
 const editorWindows = new Map<string, Window>();
@@ -204,7 +214,12 @@ export const api = {
   ensureLiteratureNote,
   getNoteHealth,
   getNoteTags,
+  getOwnNoteTags,
+  setNoteTag,
+  getNewNoteBody,
   restoreNote,
+  getTrashNotes,
+  permanentlyDeleteNotes,
   getMarkdownSource,
   markdownNoteHTML,
   markdownDocumentHTML,
@@ -346,6 +361,11 @@ export const api = {
   getGraphGroups,
   setGraphGroups,
   getGraphTags,
+  getLiteratureTemplateSettings,
+  setLiteratureTemplate,
+  createLiteratureTemplate,
+  updateLiteratureTemplate,
+  deleteLiteratureTemplate,
 
   openImage(url: string): void {
     if (
@@ -429,12 +449,8 @@ export const api = {
 
   auditNativeNotes,
 
-  async listZettels(
-    query = "",
-    entriesOnly = false,
-    kind?: import("./db").NoteKind,
-  ): Promise<Zettel[]> {
-    return withNoteReferences(await listZettels(query, entriesOnly, kind));
+  async listZettels(query = ""): Promise<Zettel[]> {
+    return withNoteReferences(await listZettels(query));
   },
   async searchZettels(
     query = "",
@@ -505,7 +521,7 @@ export const api = {
   },
 
   async deleteZettel(id: string): Promise<void> {
-    if (!(await trashNativeNote(id))) await deleteZettel(id);
+    await trashNativeNote(id);
   },
 
   /* ---------------- zotero integration ---------------- */
@@ -596,8 +612,19 @@ export const api = {
         ? `draft:${args.draftId}`
         : null;
     const pending = key ? editorWindows.get(key) : null;
+    const focus = (editor: Window) => {
+      editor.focus();
+      if (!args.editTags) return;
+      const edit = () => {
+        void editor
+          .knowledgeBaseEditTags?.()
+          .catch((error) => Zotero.logError(error));
+      };
+      if (editor.knowledgeBaseEditTags) edit();
+      else editor.addEventListener("load", edit, { once: true });
+    };
     if (pending && !pending.closed) {
-      pending.focus();
+      focus(pending);
       return;
     }
     for (const win of Services.wm.getEnumerator("knowledge-base:editor")) {
@@ -609,7 +636,7 @@ export const api = {
         (args.zettelId && editor.knowledgeBaseCardId === args.zettelId) ||
         (args.draftId && editor.knowledgeBaseDraftId === args.draftId)
       ) {
-        editor.focus();
+        focus(editor);
         return;
       }
     }

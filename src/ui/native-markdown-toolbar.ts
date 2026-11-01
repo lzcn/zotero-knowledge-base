@@ -1,3 +1,100 @@
+/** Expose native popups above the sibling Markdown frame without blocking its body. */
+function attachToolbarPopupLayer(frame: Window): () => void {
+  const host = (
+    frame as Window & { browsingContext?: { embedderElement: HTMLElement } }
+  ).browsingContext?.embedderElement;
+  const toolbar = frame.document.querySelector(".toolbar");
+  if (!host || !toolbar) return () => {};
+  const previous = {
+    position: host.style.position,
+    zIndex: host.style.zIndex,
+    clipPath: host.style.clipPath,
+  };
+  let raised = false;
+  let pending = 0;
+  const restore = () => {
+    if (!raised) return;
+    Object.assign(host.style, previous);
+    raised = false;
+  };
+  const update = () => {
+    pending = 0;
+    const body = frame.document.body;
+    if (
+      !body.classList.contains("knowledge-base-source-mode") ||
+      body.classList.contains("knowledge-base-reading-mode")
+    ) {
+      restore();
+      return;
+    }
+    const popups = (Array.from(toolbar.querySelectorAll(".popup")) as Element[])
+      .map((popup) => popup.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0);
+    if (!popups.length) {
+      restore();
+      return;
+    }
+    const top = toolbar.getBoundingClientRect().bottom;
+    const left = Math.max(0, Math.min(...popups.map((rect) => rect.left)));
+    const right = Math.min(
+      frame.innerWidth,
+      Math.max(...popups.map((rect) => rect.right)),
+    );
+    const bottom = Math.min(
+      frame.innerHeight,
+      Math.max(...popups.map((rect) => rect.bottom)),
+    );
+    if (
+      host.ownerDocument!.defaultView!.getComputedStyle(host)?.position ===
+      "static"
+    )
+      host.style.position = "relative";
+    host.style.zIndex = "3";
+    // The native iframe is a separate paint surface. Clip its raised layer to the
+    // toolbar and menu so the source remains visible and clickable elsewhere.
+    host.style.clipPath = `polygon(0 0, 100% 0, 100% ${top}px, ${right}px ${top}px, ${right}px ${bottom}px, ${left}px ${bottom}px, ${left}px ${top}px, 0 ${top}px)`;
+    raised = true;
+  };
+  const schedule = () => {
+    if (!pending) pending = frame.requestAnimationFrame(update);
+  };
+  const onOutsideMouseDown = (event: MouseEvent) => {
+    // The source frame relays mouse down to its outer host. Dismiss through
+    // Zotero's existing blur handler without moving the Markdown caret.
+    if (raised && !host.contains(event.target as Node))
+      frame.dispatchEvent(
+        new (frame as Window & typeof globalThis).Event("blur"),
+      );
+  };
+  const Observer = (
+    frame as Window & { MutationObserver: typeof MutationObserver }
+  ).MutationObserver;
+  const observer = new Observer(schedule);
+  observer.observe(toolbar, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["class", "style"],
+  });
+  observer.observe(frame.document.body, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  frame.addEventListener("resize", schedule);
+  host.ownerDocument!.addEventListener("mousedown", onOutsideMouseDown, true);
+  return () => {
+    observer.disconnect();
+    frame.cancelAnimationFrame(pending);
+    frame.removeEventListener("resize", schedule);
+    host.ownerDocument!.removeEventListener(
+      "mousedown",
+      onOutsideMouseDown,
+      true,
+    );
+    restore();
+  };
+}
+
 /** A persistent mode toggle at the left of Zotero's note toolbar. */
 export function attachMarkdownToggle(
   frame: Window,
@@ -24,6 +121,7 @@ export function attachMarkdownToggle(
   });
   const style = frame.document.createElement("style");
   style.textContent = `
+    .toolbar .start { width: auto; flex: 0 0 auto; }
     /* Keep the last line within reach without adding saved document nodes. */
     #editor-container .editor .editor-core .primary-editor {
       padding-block-end: max(var(--editor-padding-block, 20px), 50vh);
@@ -54,11 +152,13 @@ export function attachMarkdownToggle(
     frame as Window & { MutationObserver: typeof MutationObserver }
   ).MutationObserver;
   const observer = new Observer(insert);
+  const removePopupLayer = attachToolbarPopupLayer(frame);
   if (toolbar) observer.observe(toolbar, { childList: true });
   insert();
   return Object.assign(
     () => {
       observer.disconnect();
+      removePopupLayer();
       button.remove();
       style.remove();
       frame.document.body.classList.remove("knowledge-base-source-mode");

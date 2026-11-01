@@ -1,12 +1,24 @@
 <vbox
+  class="plugin-preferences"
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
   onload="window.KnowledgeBasePreferences.start(document)"
   onshowing="window.KnowledgeBasePreferences.start(document)"
 >
   <vbox class="main-section">
-    <html:h3 data-l10n-id="knowledge-base-pref-general-heading" />
-    <hbox align="center">
+    <hbox class="preference-row" align="center">
+      <label
+        control="knowledge-base-ui-style"
+        data-l10n-id="knowledge-base-pref-ui-style"
+      />
+      <menulist native="true" id="knowledge-base-ui-style">
+        <menupopup>
+          <menuitem value="minimal" label="Minimal" />
+          <menuitem value="bear" label="Bear" />
+        </menupopup>
+      </menulist>
+    </hbox>
+    <hbox class="preference-row" align="center">
       <label
         control="knowledge-base-workbench-mode"
         data-l10n-id="knowledge-base-pref-workbench-mode"
@@ -24,20 +36,20 @@
         </menupopup>
       </menulist>
     </hbox>
-    <hbox align="center">
+    <hbox class="preference-row" align="center">
       <label
         control="knowledge-base-source-style"
         data-l10n-id="knowledge-base-pref-source-style"
       />
-      <menulist
-        native="true"
-        id="knowledge-base-source-style"
-        style="max-width: 32em; flex: 1"
-      >
+      <menulist native="true" id="knowledge-base-source-style">
         <menupopup id="knowledge-base-source-styles" />
       </menulist>
     </hbox>
-    <description data-l10n-id="knowledge-base-pref-source-help" />
+    <checkbox
+      id="knowledge-base-inherit-tags"
+      native="true"
+      data-l10n-id="knowledge-base-pref-inherit-tags"
+    />
     <hbox
       ><button
         id="knowledge-base-ai-open"
@@ -45,17 +57,53 @@
     /></hbox>
   </vbox>
   <vbox class="main-section">
-    <html:h3 data-l10n-id="knowledge-base-pref-tags-heading" />
-    <checkbox
-      id="knowledge-base-inherit-tags"
-      native="true"
-      data-l10n-id="knowledge-base-pref-inherit-tags"
-    />
-    <description data-l10n-id="knowledge-base-pref-inherit-tags-help" />
-    <html:h3 data-l10n-id="knowledge-base-pref-groups-heading" />
+    <html:h3 data-l10n-id="knowledge-base-pref-literature-template" />
+    <hbox class="preference-row" align="center">
+      <label
+        control="knowledge-base-literature-template"
+        data-l10n-id="knowledge-base-pref-template-choice"
+      />
+      <menulist id="knowledge-base-literature-template" native="true">
+        <menupopup id="knowledge-base-literature-templates" />
+      </menulist>
+      <button
+        id="knowledge-base-template-new"
+        data-l10n-id="knowledge-base-pref-template-new"
+      />
+      <button
+        id="knowledge-base-template-delete"
+        hidden="true"
+        data-l10n-id="knowledge-base-pref-template-delete"
+      />
+    </hbox>
+    <vbox id="knowledge-base-template-editor" hidden="true">
+      <hbox class="preference-row" align="center">
+        <label
+          control="knowledge-base-template-name"
+          data-l10n-id="knowledge-base-pref-template-name"
+        />
+        <html:input
+          id="knowledge-base-template-name"
+          type="text"
+          required="required"
+        />
+      </hbox>
+      <html:label
+        for="knowledge-base-template-body"
+        data-l10n-id="knowledge-base-pref-template-edit"
+      />
+      <html:textarea id="knowledge-base-template-body" rows="6" />
+      <description
+        id="knowledge-base-template-error"
+        role="alert"
+        hidden="true"
+      />
+    </vbox>
+  </vbox>
+  <vbox class="main-section">
     <html:details id="knowledge-base-graph-appearance">
       <html:summary data-l10n-id="knowledge-base-pref-graph-appearance" />
-      <hbox align="center">
+      <hbox class="preference-row" align="center">
         <label
           id="knowledge-base-graph-label-length-label"
           control="knowledge-base-graph-label-length"
@@ -67,12 +115,12 @@
           min="8"
           max="80"
           step="1"
-          style="width: 5em"
+          class="preference-number"
           aria-labelledby="knowledge-base-graph-label-length-label"
         />
         <label data-l10n-id="knowledge-base-pref-graph-label-length-unit" />
       </hbox>
-      <hbox align="center">
+      <hbox class="preference-row" align="center">
         <label
           id="knowledge-base-graph-local-depth-label"
           control="knowledge-base-graph-local-depth"
@@ -84,18 +132,19 @@
           min="1"
           max="6"
           step="1"
-          style="width: 5em"
+          class="preference-number"
           aria-labelledby="knowledge-base-graph-local-depth-label"
         />
       </hbox>
+      <html:h3 data-l10n-id="knowledge-base-pref-groups-heading" />
+      <description data-l10n-id="knowledge-base-pref-groups-help" />
+      <vbox id="knowledge-base-graph-groups" />
+      <hbox
+        ><button
+          id="knowledge-base-add-group"
+          data-l10n-id="knowledge-base-pref-add-group"
+      /></hbox>
     </html:details>
-    <description data-l10n-id="knowledge-base-pref-groups-help" />
-    <vbox id="knowledge-base-graph-groups" />
-    <hbox
-      ><button
-        id="knowledge-base-add-group"
-        data-l10n-id="knowledge-base-pref-add-group"
-    /></hbox>
     <description
       id="knowledge-base-preferences-error"
       hidden="true"

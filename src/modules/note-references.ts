@@ -33,7 +33,7 @@ async function loadNoteReferences() {
     id: string;
     item_key: string | null;
     library_id: number | null;
-  }>("SELECT id, item_key, library_id FROM zettels WHERE kind = 'literature'");
+  }>("SELECT id, item_key, library_id FROM zettels WHERE source_note = 1");
   const sources = await Promise.all(
     rows.map(async (row) => {
       if (!row.item_key || row.library_id == null) return null;

@@ -45,6 +45,8 @@ declare global {
     };
     knowledgeBaseCardId?: string | null;
     knowledgeBaseReady?: () => Promise<void>;
+    knowledgeBaseRequestClose?: () => Promise<void>;
+    knowledgeBaseEditTags?: () => Promise<void>;
     knowledgeBaseRefreshNotes?: () => void;
     knowledgeBaseDraftId?: string;
     knowledgeBaseStopping?: boolean;
@@ -57,6 +59,7 @@ declare global {
       ): Promise<import("../src/ui/native-editor").NativeEditorController>;
     };
     KnowledgeBaseEditing: {
+      textToolLabels: typeof import("../src/ui/text-tools").textToolLabels;
       formatEdit: typeof import("../src/ui/editor-formatting").formatEdit;
       continueList: typeof import("../src/ui/editor-formatting").continueList;
     };
@@ -106,7 +109,6 @@ declare global {
 export interface EditorElements {
   "knowledge-base-editor-restore": HTMLButtonElement;
   "knowledge-base-editor-format": HTMLButtonElement;
-  "knowledge-base-editor-reference": HTMLButtonElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
   "knowledge-base-command-open": HTMLButtonElement;
   "knowledge-base-command-menu": HTMLDivElement;
@@ -116,11 +118,10 @@ export interface EditorElements {
   "knowledge-base-parent-display": HTMLButtonElement;
   "knowledge-base-parent-search": HTMLInputElement;
   "knowledge-base-parent-results": HTMLUListElement;
-  "knowledge-base-note-kind": HTMLSelectElement;
-  "knowledge-base-note-kind-text": HTMLSpanElement;
-  "knowledge-base-kind-label": HTMLLabelElement;
   "knowledge-base-key-label": HTMLLabelElement;
-  "knowledge-base-editor-key": HTMLInputElement;
+  "knowledge-base-editor-key": HTMLTextAreaElement;
+  "knowledge-base-key-copy": HTMLButtonElement;
+  "knowledge-base-key-edit": HTMLButtonElement;
   "knowledge-base-key-feedback": HTMLDivElement;
   "knowledge-base-key-status": HTMLSpanElement;
   "knowledge-base-key-resolve": HTMLButtonElement;
@@ -177,9 +178,7 @@ export interface EditorElements {
 
 export interface ManagerElements {
   "knowledge-base-sort": HTMLSelectElement;
-  "knowledge-base-kind": HTMLSelectElement;
-  "knowledge-base-entries": HTMLInputElement;
-  "knowledge-base-entries-label": HTMLSpanElement;
+  "knowledge-base-view": HTMLSelectElement;
   "knowledge-base-family": HTMLDivElement;
   "knowledge-base-manager": Element;
   "knowledge-base-root": HTMLElementTagNameMap["div"];

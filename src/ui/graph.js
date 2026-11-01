@@ -666,10 +666,7 @@ function select(id) {
     $("graph-node-tags"),
     node.tags || [],
   );
-  $("graph-node-kind").textContent =
-    node.kind === "card"
-      ? api.loc("note-kind-" + (node.noteKind || "zettel"))
-      : api.loc(`graph-kind-${node.kind}`);
+  $("graph-node-kind").textContent = api.loc(`graph-kind-${node.kind}`);
   window.ZoteroKnowledgeBaseMarkdown.reference(
     $("graph-node-reference"),
     node.kind === "card" ? node.reference || node.id : "",
@@ -1041,6 +1038,7 @@ async function load() {
     applyTransform();
   };
   window.addEventListener("resize", resize);
+  window.addEventListener("plugin-ui-style-change", () => run(render));
   if (window.ResizeObserver) {
     resizeObserver = new window.ResizeObserver(resize);
     resizeObserver.observe($("graph-canvas"));

@@ -1,6 +1,135 @@
 import { noteSortOrder, type NoteSort } from "./note-sort";
 import { config } from "../../package.json";
 import { notifyDataChange } from "./events";
+import { getString } from "../utils/locale";
+
+const literatureTemplatesKey = `${config.prefsPrefix}.literatureTemplates`;
+interface LiteratureTemplate {
+  id: string;
+  name: string;
+  body: string;
+}
+interface LiteratureTemplateSettings {
+  selected: string | null;
+  templates: LiteratureTemplate[];
+}
+
+export function getLiteratureTemplateSettings(): LiteratureTemplateSettings {
+  const stored = Zotero.Prefs.get(literatureTemplatesKey, true);
+  if (stored === undefined) return { selected: null, templates: [] };
+  try {
+    if (typeof stored !== "string") throw new Error();
+    const settings = JSON.parse(stored);
+    if (!settings || !Array.isArray(settings.templates)) throw new Error();
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    for (const template of settings.templates) {
+      if (
+        !template ||
+        typeof template.id !== "string" ||
+        !template.id ||
+        typeof template.name !== "string" ||
+        !template.name.trim() ||
+        template.name !== template.name.trim() ||
+        typeof template.body !== "string" ||
+        ids.has(template.id) ||
+        names.has(template.name.toLowerCase())
+      )
+        throw new Error();
+      ids.add(template.id);
+      names.add(template.name.toLowerCase());
+    }
+    if (settings.selected !== null && !ids.has(settings.selected))
+      throw new Error();
+    return settings;
+  } catch {
+    throw new Error(getString("literature-template-invalid"));
+  }
+}
+
+function saveLiteratureTemplates(settings: LiteratureTemplateSettings): void {
+  Zotero.Prefs.set(literatureTemplatesKey, JSON.stringify(settings), true);
+}
+
+export function setLiteratureTemplate(id: string | null): void {
+  const settings = getLiteratureTemplateSettings();
+  if (id !== null && !settings.templates.some((template) => template.id === id))
+    throw new Error(getString("literature-template-invalid"));
+  saveLiteratureTemplates({ ...settings, selected: id });
+}
+
+export function createLiteratureTemplate(): string {
+  const settings = getLiteratureTemplateSettings();
+  const base = getString("template-untitled");
+  let name = base;
+  let suffix = 2;
+  while (
+    settings.templates.some(
+      (template) => template.name.toLowerCase() === name.toLowerCase(),
+    )
+  )
+    name = `${base} ${suffix++}`;
+  let id: string;
+  do {
+    id = Zotero.Utilities.randomString(12);
+  } while (settings.templates.some((template) => template.id === id));
+  settings.templates.push({ id, name, body: "" });
+  settings.selected = id;
+  saveLiteratureTemplates(settings);
+  return id;
+}
+
+export function updateLiteratureTemplate(
+  id: string,
+  input: { name?: string; body?: string },
+): void {
+  const settings = getLiteratureTemplateSettings();
+  const template = settings.templates.find((template) => template.id === id);
+  if (
+    !template ||
+    !input ||
+    (input.name === undefined && input.body === undefined)
+  )
+    throw new Error(getString("literature-template-invalid"));
+  if (input.name !== undefined) {
+    if (
+      typeof input.name !== "string" ||
+      !input.name.trim() ||
+      settings.templates.some(
+        (other) =>
+          other.id !== id &&
+          other.name.toLowerCase() === input.name!.trim().toLowerCase(),
+      )
+    )
+      throw new Error(getString("literature-template-name-invalid"));
+    template.name = input.name.trim();
+  }
+  if (input.body !== undefined) {
+    if (typeof input.body !== "string")
+      throw new Error(getString("literature-template-invalid"));
+    template.body = input.body;
+  }
+  saveLiteratureTemplates(settings);
+}
+
+export function deleteLiteratureTemplate(id: string): void {
+  const settings = getLiteratureTemplateSettings();
+  if (!settings.templates.some((template) => template.id === id))
+    throw new Error(getString("literature-template-invalid"));
+  settings.templates = settings.templates.filter(
+    (template) => template.id !== id,
+  );
+  if (settings.selected === id) settings.selected = null;
+  saveLiteratureTemplates(settings);
+}
+
+export function getNewNoteBody(): string {
+  const settings = getLiteratureTemplateSettings();
+  return (
+    settings.templates.find((template) => template.id === settings.selected)
+      ?.body ?? ""
+  );
+}
 
 export interface GraphGroup {
   tag: string;

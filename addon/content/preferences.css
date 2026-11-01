@@ -1,0 +1,79 @@
+/* Compact rows with Zotero's native typography and controls. */
+.plugin-preferences {
+  min-width: 0;
+}
+.plugin-preferences .main-section {
+  margin-block: 0 16px;
+  padding: 0;
+}
+.plugin-preferences
+  .main-section:not([hidden]):not(.hidden-by-search)
+  ~ .main-section {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: 0;
+}
+.plugin-preferences h3 {
+  margin-block: 0 6px;
+  font-size: 1em;
+}
+.plugin-preferences hbox {
+  flex-wrap: wrap;
+}
+.plugin-preferences .preference-row {
+  gap: 4px 8px;
+  margin-block: 4px;
+}
+.plugin-preferences .preference-row > label[control] {
+  flex: 0 0 10em;
+  margin-inline: 0;
+}
+.plugin-preferences .preference-row > menulist,
+.plugin-preferences .preference-row > input,
+.plugin-preferences .preference-row > textarea {
+  flex: 1 1 12em;
+  max-width: 28em;
+  min-width: 0;
+  margin-inline: 0;
+}
+.plugin-preferences .preference-row > .preference-number {
+  flex: 0 0 5em;
+}
+.plugin-preferences checkbox {
+  margin-block: 4px;
+}
+.plugin-preferences description {
+  margin-block: 2px 4px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.plugin-preferences input,
+.plugin-preferences textarea {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+}
+.plugin-preferences textarea {
+  resize: vertical;
+}
+
+.plugin-preferences summary {
+  cursor: pointer;
+  margin-block: 4px 8px;
+}
+.plugin-preferences details h3 {
+  margin-top: 12px;
+}
+.plugin-preferences .preference-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-block: 4px 8px;
+}
+.plugin-preferences #knowledge-base-template-body {
+  width: 100%;
+  font-family: monospace;
+}
+.plugin-preferences #knowledge-base-ai-status {
+  flex: 1;
+}

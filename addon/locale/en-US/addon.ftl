@@ -11,13 +11,11 @@ pref-workbench-window =
     .label = Separate window
 pref-source-heading = Source References
 pref-source-style = Bibliography style
-pref-source-help = Manage styles in Settings → Cite.
+    .tooltiptext = Manage styles in Settings → Cite.
 source-style-missing = Choose an available citation style.
 editor-source-format-failed = Could not format Source:
 editor-more = More
 editor-open-window = Open in Separate Window
-editor-convert-zettel = Convert to Zettel
-editor-convert-thinking = Convert to Thinking
 personal-knowledge-title = Personal Knowledge
 
 menu-new-zettel = New Card
@@ -33,23 +31,25 @@ section-count =
     }
 section-no-item = Select an item to see its notes
 section-loading = Loading…
-section-new = ＋ New Note
+section-new = New note
+section-new-zettel = New Zettel
+section-zettels = Zettels · { $count }
 
 manager-title = Knowledge Base
 manager-new = New Note
-manager-copy-zettels = Copy Zettel outline
-manager-copy-zettels-done = Copied { $count } Zettels
-manager-copy-zettels-empty = No Zettels to copy
+manager-copy-zettels = Copy note outline
+manager-copy-zettels-done = Copied { $count } notes
+manager-copy-zettels-empty = No notes to copy
 manager-search-placeholder = Search notes…
 manager-empty-detail = Select a note
 manager-outgoing = Linked notes
 manager-backlinks = Backlinks
 manager-preview = Preview
 manager-edit = Edit
-manager-delete = Move to Zotero Trash
+manager-delete = Move to Trash
 manager-unresolved = Unavailable links
 manager-unresolved-tip = Open the referring note to fix this link
-manager-link-trashed = Restore the note from Zotero Trash to reconnect.
+manager-link-trashed = Restore the note from Trash to reconnect.
 manager-unavailable-note = Note ({ $key })
 manager-formula = [formula]
 manager-untitled = Untitled
@@ -62,7 +62,7 @@ manager-count =
        *[other] { $count } notes
     }
 manager-updated = Updated
-manager-confirm-delete = Move “{ $title }” to Zotero Trash?
+manager-confirm-delete = Move “{ $title }” to Trash?
 
 editor-title-new = New Note
 editor-title-edit = Edit Note
@@ -189,8 +189,7 @@ editor-visual = Visual editing
 hierarchy = Knowledge outline
 parent = Parent
 children = Children
-entries = Entry points
-root = Entry point
+root = No parent
 parent-search = Find parent by ID or title
 references = References
 both = Outline + references
@@ -250,11 +249,6 @@ editor-note-missing = Note unavailable. Check Zotero Trash.
 editor-browse = Browse
 editor-edit = Edit
 
-note-kind = Note type
-note-kind-all = All notes
-note-kind-literature = Literature Note
-note-kind-zettel = Zettel
-note-kind-thinking = Thinking Note
 literature-source-required = Choose a literature item as the source.
 literature-exists = This item already has a Literature Note. Open it from the item pane.
 
@@ -287,6 +281,7 @@ editor-outline-parent = Parent
 manager-source-item = Source · Zotero
 
 note-reference-copy = Copy note reference
+note-reference-copied = Reference copied.
 
 markdown-node-citation = Citation
 markdown-node-annotation = Annotation
@@ -294,6 +289,7 @@ markdown-node-note-link = Note link
 markdown-node-image = Image
 
 editor-key = Note ID
+editor-key-edit = Edit Note ID
 
 editor-key-auto = Automatic
 
@@ -308,14 +304,12 @@ editor-key-invalid = Use an ID without spaces, brackets, | or a leading @.
 editor-key-exists = This ID belongs to another note.
 editor-key-resolve = Use available ID
 
-pref-tags-heading = Note tags
 pref-inherit-tags =
-    .label = Inherit parent tags
-pref-inherit-tags-help = Include tags from source items and parent notes.
-pref-groups-heading = Graph groups
+    .label = Inherit source and parent tags
+pref-groups-heading = Groups
 pref-graph-label-length = Title length
 pref-graph-label-length-unit = characters
-pref-groups-help = First matching group takes priority.
+pref-groups-help = First match wins.
 pref-add-group =
     .label = New group
 graph-group-tag = Choose tag
@@ -343,7 +337,8 @@ pref-ai-key = API key
 pref-ai-show-key = Show API key
 pref-ai-hide-key = Hide API key
 pref-ai-path = CLI path
-ai-remove-key = Remove
+ai-remove-key =
+    .label = Remove
 ai-connect = Establish connections
 ai-apply = Apply
 ai-close = Close
@@ -369,7 +364,7 @@ ai-progress-evidence = Checking both source passages…
 ai-progress-summaries = Reading summaries · { $count } / { $total }
 ai-progress-reading = Reading notes · { $count }
 ai-applied = Applied
-ai-zettel-required = Open an editable Zettel.
+ai-zettel-required = Open an editable note.
 ai-save-required = Save the note first.
 ai-plan-stale = Notes changed. Analyze again.
 ai-note-too-long = Note exceeds 60,000 characters; no changes applied.
@@ -390,14 +385,13 @@ ai-test = Test connection
 ai-testing = Testing connection…
 ai-test-success = Connection successful.
 
-pref-general-heading = General
 pref-ai-advanced = Advanced
-pref-ai-api-help = Uses an existing environment key when available.
-pref-ai-opencode-go-help = Uses your OpenCode Go subscription key.
+pref-ai-api-help = Uses an environment key if set.
+pref-ai-opencode-go-help = Uses your Go subscription key.
 ai-context-too-long = Selected full notes exceed the analysis context limit. No changes were applied.
 ai-free-restricted = OpenCode rejected this Free model outside OpenCode. Choose a supported Go or API model. Your saved keys are unchanged.
 pref-ai-cli-help = Uses your { $provider } login.
-pref-ai-privacy = Analysis sends this note and related notes to the selected service.
+pref-ai-privacy = Sends this note and related notes to the selected service.
 ai-cli-auto-path = Find automatically
 ai-cli-not-found = Install { $provider } or set its path under Advanced.
 ai-balance-required = Insufficient { $provider } balance.
@@ -405,7 +399,7 @@ ai-models-unavailable = Could not load models. Enter a model name.
 ai-show-key-short = Show
 ai-hide-key-short = Hide
 
-pref-graph-appearance = Graph appearance
+pref-graph-appearance = Graph
 
 ai-list-models = Choose model
 ai-listing-models = Loading models…
@@ -413,7 +407,74 @@ ai-models-listed = { $count } models
 ai-default-model = Default model
 
 ai-provider-unavailable = Service unavailable. Choose another.
-pref-ai-open = AI Settings…
+pref-ai-open =
+    .label = AI Settings…
 pref-ai-enabled = Enable AI features
-pref-ai-enabled-help = Off by default. Disable to cancel analysis and hide AI actions. Saved settings and keys are retained.
 ai-disabled = Enable AI features in Settings first.
+
+pref-literature-template = Note Templates
+pref-template-choice = Use for new notes
+template-none = No template
+pref-template-edit = Content (Markdown)
+pref-template-name = Name
+template-untitled = Untitled Template
+template-delete-confirm = Delete template “{ $name }”? Existing notes will stay unchanged.
+literature-template-invalid = Template settings are invalid. Saved templates have not been replaced.
+literature-template-name-invalid = Enter a unique, nonempty template name.
+pref-template-new =
+    .label = New
+pref-template-delete =
+    .label = Delete
+
+note-tags = Tags
+note-tags-edit = Edit tags…
+note-tag-add = Add tag, press Enter
+note-tag-remove = Remove tag { $tag }
+section-source-note = Literature note
+section-source-note-open = Open literature note
+section-source-note-new = New literature note
+
+manager-view = Note view
+manager-notes = Notes
+trash-title = Trash
+trash-restore = Restore
+trash-empty = Empty Trash…
+trash-cancel = Cancel
+trash-delete = Delete Permanently…
+trash-select-note = Select a deleted note to view or restore
+trash-confirm-delete = Permanently delete “{ $title }” and its attachments? This cannot be undone.
+trash-confirm-empty = Permanently delete { $count } notes and their attachments from Knowledge Base Trash? This cannot be undone. Source papers and notes outside Knowledge Base are kept.
+trash-progress = Deleting notes: { $done } / { $total }
+trash-delete-done = Permanently deleted { $count } notes.
+trash-delete-cancelled = Cancelled. Permanently deleted { $count } notes.
+trash-delete-skipped = Kept { $count } notes that were restored, unavailable or read-only.
+trash-delete-failed = Deleted { $count } notes before deletion failed for { $note }: { $error }
+trash-restored = Note restored.
+
+manager-open-note = Open note
+manager-open-note-window = Open in New Window
+manager-copy-note-link = Copy Note Link
+
+pref-ui-style = Interface style
+
+text-tools-normalize = Normalize
+text-tools-find = Find & replace
+text-tools-unchanged = No formatting changes needed.
+text-tools-failed = Could not complete this text action.
+text-tools-done = Formatted { $count } occurrences.
+text-search-find = Find
+text-search-replace = Replace
+text-search-next = next
+text-search-previous = previous
+text-search-all = all
+text-search-case = match case
+text-search-regexp = regexp
+text-search-word = by word
+text-search-replace-all = replace all
+text-search-close = close
+text-search-line = Go to line
+text-search-go = go
+text-search-current = current match
+text-search-on-line = on line
+text-search-replaced-line = replaced match on line $
+text-search-replaced-count = replaced $ matches

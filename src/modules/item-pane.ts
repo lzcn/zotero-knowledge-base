@@ -1,7 +1,7 @@
 /**
  * Zotero UI integration points:
- *  - "Zettel" column in the item tree (per-article card count)
- *  - "Zettel" section in the item pane (list of the article's cards)
+ *  - Note count column in the item tree
+ *  - One source note and related ideas in the item pane
  */
 
 import { config } from "../../package.json";
@@ -117,7 +117,10 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   const notes = personal
     ? await listUnsourcedNotes(item.libraryID)
     : await listByItem(item.key, item.libraryID);
-  const zettels = notes.filter((note) => note.kind !== "literature");
+  const sourceNote = personal
+    ? undefined
+    : notes.find((note) => note.source_note);
+  const zettels = personal ? notes : notes.filter((note) => !note.source_note);
   if (
     !container.isConnected ||
     container.parentElement?.dataset.itemKey !== item.key
@@ -127,22 +130,54 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
   container.textContent = "";
 
   if (!personal) {
-    const literature = el(container, "button");
-    literature.className = "knowledge-base-mini-btn";
-    literature.textContent = getString("note-kind-literature");
+    const source = el(container, "div");
+    source.className = "knowledge-base-section-head";
+    const label = el(source, "span");
+    label.className = "knowledge-base-count";
+    label.textContent = getString("section-source-note");
+    source.appendChild(label);
+    const literature = el(source, "button");
+    literature.className =
+      "knowledge-base-source-note knowledge-base-section-action";
+    literature.textContent = sourceNote ? "↗" : "+";
+    literature.title = getString(
+      sourceNote ? "section-source-note-open" : "section-source-note-new",
+    );
+    literature.setAttribute("aria-label", literature.title);
     literature.addEventListener("click", () => {
       void addon.api
         .openLiteratureNote(item.key, item.libraryID)
         .catch((error: Error) => Zotero.logError(error));
     });
-    container.appendChild(literature);
+    source.appendChild(literature);
+    container.appendChild(source);
   }
 
   const head = el(container, "div");
-  head.className = "knowledge-base-count";
-  head.textContent = getString("section-count", {
-    args: { count: zettels.length },
-  });
+  head.className = "knowledge-base-section-head";
+  const count = el(head, "span");
+  count.className = "knowledge-base-count";
+  count.textContent = getString(
+    personal ? "section-count" : "section-zettels",
+    {
+      args: { count: zettels.length },
+    },
+  );
+  head.appendChild(count);
+  const newBtn = el(head, "button");
+  newBtn.className = "knowledge-base-add-note knowledge-base-section-action";
+  newBtn.textContent = "+";
+  const label = getString(personal ? "section-new" : "section-new-zettel");
+  newBtn.title = label;
+  newBtn.setAttribute("aria-label", label);
+  newBtn.addEventListener("click", () =>
+    addon.api.openEditor({
+      sourceItem: personal
+        ? undefined
+        : { key: item.key, libraryID: item.libraryID },
+    }),
+  );
+  head.appendChild(newBtn);
   container.appendChild(head);
 
   const list = el(container, "ul");
@@ -165,22 +200,6 @@ async function fill(container: HTMLElement, item: Zotero.Item): Promise<void> {
     list.appendChild(li);
   }
   container.appendChild(list);
-
-  const footer = el(container, "div");
-  footer.className = "knowledge-base-section-footer";
-  const newBtn = el(footer, "button");
-  newBtn.className = "knowledge-base-mini-btn";
-  newBtn.textContent = getString("section-new");
-  newBtn.addEventListener("click", () =>
-    addon.api.openEditor({
-      sourceItem: personal
-        ? undefined
-        : { key: item.key, libraryID: item.libraryID },
-    }),
-  );
-  footer.appendChild(newBtn);
-
-  container.appendChild(footer);
 }
 
 function el(parent: HTMLElement, tag: string): HTMLElement {

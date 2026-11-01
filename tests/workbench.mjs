@@ -190,13 +190,17 @@ try {
   const originalGetState = () => nativeStates;
   let close;
   const tabs = {
+    selectedID: "workbench",
     getState: originalGetState,
-    select() {},
+    select(id) {
+      this.selectedID = id;
+    },
     add(options) {
       close = options.onClose;
       return { id: "workbench", container: doc.querySelector("main") };
     },
     close() {
+      this.selectedID = "zotero-pane";
       close();
     },
   };
@@ -212,13 +216,63 @@ try {
     return node;
   };
   dom.window.Zotero_Tabs = tabs;
-  globalThis.Zotero = { getMainWindow: () => dom.window };
+  globalThis.Zotero = { getMainWindow: () => dom.window, isMac: true };
   module.openWorkbench();
   module.openWorkbench();
   assert.equal(auditRequests, 1);
   assert.deepEqual(tabs.getState(), nativeStates.slice(0, 2));
+  const manager = doc.querySelector(".knowledge-base-workbench").contentWindow;
+  let closeRequests = 0;
+  manager.knowledgeBaseRequestClose = async () => {
+    closeRequests++;
+  };
+  const shortcut = (options = {}) => {
+    const event = new dom.window.KeyboardEvent("keydown", {
+      key: "w",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    });
+    dom.window.dispatchEvent(event);
+    return event;
+  };
+  assert.equal(shortcut().defaultPrevented, true);
+  assert.equal(closeRequests, 1);
+  assert.notEqual(tabs.getState, originalGetState);
+  for (const options of [
+    { isComposing: true },
+    { keyCode: 229 },
+    { metaKey: false, ctrlKey: true },
+    { ctrlKey: true },
+    { altKey: true },
+    { shiftKey: true },
+  ])
+    assert.equal(shortcut(options).defaultPrevented, false);
+  assert.equal(shortcut({ repeat: true }).defaultPrevented, true);
+  assert.equal(closeRequests, 1);
+  tabs.selectedID = "zotero-pane";
+  assert.equal(shortcut().defaultPrevented, false);
+  tabs.selectedID = "workbench";
+  let finishClose;
+  manager.knowledgeBaseRequestClose = async () => {
+    await new Promise((resolve) => {
+      finishClose = resolve;
+    });
+    tabs.close();
+  };
+  shortcut();
+  assert.notEqual(tabs.getState, originalGetState);
+  finishClose();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(tabs.getState, originalGetState);
+  tabs.selectedID = "workbench";
+  assert.equal(shortcut().defaultPrevented, false);
   module.closeWorkbenches();
   assert.equal(tabs.getState, originalGetState);
+  console.log(
+    "PASS Workbench close shortcuts await the editor, preserve cancellation, ignore other tabs/IME and release their listener",
+  );
   console.log(
     "PASS Workbench leaves native Zotero document state intact and removes its session hook on close",
   );

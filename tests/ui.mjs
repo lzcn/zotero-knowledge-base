@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
@@ -871,11 +871,24 @@ else globalThis.Zotero.Prefs = originalPrefs;
 // Native tags and preference controls share the same effective-tag rules.
 const tagPreferences = new Map();
 const priorTagPrefs = globalThis.Zotero.Prefs;
+const priorTemplateLocale = globalThis.addon;
+globalThis.addon = {
+  data: {
+    locale: { current: { formatMessagesSync: ([{ id }]) => [{ value: id }] } },
+  },
+};
+const priorTemplateUtilities = globalThis.Zotero.Utilities;
+let templateID = 0;
+globalThis.Zotero.Utilities = {
+  ...priorTemplateUtilities,
+  randomString: () => `template-${++templateID}`,
+};
 const priorTagItems = globalThis.Zotero.Items;
 const priorTagLogger = globalThis.Zotero.logError;
 globalThis.Zotero.Prefs = {
   get: (key) => tagPreferences.get(key),
   set: (key, value) => tagPreferences.set(key, value),
+  clear: (key) => tagPreferences.delete(key),
 };
 globalThis.Zotero.logError = () => {};
 const tagParent = {
@@ -970,6 +983,54 @@ check(
     assert.equal(preferences.getGraphGroups().length, 2);
   },
 );
+for (const locale of ["en-US", "zh-CN"]) {
+  const fluent = await readFile(
+    path.join(ROOT, "addon/locale", locale, "addon.ftl"),
+    "utf8",
+  );
+  const messages = new Map(
+    Array.from(
+      fluent.matchAll(/^([a-z][\w-]*)[ \t]*=([^\n]*(?:\n[ \t]+[^\n]*)*)/gm),
+      (match) => [match[1], match[2]],
+    ),
+  );
+  for (const file of (await readdir(path.join(ROOT, "addon/content"))).filter(
+    (file) => file.endsWith(".xhtml"),
+  )) {
+    const dom = new JSDOM(
+      await readFile(path.join(ROOT, "addon/content", file), "utf8"),
+      { contentType: "application/xhtml+xml" },
+    );
+    try {
+      for (const control of dom.window.document.getElementsByTagNameNS(
+        "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+        "*",
+      )) {
+        if (
+          !["button", "toolbarbutton", "menuitem", "checkbox"].includes(
+            control.localName,
+          )
+        )
+          continue;
+        const id = control.getAttribute("data-l10n-id");
+        if (!id) continue;
+        const key = id.replace(/^knowledge-base-/, "");
+        assert.ok(messages.has(key), `${locale} ${file}: missing ${key}`);
+        assert.match(
+          messages.get(key),
+          /\.(label|tooltiptext|aria-label)[ \t]*=/,
+          `${locale} ${file}: ${key} needs a native control label`,
+        );
+      }
+    } finally {
+      dom.window.close();
+    }
+  }
+  check(
+    `${locale} native control bindings use Fluent label attributes`,
+    () => {},
+  );
+}
 const prefsDOM = new JSDOM(
   await readFile(path.join(ROOT, "addon/content/preferences.xhtml"), "utf8"),
   { contentType: "application/xhtml+xml", runScripts: "outside-only" },
@@ -981,7 +1042,17 @@ prefsWin.document.createXULElement = (tag) =>
     tag,
   );
 prefsWin.MozXULElement = { insertFTLIfNeeded() {} };
+prefsWin.ZoteroPluginUI = {
+  select(value) {
+    globalThis.Zotero.Prefs.set(
+      "extensions.zotero.plugin-ui.bear",
+      value === "bear",
+      true,
+    );
+  },
+};
 prefsWin.Zotero = {
+  Prefs: globalThis.Zotero.Prefs,
   logError: (error) => {
     throw error;
   },
@@ -1005,6 +1076,141 @@ await Promise.all([
 ]);
 const prefsCommand = (control) =>
   control.dispatchEvent(new prefsWin.Event("command", { bubbles: true }));
+check(
+  "Named Literature Note templates start empty and support create, rename, select and delete",
+  () => {
+    const choice = prefsWin.document.getElementById(
+      "knowledge-base-literature-template",
+    );
+    const editor = prefsWin.document.getElementById(
+      "knowledge-base-template-editor",
+    );
+    const body = prefsWin.document.getElementById(
+      "knowledge-base-template-body",
+    );
+    const name = prefsWin.document.getElementById(
+      "knowledge-base-template-name",
+    );
+    const add = prefsWin.document.getElementById("knowledge-base-template-new");
+    const remove = prefsWin.document.getElementById(
+      "knowledge-base-template-delete",
+    );
+    assert.deepEqual(preferences.getLiteratureTemplateSettings(), {
+      selected: null,
+      templates: [],
+    });
+    assert.equal(choice.value, "");
+    assert.equal(editor.hidden, true);
+    assert.equal(preferences.getNewNoteBody(), "");
+    assert.equal(choice.querySelectorAll("menuitem").length, 1);
+    const noTemplateItem = choice.querySelector("menuitem");
+    prefsCommand(add);
+    const first = choice.value;
+    const firstItem = choice.querySelector(`menuitem[value="${first}"]`);
+    assert.ok(first);
+    assert.equal(editor.hidden, false);
+    assert.equal(body.value, "");
+    name.value = "研究记录";
+    name.dispatchEvent(new prefsWin.Event("change"));
+    body.value = "## My questions\n\n- What should I try?";
+    body.dispatchEvent(new prefsWin.Event("input", { bubbles: true }));
+    const firstBody = body.value;
+    assert.equal(preferences.getNewNoteBody(), firstBody);
+    assert.equal(
+      choice.querySelector(`menuitem[value="${first}"]`).getAttribute("label"),
+      "研究记录",
+    );
+    assert.equal(choice.querySelector(`menuitem[value="${first}"]`), firstItem);
+    assert.equal(choice.querySelector("menuitem"), noTemplateItem);
+    prefsCommand(add);
+    const second = choice.value;
+    assert.notEqual(second, first);
+    assert.equal(body.value, "");
+    name.value = "实验规划";
+    name.dispatchEvent(new prefsWin.Event("change"));
+    body.value = "## Experiments\n\n- Hypothesis";
+    body.dispatchEvent(new prefsWin.Event("input", { bubbles: true }));
+    const secondBody = body.value;
+    const menuItems = [...choice.querySelectorAll("menuitem")];
+    const stored = tagPreferences.get(
+      "extensions.zotero.knowledge-base.literatureTemplates",
+    );
+    assert.throws(() =>
+      preferences.updateLiteratureTemplate(second, { name: "   " }),
+    );
+    assert.throws(() =>
+      preferences.updateLiteratureTemplate(second, { name: "研究记录" }),
+    );
+    assert.throws(() =>
+      preferences.updateLiteratureTemplate(second, { body: null }),
+    );
+    assert.throws(() => preferences.setLiteratureTemplate("missing"));
+    assert.equal(
+      tagPreferences.get(
+        "extensions.zotero.knowledge-base.literatureTemplates",
+      ),
+      stored,
+    );
+    choice.value = "";
+    prefsCommand(choice);
+    assert.deepEqual([...choice.querySelectorAll("menuitem")], menuItems);
+    assert.equal(preferences.getNewNoteBody(), "");
+    assert.equal(editor.hidden, true);
+    choice.value = first;
+    prefsCommand(choice);
+    assert.deepEqual([...choice.querySelectorAll("menuitem")], menuItems);
+    assert.equal(body.value, firstBody);
+    assert.equal(name.value, "研究记录");
+    prefsWin.confirm = () => false;
+    prefsCommand(remove);
+    assert.equal(
+      preferences.getLiteratureTemplateSettings().templates.length,
+      2,
+    );
+    prefsWin.confirm = () => true;
+    prefsCommand(remove);
+    assert.equal(choice.value, "");
+    assert.equal(preferences.getNewNoteBody(), "");
+    assert.equal(
+      preferences.getLiteratureTemplateSettings().templates.length,
+      1,
+    );
+    assert.equal(
+      preferences.getLiteratureTemplateSettings().templates[0].body,
+      secondBody,
+    );
+    choice.value = second;
+    prefsCommand(choice);
+    assert.equal(body.value, secondBody);
+    name.value = "Renamed experiment plan";
+    name.dispatchEvent(new prefsWin.Event("change"));
+    assert.equal(preferences.getLiteratureTemplateSettings().selected, second);
+    assert.equal(preferences.getNewNoteBody(), secondBody);
+    const intact = tagPreferences.get(
+      "extensions.zotero.knowledge-base.literatureTemplates",
+    );
+    tagPreferences.set(
+      "extensions.zotero.knowledge-base.literatureTemplates",
+      '{"templates":[],"selected":"missing"}',
+    );
+    assert.throws(() => preferences.getLiteratureTemplateSettings());
+    assert.equal(
+      tagPreferences.get(
+        "extensions.zotero.knowledge-base.literatureTemplates",
+      ),
+      '{"templates":[],"selected":"missing"}',
+    );
+    tagPreferences.set(
+      "extensions.zotero.knowledge-base.literatureTemplates",
+      intact,
+    );
+    prefsCommand(remove);
+    assert.deepEqual(preferences.getLiteratureTemplateSettings(), {
+      selected: null,
+      templates: [],
+    });
+  },
+);
 const groupRows = () => [
   ...prefsWin.document.querySelectorAll(".graph-group-row"),
 ];
@@ -1066,6 +1272,9 @@ check(
   },
 );
 prefsWin.close();
+globalThis.Zotero.Utilities = priorTemplateUtilities;
+if (priorTemplateLocale === undefined) delete globalThis.addon;
+else globalThis.addon = priorTemplateLocale;
 globalThis.Zotero.Items = priorTagItems;
 globalThis.Zotero.logError = priorTagLogger;
 if (priorTagPrefs === undefined) delete globalThis.Zotero.Prefs;
@@ -1082,6 +1291,10 @@ async function editor(args = {}, overrides = {}) {
     pretendToBeVisual: true,
   });
 
+  dom.window.ResizeObserver = class {
+    observe() {}
+    disconnect() {}
+  };
   Object.defineProperty(dom.window.document.documentElement, "style", {
     value: dom.window.document.createElementNS(
       "http://www.w3.org/1999/xhtml",
@@ -1120,6 +1333,9 @@ async function editor(args = {}, overrides = {}) {
     getPanelWidth: () => 28,
     setPanelWidth: () => {},
     getNoteTags: async () => [],
+    getOwnNoteTags: async () => [],
+    getNewNoteBody: () => "",
+    getGraphTags: async () => ["Thinking Note"],
     getNoteHealth: async () => ({
       note: "available",
       source: "none",
@@ -1234,6 +1450,7 @@ async function editor(args = {}, overrides = {}) {
       dom.window.__nativeEditorOptions = options;
       let html = nativeHTML;
       return {
+        captureChanges() {},
         getHTML: () => html,
         getSavedHTML: () => html,
         flush: async () => {},
@@ -1432,7 +1649,7 @@ const relationEditor = await editor(
       id,
       title: id === "TARGET" ? "Linked idea" : "Relationship fixture",
       body: "",
-      kind: "zettel",
+      source_note: 0,
       updated_at: "2026-10-05",
     }),
     getFamily: async () => ({
@@ -1521,6 +1738,77 @@ check(
 check("Editor prefills concept titles in its real XML document", () =>
   assert.equal(ed.win.__editorEval("noteTitle"), "New concept"),
 );
+const tagRequestedEditor = await editor(
+  { zettelId: "TAG_MENU", editTags: true },
+  {
+    getZettel: async () => ({
+      id: "TAG_MENU",
+      title: "Tagged note",
+      body: "Original body",
+      updated_at: 1,
+    }),
+  },
+);
+check(
+  "A requested tag edit opens the existing tag controls after editor initialization",
+  () => {
+    assert.equal(tagRequestedEditor.win.__editorEval("tagEditing"), true);
+    assert.equal(
+      tagRequestedEditor.$("knowledge-base-tag-editor").hidden,
+      false,
+    );
+  },
+);
+
+let finishSlowSource;
+const slowSource = new Promise((resolve) => {
+  finishSlowSource = resolve;
+});
+const slowSourceLoad = editor(
+  { zettelId: "SLOW_SOURCE" },
+  {
+    getZettel: async () => ({
+      id: "SLOW_SOURCE",
+      title: "Ready before CSL",
+      body: "Editable original",
+      item_key: "SOURCE01",
+      library_id: 1,
+      updated_at: 1,
+    }),
+    getSourceBibliography: async () => slowSource,
+  },
+);
+const sourceReadyEditor = await Promise.race([
+  slowSourceLoad,
+  new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+]);
+check(
+  "A pending CSL bibliography never blocks opening the original note editor",
+  () => {
+    assert.ok(sourceReadyEditor);
+    assert.equal(sourceReadyEditor.initialMode, "visual");
+    assert.ok(sourceReadyEditor.win.__nativeEditorOptions);
+    assert.equal(
+      sourceReadyEditor.$("knowledge-base-src-display").textContent,
+      sources[0].title,
+    );
+  },
+);
+finishSlowSource('<div class="csl-entry">Completed source bibliography</div>');
+await wait();
+await wait();
+check(
+  "Source formatting finishes in the open document after the editor is ready",
+  () => {
+    assert.equal(
+      sourceReadyEditor
+        .$("knowledge-base-src-display")
+        .querySelector(".csl-entry").textContent,
+      "Completed source bibliography",
+    );
+  },
+);
+
 let unavailableAcquisitions = 0;
 const unavailableEditor = await editor(
   { zettelId: "missing-original" },
@@ -1532,6 +1820,9 @@ const unavailableEditor = await editor(
       updated_at: 7,
     }),
     getNoteTags: async () => [],
+    getOwnNoteTags: async () => [],
+    getNewNoteBody: () => "",
+    getGraphTags: async () => ["Thinking Note"],
     getNoteHealth: async () => ({
       note: "missing",
       source: "none",
@@ -1665,7 +1956,7 @@ for (const pendingEdit of [false, true]) {
         id: "AUTOSAVED_NOTE",
         title: "Original note",
         body: "Native content",
-        kind: "zettel",
+        source_note: 0,
         updated_at: 3,
       }),
       getNoteHealth: async () => ({
@@ -1863,7 +2154,7 @@ const unchanged = await editor(
   {
     getZettel: async () => ({
       id: "UNCHANGED",
-      kind: "zettel",
+      source_note: 0,
       title: "Untouched",
       body: "Original content",
       updated_at: 1,
@@ -1891,7 +2182,7 @@ check(
 unchanged.win.close();
 let acknowledgedCard = {
   id: "ACKNOWLEDGED",
-  kind: "zettel",
+  source_note: 0,
   title: "Original",
   body: "Original body",
   updated_at: 1,
@@ -1957,7 +2248,7 @@ const synchronized = await editor(
   {
     getZettel: async () => ({
       id: "SYNC_NOTE",
-      kind: "zettel",
+      source_note: 0,
       title: "Original",
       body: "Original body",
       updated_at: 1,
@@ -2042,7 +2333,7 @@ const mergedEditor = await editor(
   {
     getZettel: async () => ({
       id: "MERGE_NOTE",
-      kind: "zettel",
+      source_note: 0,
       title: "Merge",
       body: "First paragraph\n\nSecond paragraph",
       updated_at: 1,
@@ -2082,7 +2373,7 @@ const deferredEditor = await editor(
   {
     getZettel: async () => ({
       id: "DEFERRED_NOTE",
-      kind: "zettel",
+      source_note: 0,
       title: "Deferred",
       body: "First paragraph\n\nSecond paragraph",
       updated_at: 1,
@@ -2144,7 +2435,7 @@ const compositionEditor = await editor(
   {
     getZettel: async () => ({
       id: "IME_NOTE",
-      kind: "zettel",
+      source_note: 0,
       title: "Input",
       body: "Initial paragraph",
       updated_at: 1,
@@ -2220,7 +2511,7 @@ const failedNative = await editor(
   {
     getZettel: async () => ({
       id: "NATIVE_FAILURE",
-      kind: "zettel",
+      source_note: 0,
       title: "Native failure",
       body: "Keep this draft",
       updated_at: 1,
@@ -2352,34 +2643,231 @@ async function chooseMode(fixture, mode) {
   await fixture.win.__editorEval(`setEditorMode("${mode}", false)`);
   await wait();
 }
+const genericTemplate = await editor(
+  {},
+  { getNewNoteBody: () => "## Custom template\n\nMy own structure." },
+);
 check(
-  "Editor offers only Zettel and Thinking types and keeps an automatic Zettel key",
+  "Generic New Note uses the optional named template without assigning a type or tag",
   () => {
-    assert.equal(ed.$("knowledge-base-editor-mode"), null);
-    assert.equal(ed.$("knowledge-base-kind"), null);
-    assert.equal(ed.$("knowledge-base-metadata"), null);
-    assert.equal(ed.$("knowledge-base-note-kind").value, "zettel");
+    assert.match(
+      genericTemplate.$("knowledge-base-editor-body").value,
+      /My own structure/,
+    );
+    assert.deepEqual(
+      Array.from(genericTemplate.win.__editorEval("snapshot().initialTags")),
+      [],
+    );
+    assert.equal(genericTemplate.$("knowledge-base-note-kind"), null);
   },
 );
-const typeDraft = await editor();
-check("New notes can edit IDs and retain them when switching type", () => {
-  const type = typeDraft.$("knowledge-base-note-kind");
-  assert.deepEqual(
-    [...type.options].map((option) => option.value),
-    ["zettel", "thinking"],
+genericTemplate.win.close();
+const tagSet = new Set(["Thinking Note"]);
+const tagWrites = [];
+let releaseTagRemoval;
+const tagRemovalGate = new Promise((resolve) => {
+  releaseTagRemoval = resolve;
+});
+const editableTags = await editor(
+  { zettelId: "TAG_NOTE" },
+  {
+    getZettel: async () => ({
+      id: "TAG_NOTE",
+      title: "A note",
+      body: "Original content",
+      source_note: 0,
+      updated_at: 1,
+    }),
+    getNoteTags: async () => [...tagSet],
+    getOwnNoteTags: async () => [...tagSet],
+    setNoteTag: async (_note, _card, tag, add) => {
+      tagWrites.push([tag, add]);
+      if (!add) await tagRemovalGate;
+      if (add) tagSet.add(tag);
+      else tagSet.delete(tag);
+    },
+  },
+);
+await chooseMode(editableTags, "visual");
+const tagBodyBefore = editableTags.win.__editorEval("snapshot().body");
+editableTags.$("knowledge-base-tags-edit").click();
+await wait();
+editableTags.$("knowledge-base-own-tags").querySelector("button").click();
+const tagInput = editableTags.$("knowledge-base-tag-input");
+tagInput.value = "Research idea";
+tagInput.dispatchEvent(
+  new editableTags.win.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+  }),
+);
+await wait();
+releaseTagRemoval();
+await wait();
+await wait();
+check(
+  "A queued tag addition survives a preceding removal and changes no note content",
+  () => {
+    assert.deepEqual(tagWrites, [
+      ["Thinking Note", false],
+      ["Research idea", true],
+    ]);
+    assert.deepEqual([...tagSet], ["Research idea"]);
+    assert.equal(editableTags.win.__editorEval("dirty"), false);
+    assert.equal(
+      editableTags.win.__editorEval("snapshot().body"),
+      tagBodyBefore,
+    );
+    assert.equal(tagInput.value, "");
+  },
+);
+const tagEscape = new editableTags.win.KeyboardEvent("keydown", {
+  key: "Escape",
+  bubbles: true,
+  cancelable: true,
+});
+tagInput.dispatchEvent(tagEscape);
+await wait();
+check("Escape closes only the tag editor and leaves the workbench open", () => {
+  assert.equal(tagEscape.defaultPrevented, true);
+  assert.equal(editableTags.$("knowledge-base-tag-editor").hidden, true);
+  assert.ok(
+    editableTags.win.document.getElementById("knowledge-base-editor-root"),
   );
+});
+editableTags.win.close();
+let flushedCard = {
+  id: "FLUSHED_NOTE",
+  title: "A note",
+  body: "Original content",
+  source_note: 0,
+  updated_at: 1,
+};
+const flushSaved = [];
+const flushFixture = await editor(
+  { zettelId: flushedCard.id },
+  {
+    getZettel: async () => flushedCard,
+    saveEditorCard: async (input) => {
+      if (input.expectedUpdatedAt !== flushedCard.updated_at)
+        throw new Error("CARD_CONFLICT");
+      flushSaved.push(input);
+      return { id: flushedCard.id, updatedAt: flushedCard.updated_at };
+    },
+  },
+);
+await chooseMode(flushFixture, "visual");
+flushedCard = {
+  ...flushedCard,
+  ...flushFixture.win.__editorEval(
+    "({title:snapshot().title,body:snapshot().body})",
+  ),
+};
+flushFixture.win.__commitIndex = () => {
+  flushedCard = { ...flushedCard, updated_at: 2 };
+};
+flushFixture.win.__editorEval(
+  "richEditor.flush = async () => window.__commitIndex(); setDirty();",
+);
+assert.equal(await flushFixture.win.__editorEval("save(false)"), true);
+check("Native flush accepts an identical document indexed during saving", () =>
+  assert.equal(flushFixture.win.__editorEval("expectedUpdatedAt"), 2),
+);
+flushFixture.win.__commitIndex = () => {
+  flushedCard = {
+    ...flushedCard,
+    custom_key: "ChangedElsewhere",
+    updated_at: 3,
+  };
+};
+const writesBeforeMetadataConflict = flushSaved.length;
+const flushConflicts = [];
+flushFixture.win.Zotero.logError = (error) => flushConflicts.push(error);
+flushFixture.win.__editorEval("setDirty();");
+const concurrentMetadataSaved =
+  await flushFixture.win.__editorEval("save(false)");
+check(
+  "Concurrent metadata changes retain the conflict instead of being acknowledged",
+  () => {
+    assert.equal(concurrentMetadataSaved, false);
+    assert.equal(flushFixture.win.__editorEval("dirty"), true);
+    assert.equal(flushSaved.length, writesBeforeMetadataConflict);
+    assert.equal(flushConflicts.length, 1);
+  },
+);
+flushFixture.win.close();
+let sourceBaseCard = {
+  id: "SOURCE_BASE",
+  title: "A note",
+  body: "Original content",
+  source_note: 0,
+  updated_at: 1,
+};
+const sourceBaseWrites = [];
+const sourceBaseFixture = await editor(
+  { zettelId: sourceBaseCard.id },
+  {
+    getZettel: async () => sourceBaseCard,
+    saveEditorCard: async (input) => {
+      if (input.expectedUpdatedAt !== sourceBaseCard.updated_at)
+        throw new Error("CARD_CONFLICT");
+      sourceBaseWrites.push(input);
+      return { id: sourceBaseCard.id, updatedAt: sourceBaseCard.updated_at };
+    },
+  },
+);
+await chooseMode(sourceBaseFixture, "source");
+sourceBaseCard = {
+  ...sourceBaseCard,
+  ...sourceBaseFixture.win.Zotero.ZoteroKnowledgeBase.api.projectNativeNote(
+    sourceBaseFixture.win.__editorEval("expectedNoteHTML"),
+  ),
+  updated_at: 2,
+};
+const sourceBaseInput = sourceBaseFixture.$("knowledge-base-editor-body");
+sourceBaseInput.value += "\n\nMy unsaved Markdown addition.";
+sourceBaseInput.dispatchEvent(
+  new sourceBaseFixture.win.Event("input", { bubbles: true }),
+);
+assert.equal(await sourceBaseFixture.win.__editorEval("save(false)"), true);
+check(
+  "A newly indexed native base does not block or discard unsaved Markdown edits",
+  () => {
+    assert.equal(sourceBaseWrites[0].expectedUpdatedAt, 2);
+    assert.match(sourceBaseWrites[0].body, /My unsaved Markdown addition/);
+  },
+);
+sourceBaseFixture.win.close();
+check("Editor has one note model without type controls", () => {
+  assert.equal(ed.$("knowledge-base-note-kind"), null);
+  assert.equal(ed.$("knowledge-base-note-kind-text"), null);
+  assert.equal(ed.$("knowledge-base-tag-convert"), null);
+  assert.ok(ed.$("knowledge-base-tags-edit"));
+});
+const typeDraft = await editor();
+check("New notes have editable IDs without type switching", () => {
+  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, true);
+  typeDraft.$("knowledge-base-key-edit").click();
   assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
-  type.value = "thinking";
-  type.dispatchEvent(new typeDraft.win.Event("change"));
-  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
+  assert.equal(typeDraft.$("knowledge-base-editor-key").localName, "textarea");
+  assert.equal(
+    typeDraft.$("knowledge-base-editor-key").getAttribute("wrap"),
+    "soft",
+  );
+  assert.equal(typeDraft.$("knowledge-base-editor-reference"), null);
   typeDraft.$("knowledge-base-editor-key").value = "MyProject";
   typeDraft
     .$("knowledge-base-editor-key")
     .dispatchEvent(new typeDraft.win.Event("input"));
   assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, "MyProject");
-  type.value = "zettel";
-  type.dispatchEvent(new typeDraft.win.Event("change"));
-  assert.equal(typeDraft.win.__editorEval("snapshot()").customKey, "MyProject");
+  typeDraft.win.__editorEval("libraryReadOnly = true; updateNoteIdentity()");
+  const key = typeDraft.$("knowledge-base-editor-key");
+  assert.equal(key.readOnly, true);
+  assert.equal(typeDraft.$("knowledge-base-key-edit").disabled, true);
+  assert.equal(key.disabled, false);
+  key.select();
+  assert.equal(key.selectionEnd - key.selectionStart, key.value.length);
+  typeDraft.win.__editorEval("libraryReadOnly = false; updateNoteIdentity()");
   assert.equal(ed.$("knowledge-base-parent-root"), null);
   assert.equal(
     ed.$("knowledge-base-src-pick").getAttribute("aria-label"),
@@ -2401,6 +2889,7 @@ const keyConflict = await editor(
   },
 );
 const conflictInput = keyConflict.$("knowledge-base-editor-key");
+keyConflict.$("knowledge-base-key-edit").click();
 conflictInput.value = "occupied";
 conflictInput.dispatchEvent(new keyConflict.win.Event("input"));
 await keyConflict.win.__editorEval("checkKey()");
@@ -2433,6 +2922,61 @@ check(
   },
 );
 keyConflict.win.close();
+const keyActions = await editor(
+  { zettelId: "CopyID" },
+  {
+    getZettel: async () => ({
+      id: "CopyID",
+      title: "Copy",
+      body: "Body",
+      updated_at: 1,
+    }),
+  },
+);
+keyActions.$("knowledge-base-key-copy").click();
+await wait();
+check("The plain ID copies a wiki reference without entering edit mode", () => {
+  assert.deepEqual(keyActions.calls.open, ["[[CopyID]]"]);
+  assert.equal(keyActions.$("knowledge-base-editor-key").hidden, true);
+});
+keyActions.$("knowledge-base-key-edit").click();
+const actionKey = keyActions.$("knowledge-base-editor-key");
+actionKey.value = "CancelledID";
+actionKey.dispatchEvent(new keyActions.win.Event("input"));
+actionKey.dispatchEvent(
+  new keyActions.win.KeyboardEvent("keydown", {
+    key: "Escape",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check(
+  "Escape cancels only the ID edit and restores the displayed reference",
+  () => {
+    assert.equal(keyActions.win.__editorEval("snapshot().customKey"), null);
+    assert.equal(actionKey.hidden, true);
+    assert.equal(keyActions.$("knowledge-base-key-copy").textContent, "CopyID");
+  },
+);
+keyActions.$("knowledge-base-key-edit").click();
+actionKey.value = "RenamedID";
+actionKey.dispatchEvent(new keyActions.win.Event("input"));
+actionKey.dispatchEvent(
+  new keyActions.win.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+check("Enter returns a valid ID to the copyable display", () => {
+  assert.equal(actionKey.hidden, true);
+  assert.equal(
+    keyActions.$("knowledge-base-key-copy").textContent,
+    "RenamedID",
+  );
+});
+keyActions.win.close();
 ed.$("knowledge-base-parent-change").click();
 await ed.win.__editorEval("refreshRelations()");
 await new Promise((resolve) => setTimeout(resolve, 230));
@@ -2700,6 +3244,18 @@ check("Explicitly saving a recovery draft returns to native editing", () => {
   assert.equal(recovery.$("knowledge-base-rich-frame").hidden, false);
   assert.equal(recovery.$("knowledge-base-rich-frame").mode, "edit");
 });
+check("Native code remains fenced and opaque to formula formatting", () => {
+  const code = "\\(literal\\)\n\\[code\\]\n```";
+  const source = rich_text.richTextToMarkdown("<pre>" + code + "</pre>");
+  assert.equal(source, "````\n" + code + "\n````");
+  assert.equal(
+    htmlWindow.document
+      .createRange()
+      .createContextualFragment(markdown.renderMarkdown(source, htmlWindow))
+      .querySelector("pre code").textContent,
+    code + "\n",
+  );
+});
 check("Native math projects to Markdown without losing LaTeX", () => {
   assert.equal(
     rich_text.richTextToMarkdown(
@@ -2734,6 +3290,34 @@ check(
   },
 );
 globalThis.Zotero.getMainWindow = () => htmlWindow;
+for (const main of [null, { closed: true }]) {
+  const getMainWindow = globalThis.Zotero.getMainWindow;
+  const appShell = globalThis.Services.appShell;
+  try {
+    globalThis.Zotero.getMainWindow = () => main;
+    globalThis.Services.appShell = { hiddenDOMWindow: htmlWindow };
+    const html = await native_notes.nativeNoteHTML(
+      "Independent window",
+      equations,
+    );
+    const projection = native_notes.projectNativeNote(html);
+    check(
+      "Note parsing and rendering work without an open library window",
+      () => {
+        assert.equal(projection.title, "Independent window");
+        assert.ok(projection.body.includes(String.raw`\int_0^1 x^2\,dx`));
+        assert.equal(
+          markdown.noteSnippet("**Independent** note"),
+          "Independent note",
+        );
+      },
+    );
+  } finally {
+    globalThis.Zotero.getMainWindow = getMainWindow;
+    if (appShell === undefined) delete globalThis.Services.appShell;
+    else globalThis.Services.appShell = appShell;
+  }
+}
 const nativeMath = await native_notes.nativeNoteHTML("Native title", equations);
 check(
   "Native note creation uses host-compatible math and a real title heading",
@@ -3488,6 +4072,10 @@ graphDom.window.Zotero = {
       getPanelWidth: () => 28,
       setPanelWidth: () => {},
       getNoteTags: async () => [],
+      getOwnNoteTags: async () => [],
+      getNewNoteBody: () => "",
+      getGraphTags: async () => ["Thinking Note"],
+      getTrashNotes: async () => [],
       getNoteHealth: async () => ({
         note: "available",
         source: "none",
@@ -4113,6 +4701,31 @@ const managerDOM = new JSDOM(
   { contentType: "application/xhtml+xml", runScripts: "outside-only" },
 );
 const managerWin = managerDOM.window;
+managerWin.document.createXULElement = (tag) =>
+  managerWin.document.createElementNS(
+    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+    tag,
+  );
+const managerPopup = managerWin.document.getElementById(
+  "knowledge-base-note-menu",
+);
+let popupOpens = 0;
+managerPopup.openPopupAtScreen = () => {
+  popupOpens++;
+  managerPopup.open = true;
+};
+managerPopup.openPopup = (anchor) => {
+  popupOpens++;
+  managerPopup.anchor = anchor;
+  managerPopup.open = true;
+};
+managerPopup.hidePopup = () => {
+  if (managerPopup.open) {
+    managerPopup.open = false;
+    managerPopup.dispatchEvent(new managerWin.Event("popuphidden"));
+  }
+};
+
 windows.push(managerWin);
 // Model the icon children created by Zotero's native toolbarbutton constructor.
 for (const button of managerWin.document.querySelectorAll("toolbarbutton")) {
@@ -4156,8 +4769,7 @@ const labels = {
   "new-child": "New child card",
   parent: "Parent",
   children: "Children",
-  root: "Entry point",
-  entries: "Entry points",
+  root: "No parent",
   "manager-outgoing": "Linked cards",
   "manager-backlinks": "Backlinks",
   "manager-updated": "Updated",
@@ -4183,6 +4795,10 @@ managerWin.Zotero = {
       getPanelWidth: () => 28,
       setPanelWidth: () => {},
       getNoteTags: async () => [],
+      getOwnNoteTags: async () => [],
+      getNewNoteBody: () => "",
+      getGraphTags: async () => ["Thinking Note"],
+      getTrashNotes: async () => [],
       getNoteHealth: async () => ({
         note: "available",
         source: "none",
@@ -4206,21 +4822,18 @@ managerWin.Zotero = {
       isAccelKey: (event) => platform.isAccelKey(event, true),
       searchZettelSummaries: async (
         _query,
-        { kind, cardIDs, sort = "updated-desc" },
+        { tag, cardIDs, sort = "updated-desc" },
       ) => ({
         items: managerCards
           .filter(
             (card) =>
-              (!kind || (card.kind || "zettel") === kind) &&
+              (!tag || (card.tags || []).includes(tag)) &&
               (!cardIDs || cardIDs.includes(card.id)),
           )
           .sort((a, b) => note_sort.compareNoteSummaries(a, b, sort)),
         cursor: null,
       }),
-      listZettels: async (_query, _entries, kind) =>
-        managerCards.filter(
-          (card) => !kind || (card.kind || "zettel") === kind,
-        ),
+      listZettels: async () => managerCards,
       copyNoteReference: (reference) => {
         managerCalls.reference = `[[${reference}]]`;
       },
@@ -4254,7 +4867,7 @@ managerWin.Zotero = {
 managerWin.eval(previewScript);
 managerWin.eval(
   (await readFile(path.join(ROOT, "addon/content/manager.js"), "utf8")) +
-    "\nwindow.__managerSafeCall = safeCall; window.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRefreshChanged = refreshChanged; window.__managerRows = () => zettels; window.__managerRenderHealth = renderHealth;",
+    "\nwindow.__managerSafeCall = safeCall; window.__managerLoad = load; window.__managerRefresh = refresh; window.__managerRefreshChanged = refreshChanged; window.__managerRows = () => zettels; window.__managerRowHeight = ROW_HEIGHT; window.__managerRenderHealth = renderHealth;",
 );
 await managerWin.__managerLoad();
 await wait();
@@ -4292,6 +4905,184 @@ const copyZettelsButton = managerDoc.getElementById(
 );
 const copyStatus = managerDoc.getElementById("knowledge-base-copy-status");
 const managerAPI = managerWin.Zotero.ZoteroKnowledgeBase.api;
+const contextRow = (id) =>
+  [...managerDoc.querySelectorAll(".zettel-row")].find(
+    (row) => row.dataset.id === id,
+  );
+const rightClickNote = async (id) => {
+  contextRow(id)
+    .querySelector(".title")
+    .dispatchEvent(
+      new managerWin.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        screenX: 120,
+        screenY: 160,
+      }),
+    );
+  await wait();
+  await wait();
+};
+const menuAction = (action) =>
+  managerPopup.querySelector(`[data-action="${action}"]`);
+const runMenuAction = async (action) => {
+  const item = menuAction(action);
+  managerPopup.hidePopup();
+  item.dispatchEvent(new managerWin.Event("command"));
+  await wait();
+  await wait();
+};
+const originalSelection =
+  managerDoc.querySelector(".zettel-row.active").dataset.id;
+const contextTarget = managerCards[1].id;
+await rightClickNote(contextTarget);
+check(
+  "Right-click uses a native menu for its row without navigating away from the edited note",
+  () => {
+    assert.equal(managerPopup.localName, "menupopup");
+    assert.equal(managerPopup.open, true);
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active").dataset.id,
+      originalSelection,
+    );
+    assert.ok(contextRow(contextTarget).classList.contains("context-target"));
+    assert.deepEqual(
+      [...managerPopup.querySelectorAll("menuitem")].map((item) =>
+        item.getAttribute("data-action"),
+      ),
+      ["open", "window", "copy", "graph", "child", "tags", "delete"],
+    );
+  },
+);
+await runMenuAction("copy");
+check(
+  "Copy Link stays bound to the right-clicked note after the native popup closes",
+  () => {
+    assert.equal(managerCalls.reference, `[[${contextTarget}]]`);
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active").dataset.id,
+      originalSelection,
+    );
+    assert.equal(
+      contextRow(contextTarget).classList.contains("context-target"),
+      false,
+    );
+  },
+);
+await rightClickNote(contextTarget);
+await runMenuAction("window");
+await rightClickNote(contextTarget);
+await runMenuAction("graph");
+await rightClickNote(contextTarget);
+await runMenuAction("child");
+await rightClickNote(contextTarget);
+await runMenuAction("tags");
+check(
+  "Context actions forward the target identity to windows, graph, child notes and tag editing",
+  () => {
+    assert.equal(managerCalls.edits[0].zettelId, contextTarget);
+    assert.equal(managerCalls.edits[0].window, true);
+    assert.equal(managerCalls.graphs[0].centerId, contextTarget);
+    assert.equal(managerCalls.edits[1].prefillParentId, contextTarget);
+    assert.equal(managerCalls.edits[2].zettelId, contextTarget);
+    assert.equal(managerCalls.edits[2].editTags, true);
+  },
+);
+const originalContextHealth = managerAPI.getNoteHealth;
+managerAPI.getNoteHealth = async () => ({
+  note: "available",
+  source: "none",
+  editable: false,
+});
+await rightClickNote(contextTarget);
+check(
+  "Read-only note menus retain navigation but disable tag edits, child creation and deletion",
+  () => {
+    for (const action of ["tags", "child", "delete"])
+      assert.ok(menuAction(action).hasAttribute("disabled"));
+    for (const action of ["open", "copy", "graph"])
+      assert.equal(menuAction(action).hasAttribute("disabled"), false);
+  },
+);
+managerPopup.hidePopup();
+managerAPI.getNoteHealth = originalContextHealth;
+managerDoc.getElementById("knowledge-base-list").dispatchEvent(
+  new managerWin.KeyboardEvent("keydown", {
+    key: "F10",
+    shiftKey: true,
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+await wait();
+check("Shift+F10 anchors the same native menu to the selected note", () =>
+  assert.equal(managerPopup.anchor.dataset.id, originalSelection),
+);
+managerPopup.hidePopup();
+managerDoc.getElementById("knowledge-base-list-pane").dispatchEvent(
+  new managerWin.MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+await wait();
+check(
+  "Empty list space offers note creation without targeting an unrelated selection",
+  () =>
+    assert.deepEqual(
+      [...managerPopup.querySelectorAll("menuitem")].map((item) =>
+        item.getAttribute("data-action"),
+      ),
+      ["new"],
+    ),
+);
+managerPopup.hidePopup();
+let resolveContextHealth;
+managerAPI.getNoteHealth = () =>
+  new Promise((resolve) => {
+    resolveContextHealth = resolve;
+  });
+contextRow(contextTarget).dispatchEvent(
+  new managerWin.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+);
+await wait();
+const opensBeforeStale = popupOpens;
+managerDoc.getElementById("knowledge-base-search").value = "Changed scope";
+resolveContextHealth({ note: "available", source: "none", editable: true });
+await wait();
+await wait();
+check(
+  "A delayed context-menu lookup cannot reopen after the search scope changes",
+  () => assert.equal(popupOpens, opensBeforeStale),
+);
+managerDoc.getElementById("knowledge-base-search").value = "";
+managerAPI.getNoteHealth = originalContextHealth;
+let resolveNavigationMenu;
+managerAPI.getNoteHealth = (id) =>
+  id === contextTarget
+    ? new Promise((resolve) => {
+        resolveNavigationMenu = resolve;
+      })
+    : originalContextHealth(id);
+contextRow(contextTarget).dispatchEvent(
+  new managerWin.MouseEvent("contextmenu", { bubbles: true, cancelable: true }),
+);
+await wait();
+const beforeNavigationMenu = popupOpens;
+nativeClick(contextRow(originalSelection), managerWin);
+resolveNavigationMenu({ note: "available", source: "none", editable: true });
+await wait();
+await wait();
+check(
+  "Left-click navigation dismisses a context-menu lookup that is still pending",
+  () => assert.equal(popupOpens, beforeNavigationMenu),
+);
+managerAPI.getNoteHealth = originalContextHealth;
+managerCalls.edits.length = 0;
+managerCalls.graphs.length = 0;
+
 let finishCopy;
 let copies = 0;
 managerAPI.copyZettelList = (shouldStop) => {
@@ -4404,21 +5195,19 @@ check(
   },
 );
 check(
-  "Card browser labels note types and uses Zotero native toolbar actions",
+  "Card browser shows references without types and uses native toolbar actions",
   () => {
+    assert.equal(managerDoc.querySelector(".note-kind-badge"), null);
     assert.deepEqual(
-      [...managerDoc.querySelectorAll(".zettel-row .zid")].map(
+      [...managerDoc.querySelectorAll(".zettel-row .note-row-reference")].map(
         (el) => el.textContent,
       ),
-      managerCards.map(
-        (card) =>
-          `note-kind-${card.kind || "zettel"} · ${card.reference || card.id}`,
-      ),
+      managerCards.map((card) => card.reference || card.id),
     );
     const actions = [
       ...managerDoc.querySelectorAll(".card-actions toolbarbutton"),
     ];
-    assert.equal(actions.length, 3);
+    assert.equal(actions.length, 4);
     assert.equal(
       managerDoc.querySelector("#knowledge-base-detail .card-actions"),
       null,
@@ -4658,32 +5447,234 @@ managerDoc.getElementById("knowledge-base-list").dispatchEvent(
 check("Command-F focuses the note search", () =>
   assert.equal(managerDoc.activeElement.id, "knowledge-base-search"),
 );
-const kindFilter = managerDoc.getElementById("knowledge-base-kind");
-check("Note kind filtering does not expose Zotero Trash", () => {
-  assert.equal(kindFilter.querySelector('[value="deleted"]'), null);
+check(
+  "The toolbar omits tag filtering and new notes start without tags",
+  () => {
+    assert.equal(managerDoc.getElementById("knowledge-base-tag"), null);
+    nativeClick(
+      managerDoc.getElementById("knowledge-base-btn-new"),
+      managerWin,
+    );
+    assert.equal(managerCalls.edits.at(-1).initialTags, undefined);
+    assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
+  },
+);
+const noteView = managerDoc.getElementById("knowledge-base-view");
+check(
+  "Notes and Trash share one native view selector without Entry points",
+  () => {
+    assert.equal(managerDoc.getElementById("knowledge-base-entries"), null);
+    assert.deepEqual(
+      [...noteView.options].map((option) => option.value),
+      ["notes", "trash"],
+    );
+  },
+);
+const beforeTrashCards = managerCards;
+const beforeTrashSearch = managerAPI.searchZettelSummaries;
+const trashUIRows = [
+  { ...managerCards[0], id: "TRASH_UI_A", title: "Trashed A" },
+  { ...managerCards[0], id: "TRASH_UI_B", title: "Trashed B" },
+];
+managerCards = [...managerCards, ...trashUIRows];
+let uiTrashIDs = new Set(trashUIRows.map((note) => note.id));
+managerAPI.getTrashNotes = async () =>
+  managerCards
+    .filter((note) => uiTrashIDs.has(note.id))
+    .map((note) => ({ ...note, noteID: 1, editable: true }));
+managerAPI.searchZettelSummaries = async (
+  query,
+  { availability, sort = "updated-desc" },
+) => ({
+  items: managerCards
+    .filter(
+      (note) =>
+        (availability === "trash") === uiTrashIDs.has(note.id) &&
+        (!query || note.title.includes(query)),
+    )
+    .sort((a, b) => note_sort.compareNoteSummaries(a, b, sort)),
+  cursor: null,
 });
-kindFilter.value = "thinking";
-kindFilter.dispatchEvent(new managerWin.Event("change"));
+managerAPI.restoreNote = async (id) => uiTrashIDs.delete(id);
+const trashBatches = [];
+managerAPI.permanentlyDeleteNotes = async (ids, shouldStop, progress) => {
+  trashBatches.push(ids);
+  assert.equal(shouldStop(), false);
+  progress(0, ids.length);
+  for (const id of ids) uiTrashIDs.delete(id);
+  managerCards = managerCards.filter((note) => !ids.includes(note.id));
+  return { deleted: ids.length, skipped: 0, cancelled: false };
+};
+const beforeTrashHealth = managerAPI.getNoteHealth;
+managerAPI.getNoteHealth = async (id) => ({
+  note: uiTrashIDs.has(id) ? "trashed" : "available",
+  source: "none",
+  editable: true,
+});
+noteView.value = "trash";
+noteView.dispatchEvent(new managerWin.Event("change"));
 await wait();
 await wait();
-check("Type filtering hides cards from other note kinds", () => {
-  for (const button of managerDoc.querySelectorAll(
-    ".card-actions toolbarbutton",
-  ))
-    assert.ok(button.hasAttribute("disabled"));
-  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0);
+check("Trash disables creation and offers restoration and emptying", () => {
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 2);
+  assert.equal(managerDoc.getElementById("knowledge-base-tag"), null);
+  assert.ok(
+    managerDoc
+      .getElementById("knowledge-base-btn-new")
+      .hasAttribute("disabled"),
+  );
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-btn-restore").hidden,
+    false,
+  );
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-empty-trash").hidden,
+    false,
+  );
 });
-nativeClick(managerDoc.getElementById("knowledge-base-btn-new"), managerWin);
-check("A new note inherits the selected kind", () => {
-  assert.equal(managerCalls.edits.at(-1).kind, "thinking");
-});
-kindFilter.value = "";
-kindFilter.dispatchEvent(new managerWin.Event("change"));
+await rightClickNote(trashUIRows[0].id);
+check(
+  "Trash row menus expose recovery and permanent deletion instead of editing actions",
+  () => {
+    assert.deepEqual(
+      [...managerPopup.querySelectorAll("menuitem")].map((item) =>
+        item.getAttribute("data-action"),
+      ),
+      ["open", "window", "copy", "restore", "delete"],
+    );
+  },
+);
+managerPopup.hidePopup();
+const restoredUIID = managerDoc.querySelector(".zettel-row.active").dataset.id;
+nativeClick(
+  managerDoc.getElementById("knowledge-base-btn-restore"),
+  managerWin,
+);
 await wait();
 await wait();
-check("All notes restores the remaining card", () => {
-  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
+check(
+  "Restoring a selected note removes it from Trash and retains its identity",
+  () => {
+    assert.equal(uiTrashIDs.size, 1);
+    assert.ok(managerCards.some((note) => note.id === restoredUIID));
+    assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
+  },
+);
+managerWin.confirm = () => false;
+managerDoc
+  .getElementById("knowledge-base-empty-trash")
+  .dispatchEvent(new managerWin.Event("command"));
+await wait();
+check("Cancelling Empty Trash leaves all originals untouched", () =>
+  assert.equal(trashBatches.length, 0),
+);
+const completeUIPurge = managerAPI.permanentlyDeleteNotes;
+let resolveUIPurge, stopUIPurge;
+let uiPurgeStarts = 0;
+managerAPI.permanentlyDeleteNotes = (_ids, shouldStop) => {
+  uiPurgeStarts++;
+  stopUIPurge = shouldStop;
+  return new Promise((resolve) => {
+    resolveUIPurge = resolve;
+  });
+};
+managerWin.confirm = () => true;
+managerDoc
+  .getElementById("knowledge-base-empty-trash")
+  .dispatchEvent(new managerWin.Event("command"));
+await wait();
+await wait();
+managerDoc
+  .getElementById("knowledge-base-empty-trash")
+  .dispatchEvent(new managerWin.Event("command"));
+await wait();
+check("Pending emptying blocks repeated operations and view changes", () => {
+  assert.equal(uiPurgeStarts, 1);
+  assert.equal(noteView.disabled, true);
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-trash-cancel").hidden,
+    false,
+  );
 });
+managerDoc
+  .getElementById("knowledge-base-trash-cancel")
+  .dispatchEvent(new managerWin.Event("command"));
+check("The Cancel action reaches the queued destructive operation", () =>
+  assert.equal(stopUIPurge(), true),
+);
+resolveUIPurge({ deleted: 0, skipped: 0, cancelled: true });
+await wait();
+await wait();
+check(
+  "Cancelling a pending batch keeps notes and releases the view controls",
+  () => {
+    assert.equal(uiTrashIDs.size, 1);
+    assert.equal(noteView.disabled, false);
+    assert.equal(
+      managerDoc.getElementById("knowledge-base-trash-cancel").hidden,
+      true,
+    );
+  },
+);
+managerAPI.permanentlyDeleteNotes = completeUIPurge;
+
+// Emptying applies to the whole KB Trash, even while search hides its notes.
+managerDoc.getElementById("knowledge-base-search").value = "No match";
+await managerWin.__managerRefresh();
+managerWin.confirm = () => true;
+managerDoc
+  .getElementById("knowledge-base-empty-trash")
+  .dispatchEvent(new managerWin.Event("command"));
+await wait();
+await wait();
+check(
+  "Empty Trash uses all editable KB Trash IDs independently of the list search",
+  () => {
+    assert.deepEqual(
+      Array.from(trashBatches[0]),
+      trashUIRows
+        .filter((note) => note.id !== restoredUIID)
+        .map((note) => note.id),
+    );
+    assert.equal(uiTrashIDs.size, 0);
+    assert.equal(
+      managerDoc.getElementById("knowledge-base-detail-empty").hidden,
+      false,
+    );
+    assert.ok(
+      managerDoc
+        .getElementById("knowledge-base-empty-trash")
+        .hasAttribute("disabled"),
+    );
+  },
+);
+managerDoc.getElementById("knowledge-base-search").value = "";
+managerCards = beforeTrashCards;
+managerAPI.getNoteHealth = beforeTrashHealth;
+managerAPI.searchZettelSummaries = beforeTrashSearch;
+managerAPI.getTrashNotes = async () => [];
+noteView.value = "notes";
+noteView.dispatchEvent(new managerWin.Event("change"));
+await wait();
+await wait();
+check("Returning to Notes restores the normal compact actions", () => {
+  assert.equal(managerDoc.getElementById("knowledge-base-tag"), null);
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-btn-restore").hidden,
+    true,
+  );
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-empty-trash").hidden,
+    true,
+  );
+  assert.equal(
+    managerDoc
+      .getElementById("knowledge-base-btn-new")
+      .hasAttribute("disabled"),
+    false,
+  );
+});
+
 const paginationAPI = managerWin.Zotero.ZoteroKnowledgeBase.api;
 const firstPagedCard = managerCards[0];
 const secondPagedCard = {
@@ -4794,8 +5785,10 @@ paginationAPI.searchZettelSummaries = async (_query, options) => {
   };
 };
 const anchorID = managerDoc.querySelector(".zettel-row.active").dataset.id;
+const virtualRowHeight = managerWin.__managerRowHeight;
 const anchorOffset =
-  managerWin.__managerRows().findIndex((row) => row.id === anchorID) * 112 -
+  managerWin.__managerRows().findIndex((row) => row.id === anchorID) *
+    virtualRowHeight -
   managerDoc.getElementById("knowledge-base-list-pane").scrollTop;
 const beforeChangeScroll = managerDoc.getElementById(
   "knowledge-base-list-pane",
@@ -4814,7 +5807,8 @@ check(
     assert.equal(managerWin.__managerRows().length, 1200);
     assert.equal(managerWin.__managerRows()[0].title, "Updated single note");
     assert.equal(
-      managerWin.__managerRows().findIndex((row) => row.id === anchorID) * 112 -
+      managerWin.__managerRows().findIndex((row) => row.id === anchorID) *
+        virtualRowHeight -
         managerDoc.getElementById("knowledge-base-list-pane").scrollTop,
       anchorOffset,
     );

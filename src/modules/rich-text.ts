@@ -44,6 +44,27 @@ function formattedReference(link: HTMLElement, reference: string): string {
     .reduce((result, marker) => `${marker}${result}${marker}`, reference);
 }
 converter.use(gfm);
+// Zotero's code blocks serialize as bare <pre>, without a nested <code>.
+converter.addRule("nativeCode", {
+  filter: (node) =>
+    node.nodeName === "PRE" &&
+    !node.classList.contains("math") &&
+    node.firstElementChild?.nodeName !== "CODE",
+  replacement: (_content, node) => {
+    const text = node.textContent || "";
+    let fence = "```";
+    while (text.includes(fence)) fence += "`";
+    return (
+      "\n\n" +
+      fence +
+      "\n" +
+      text +
+      (text.endsWith("\n") ? "" : "\n") +
+      fence +
+      "\n\n"
+    );
+  },
+});
 converter.addRule("nativeMath", {
   filter: (node) =>
     ["SPAN", "PRE"].includes(node.nodeName) && node.classList.contains("math"),

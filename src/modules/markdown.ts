@@ -1,6 +1,7 @@
 import { Marked } from "marked";
 import createDOMPurify from "dompurify";
 import katex from "katex";
+import { getDOMWindow } from "../utils/dom";
 
 export interface CardLink {
   ref: string;
@@ -264,9 +265,7 @@ export function noteSnippet(
       token.type = "text";
     }
   });
-  const win = Zotero.getMainWindow() as Window & {
-    DOMParser: typeof DOMParser;
-  };
+  const win = getDOMWindow();
   const doc = new win.DOMParser().parseFromString(
     markdown.parser(tokens),
     "text/html",

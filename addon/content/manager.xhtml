@@ -14,8 +14,12 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
+  <script src="chrome://knowledge-base/content/ui.js" />
   <script src="chrome://knowledge-base/content/markdown.js" />
   <script src="chrome://knowledge-base/content/manager.js" />
+  <popupset>
+    <menupopup id="knowledge-base-note-menu" />
+  </popupset>
   <html:div id="knowledge-base-root">
     <html:header id="knowledge-base-toolbar">
       <toolbarbutton id="knowledge-base-back" class="kb-native-tool" />
@@ -27,14 +31,9 @@ type="text/css"?>
         class="kb-native-tool"
       />
       <html:input id="knowledge-base-search" type="search" />
-      <html:select id="knowledge-base-kind"
-        ><html:option value="" /><html:option value="zettel" /><html:option
-          value="literature" /><html:option value="thinking"
+      <html:select id="knowledge-base-view"
+        ><html:option value="notes" /><html:option value="trash"
       /></html:select>
-      <html:label
-        ><html:input id="knowledge-base-entries" type="checkbox" /><html:span
-          id="knowledge-base-entries-label"
-      /></html:label>
       <html:div class="spacer" />
       <html:span id="knowledge-base-stats" class="muted"></html:span>
       <html:div class="card-actions" role="group">
@@ -43,9 +42,17 @@ type="text/css"?>
           id="knowledge-base-btn-local-graph"
           class="kb-native-tool"
         />
+        <toolbarbutton
+          id="knowledge-base-btn-restore"
+          class="kb-native-tool"
+          hidden="true"
+        />
+        <button id="knowledge-base-empty-trash" hidden="true" />
+        <button id="knowledge-base-trash-cancel" hidden="true" />
         <toolbarbutton id="knowledge-base-btn-delete" class="kb-native-tool" />
       </html:div>
     </html:header>
+    <html:div id="knowledge-base-trash-status" hidden="hidden" role="status" />
     <html:main id="knowledge-base-main">
       <html:section id="knowledge-base-list-pane">
         <html:div id="knowledge-base-list-toolbar">

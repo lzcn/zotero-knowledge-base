@@ -1,6 +1,7 @@
+import { getTaggedNoteIDs } from "./note-tags";
 import { noteSortOrder, type NoteSort } from "./note-sort";
 import { getNoteReferences } from "./note-references";
-import { exec, getAll, transaction, type NoteKind, type ZettelRow } from "./db";
+import { exec, getAll, transaction, type ZettelRow } from "./db";
 
 function terms(text: string): Set<string> {
   const chars = Array.from(text.toLowerCase());
@@ -70,10 +71,9 @@ async function flushSearchIndex(): Promise<void> {
 }
 
 export interface SearchOptions {
-  availability?: "active" | "deleted";
+  availability?: "active" | "trash";
   sort?: NoteSort;
-  entriesOnly?: boolean;
-  kind?: NoteKind;
+  tag?: string;
   limit?: number;
   cursor?: string | null;
   summary?: boolean;
@@ -97,11 +97,6 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       ? (await getNoteReferences()).defaults
       : new Map<string, string>();
   const comparison = sortDirection === "ASC" ? ">" : "<";
-  if (
-    options.kind &&
-    !["literature", "zettel", "thinking"].includes(options.kind)
-  )
-    throw new Error("Invalid note type");
   const limit = options.limit ?? 100;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500)
     throw new Error("Invalid search page size");
@@ -113,8 +108,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     throw new Error("Invalid note IDs");
   const scope = JSON.stringify([
     q,
-    !!options.entriesOnly,
-    options.kind ?? null,
+    options.tag ?? null,
     options.availability ?? "active",
     options.cardIDs ?? null,
     sort,
@@ -170,14 +164,10 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     filters.push(`((${stored}) OR INSTR(LOWER(i.reference), ?) > 0)`);
     params.push(q.toLowerCase());
   }
-  if (options.kind) {
-    filters.push("z.kind = ?");
-    params.push(options.kind);
+  if (options.tag) {
+    filters.push("z.id IN (SELECT value FROM json_each(?))");
+    params.push(JSON.stringify(await getTaggedNoteIDs(options.tag)));
   }
-  if (options.entriesOnly)
-    filters.push(
-      "z.id IN (SELECT card_id FROM card_parents WHERE parent_id IS NULL)",
-    );
   if (options.cardIDs) {
     filters.push(
       `z.id IN (${options.cardIDs.map(() => "?").join(",") || "NULL"})`,
@@ -185,13 +175,13 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     params.push(...options.cardIDs);
   }
   const availability = options.availability ?? "active";
-  if (!["active", "deleted"].includes(availability))
+  if (!["active", "trash"].includes(availability))
     throw new Error("Invalid note availability");
   filters.push(
-    `${availability === "active" ? "NOT " : ""}EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)`,
+    `${availability === "active" ? "NOT " : ""}EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id${availability === "trash" ? " AND u.state = 'trashed'" : ""})`,
   );
   const projection = options.summary
-    ? "id, title, title_folded, SUBSTR(body, 1, 2048) AS body, item_key, library_id, annotation_key, kind, custom_key, created_at, updated_at, search_rank"
+    ? "id, title, title_folded, SUBSTR(body, 1, 2048) AS body, item_key, library_id, annotation_key, source_note, custom_key, created_at, updated_at, search_rank"
     : "*";
   const continuation = cursor
     ? `WHERE (search_rank > ? OR (search_rank = ? AND (sort_value ${comparison} ? OR (sort_value = ? AND id ${comparison} ?))))`

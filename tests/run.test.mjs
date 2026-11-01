@@ -9,6 +9,7 @@ for (const [file, name] of [
     "AI providers, progressive reading and reviewed connections",
   ],
   ["document-merge.mjs", "Three-way document merging and conflict boundaries"],
+  ["text-format.mjs", "Conservative formula delimiter normalization"],
   ["graph-worker.mjs", "Background graph geometry and cancellation"],
   ["assets-notes.mjs", "Asset lifecycle"],
   [
@@ -25,6 +26,10 @@ for (const [file, name] of [
   ],
   ["database.mjs", "SQLite storage, card lifecycle and relationship indexing"],
   ["ui.mjs", "Markdown, sources, editor and graph interactions in XML windows"],
+  [
+    "reader-toolbar.mjs",
+    "Reader toolbar registration, rerendering and cleanup",
+  ],
   [
     "item-pane.mjs",
     "Native sidebar registration, localization and live card refresh",

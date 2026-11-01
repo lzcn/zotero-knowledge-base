@@ -160,7 +160,7 @@ function createCurrentDatabase(file) {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       title_folded TEXT NOT NULL DEFAULT '',
-      kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
+      source_note INTEGER NOT NULL DEFAULT 0 CHECK(source_note IN (0,1) AND (source_note=0 OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
       custom_key TEXT,
       body TEXT NOT NULL DEFAULT '',
       item_key TEXT,
@@ -188,7 +188,7 @@ function createCurrentDatabase(file) {
     CREATE INDEX idx_zettels_item ON zettels(item_key);
   `);
   db.prepare(
-    "INSERT INTO meta (key, value) VALUES ('schemaVersion', '11')",
+    "INSERT INTO meta (key, value) VALUES ('schemaVersion', '12')",
   ).run();
   const insert = db.prepare(
     "INSERT INTO zettels (id, title, body, item_key, library_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -241,6 +241,7 @@ await writeFile(
     `export * as events from ${JSON.stringify(path.join(ROOT, "src/modules/events.ts"))};\n` +
     `export * as nativeNotes from ${JSON.stringify(path.join(ROOT, "src/modules/native-notes.ts"))};\n` +
     `export * as operations from ${JSON.stringify(path.join(ROOT, "src/modules/note-operations.ts"))};\n` +
+    `export * as noteTags from ${JSON.stringify(path.join(ROOT, "src/modules/note-tags.ts"))};\n` +
     // Absolute paths so esbuild does not need the entry to sit in the project.
     `export * as noteSort from ${JSON.stringify(path.join(ROOT, "src/modules/note-sort.ts"))};\n` +
     `export * as db from ${JSON.stringify(path.join(ROOT, "src/modules/db.ts"))};\n` +
@@ -271,6 +272,7 @@ const {
   nativeNotes,
   operations,
   noteSort,
+  noteTags,
 } = await import(pathToFileURL(bundle).href);
 
 async function readSchema(file) {
@@ -303,7 +305,7 @@ const REQUIRED = [
   "item_key",
   "library_id",
   "annotation_key",
-  "kind",
+  "source_note",
   "custom_key",
   "created_at",
   "updated_at",
@@ -327,8 +329,8 @@ async function initialize(label, dataDir, prepare) {
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
   check(
-    "schemaVersion is 11",
-    schema.version === "11",
+    "schemaVersion is 12",
+    schema.version === "12",
     `got ${schema.version}`,
   );
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
@@ -687,7 +689,7 @@ if (currentSchema) {
       ).items.length &&
       (
         await zettel.searchZettels("", {
-          availability: "deleted",
+          availability: "trash",
           cardIDs: searchFixtures.slice(1, 3),
         })
       ).items.length === 1 &&
@@ -1090,7 +1092,7 @@ if (currentSchema) {
   );
   await savingWithSlowCleanup;
   const thinkingKeyId = await zettel.saveZettel({
-    kind: "thinking",
+    initialTags: ["Thinking Note"],
     title: "Project",
     body: "Ideas",
     customKey: "ProjectPlan",
@@ -1114,7 +1116,7 @@ if (currentSchema) {
   );
   await zettel.saveZettel({
     id: thinkingKeyId,
-    kind: "thinking",
+    initialTags: ["Thinking Note"],
     title: "Project",
     body: "Ideas",
     customKey: "RevisedPlan",
@@ -1130,7 +1132,7 @@ if (currentSchema) {
     let rejected = false;
     try {
       await zettel.saveZettel({
-        kind: "thinking",
+        initialTags: ["Thinking Note"],
         title: "Invalid",
         body: "",
         customKey: key,
@@ -1268,7 +1270,7 @@ if (currentSchema) {
     !(await zettel.getUnresolvedRefs()).some((ref) => ref.ref === "Not a card"),
   );
   const literature = await zettel.saveZettel({
-    kind: "literature",
+    sourceNote: true,
     title: "Reading",
     body: "",
     itemKey: "READING1",
@@ -1277,7 +1279,7 @@ if (currentSchema) {
   let duplicateRejected = false;
   try {
     await zettel.saveZettel({
-      kind: "literature",
+      sourceNote: true,
       title: "Duplicate",
       body: "",
       itemKey: "READING1",
@@ -1290,7 +1292,7 @@ if (currentSchema) {
   let noSourceRejected = false;
   try {
     await zettel.saveZettel({
-      kind: "literature",
+      sourceNote: true,
       title: "No source",
       body: "",
     });
@@ -1299,26 +1301,24 @@ if (currentSchema) {
   }
   check("Literature Notes require a source", noSourceRejected);
   const anotherLibrary = await zettel.saveZettel({
-    kind: "literature",
+    sourceNote: true,
     title: "Group reading",
     body: "",
     itemKey: "READING1",
     libraryID: 2,
   });
   const thought = await zettel.saveZettel({
-    kind: "thinking",
+    initialTags: ["Thinking Note"],
     title: "Survey",
     body: "[[Reading]]",
   });
   const firstCard = await zettel.saveZettel({
-    kind: "zettel",
     title: "First claim",
     body: "",
     itemKey: "READING1",
     libraryID: 1,
   });
   const secondCard = await zettel.saveZettel({
-    kind: "zettel",
     title: "Second claim",
     body: "",
     itemKey: "READING1",
@@ -1330,19 +1330,23 @@ if (currentSchema) {
   );
   check(
     "Thinking Notes need no source and link across types",
-    (await zettel.getZettel(thought)).kind === "thinking" &&
+    !(await zettel.getZettel(thought)).source_note &&
       (await zettel.getOutgoing(thought))[0].targetId === literature,
   );
   check(
-    "Type filters search their own notes",
-    (await zettel.listZettels("Survey", false, "thinking")).some(
+    "Ordinary tags filter notes without a type",
+    (await zettel.searchZettels("Survey", { tag: "Thinking Note" })).items.some(
       (row) => row.id === thought,
-    ) && !(await zettel.listZettels("Survey", false, "literature")).length,
+    ) &&
+      !(await zettel.searchZettels("Survey", { tag: "Other tag" })).items
+        .length,
   );
   await zettel.saveZettel({ id: thought, title: "Survey edited", body: "" });
   check(
-    "Editing through older callers retains note type",
-    (await zettel.getZettel(thought)).kind === "thinking",
+    "Editing content preserves ordinary tags",
+    (await zettel.searchZettels("Survey", { tag: "Thinking Note" })).items.some(
+      (row) => row.id === thought,
+    ),
   );
   const priorItems = zoteroStub.Items;
   const priorFields = zoteroStub.ItemFields;
@@ -1440,7 +1444,7 @@ if (currentSchema) {
   );
   for (const sort of ["id-asc", "id-desc"]) {
     const all = await zettel.searchZettels("", {
-      kind: "literature",
+      sourceNote: true,
       sort,
       limit: 100,
     });
@@ -1448,14 +1452,14 @@ if (currentSchema) {
       (a, b) => noteSort.compareNoteSummaries(a, b, sort),
     );
     let page = await zettel.searchZettels("", {
-      kind: "literature",
+      sourceNote: true,
       sort,
       limit: 1,
     });
     const ids = page.items.map((row) => row.id);
     while (page.cursor) {
       page = await zettel.searchZettels("", {
-        kind: "literature",
+        sourceNote: true,
         sort,
         limit: 1,
         cursor: page.cursor,
@@ -1522,7 +1526,7 @@ if (currentSchema) {
   check(
     "Trashed sources fall back without changing or deleting managed notes",
     (await noteRefs.withNoteReferences([{ id: literature }]))[0].reference ===
-      literature && (await zettel.getZettel(literature)).kind === "literature",
+      literature && (await zettel.getZettel(literature)).source_note === 1,
   );
   zoteroStub.Items = priorItems;
   zoteroStub.ItemFields = priorFields;
@@ -1550,7 +1554,7 @@ if (currentSchema) {
   );
   await zettel.saveZettel({
     id: literature,
-    kind: "literature",
+    sourceNote: true,
     title: "Renamed literature",
     body: "",
     itemKey: "READING1",
@@ -1639,7 +1643,7 @@ if (currentSchema) {
       id: literature,
       title: literatureBeforeID.title,
       body: literatureBeforeID.body,
-      kind: "literature",
+      sourceNote: true,
       itemKey: literatureBeforeID.item_key,
       libraryID: literatureBeforeID.library_id,
       customKey,
@@ -1826,19 +1830,19 @@ if (currentSchema) {
         true,
   );
   await db.exec("DELETE FROM unavailable_notes WHERE card_id = ?", [branchId]);
-  await db.exec("UPDATE zettels SET kind='thinking' WHERE id = ?", [rootId]);
+  await db.exec("INSERT OR IGNORE INTO tags(zettel_id, tag) VALUES (?, ?)", [
+    rootId,
+    "Thinking Note",
+  ]);
   const mixedOutline = await hierarchy.getZettelOutline();
   check(
-    "Zettel outline excludes other types while retaining their role as parents",
-    !mixedOutline.some((row) => row.id === rootId) &&
+    "Note outline includes notes regardless of tags and retains parent identities",
+    mixedOutline.some((row) => row.id === rootId) &&
       mixedOutline.find((row) => row.id === branchId)?.parent?.id === rootId,
   );
-  await db.exec("UPDATE zettels SET kind='zettel' WHERE id = ?", [rootId]);
   check(
-    "Entry points select only cards without parents before the list limit",
-    (await zettel.listZettels("Outline", true))
-      .map((card) => card.id)
-      .join() === rootId,
+    "The note list includes parents and children without an entry point filter",
+    (await zettel.listZettels("Outline")).length === 3,
   );
   let cycleRejected = false;
   try {
@@ -1899,7 +1903,7 @@ if (currentSchema) {
   check(
     "Clearing parent makes a card an entry point",
     !(await hierarchy.getFamily(leafId)).parent &&
-      (await zettel.listZettels("Outline", true)).length === 2,
+      (await zettel.listZettels("Outline")).length === 2,
   );
   await zettel.saveZettel({ title: "Pending", body: "[[Future concept]]" });
   const allGraph = await graph.getGraphData();
@@ -2133,6 +2137,369 @@ if (currentSchema) {
   );
   await db.closeDB();
 }
+
+// Conversion uses a disposable copy of the immediately preceding schema.
+const conversionDir = path.join(workspace, "type-to-tags");
+await mkdir(conversionDir);
+const conversionFile = path.join(conversionDir, "knowledge-base.sqlite");
+createCurrentDatabase(conversionFile);
+const legacy = new DatabaseSync(conversionFile);
+legacy.exec(`
+  ALTER TABLE zettels ADD COLUMN kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL)));
+  UPDATE zettels SET kind = CASE id WHEN '20260101010101' THEN 'literature' WHEN '20260101010102' THEN 'thinking' ELSE 'zettel' END;
+  ALTER TABLE zettels DROP COLUMN source_note;
+  CREATE UNIQUE INDEX idx_literature_source ON zettels(library_id, item_key) WHERE kind='literature';
+  UPDATE meta SET value='11' WHERE key='schemaVersion';
+  UPDATE zettels SET custom_key='KeepAlias' WHERE id='20260101010102';
+  UPDATE card_parents SET parent_id='20260101010101' WHERE card_id='20260101010102';
+  INSERT INTO tags VALUES ('20260101010102','Existing tag');
+  CREATE TABLE card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, external INTEGER NOT NULL DEFAULT 0, UNIQUE(note_key, library_id));
+  INSERT INTO card_notes VALUES ('20260101010101','OLDNOTE1',1,'body one',0);
+  CREATE TABLE note_keys (key TEXT PRIMARY KEY, card_id TEXT NOT NULL);
+  INSERT INTO note_keys VALUES ('OldAlias','20260101010102');
+  CREATE TABLE editor_drafts (id TEXT PRIMARY KEY, body TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+  CREATE TABLE note_save_operations (id TEXT PRIMARY KEY, card_id TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL);
+`);
+const draftBefore = {
+  draftId: "legacy-draft",
+  draftRevision: 7,
+  title: "未完成",
+  body: "保留 **原文** [[OldAlias]]",
+  kind: "thinking",
+  sourceDocument: "# 未完成\n\n保留 **原文** [[OldAlias]]",
+};
+legacy
+  .prepare("INSERT INTO editor_drafts VALUES (?,?,?,?,?)")
+  .run(
+    draftBefore.draftId,
+    draftBefore.body,
+    JSON.stringify(draftBefore),
+    7,
+    123,
+  );
+const journalBefore = {
+  id: "1:OLDNOTE1",
+  noteKey: "OLDNOTE1",
+  libraryID: 1,
+  expectedHTML: "<p>Old</p>",
+  intendedHTML: "<p>Intended</p>",
+  expectedVersion: 1,
+  input: {
+    ...draftBefore,
+    id: "reserved-note",
+    kind: "literature",
+    itemKey: "SOURCEITEM",
+    libraryID: 1,
+  },
+};
+legacy
+  .prepare("INSERT INTO note_save_operations VALUES (?,?,?,?)")
+  .run(journalBefore.id, "reserved-note", JSON.stringify(journalBefore), 123);
+const rowsBefore = legacy.prepare("SELECT * FROM zettels ORDER BY id").all();
+legacy.close();
+zoteroStub.DataDirectory.dir = conversionDir;
+failStatement = (sql) => sql.includes("DROP COLUMN kind");
+let conversionFailed = false;
+try {
+  await db.initDB();
+} catch {
+  conversionFailed = true;
+}
+failStatement = undefined;
+await db.closeDB();
+const rolledBack = new DatabaseSync(conversionFile);
+check(
+  "Failed type conversion rolls back schema, tags and original data together",
+  conversionFailed &&
+    rolledBack.prepare("SELECT value FROM meta WHERE key='schemaVersion'").get()
+      .value === "11" &&
+    rolledBack.prepare("SELECT COUNT(*) AS n FROM tags").get().n === 1 &&
+    rolledBack.prepare("SELECT kind FROM zettels ORDER BY id").get().kind ===
+      "literature",
+);
+rolledBack.close();
+await db.initDB();
+const convertedSchema = await readSchema(conversionFile);
+const converted = await db.getAll("SELECT * FROM zettels ORDER BY id");
+check(
+  "Type conversion removes the type column and preserves every other note field",
+  convertedSchema.version === "12" &&
+    !convertedSchema.columns.includes("kind") &&
+    converted.every((row, i) =>
+      Object.keys(rowsBefore[i])
+        .filter((key) => key !== "kind")
+        .every((key) => row[key] === rowsBefore[i][key]),
+    ) &&
+    converted[0].source_note === 1 &&
+    converted.slice(1).every((row) => row.source_note === 0),
+);
+check(
+  "Each previous type becomes an ordinary tag without replacing existing tags",
+  (await noteTags.getOwnNoteTags(null, "20260101010101")).join() ===
+    "Literature Note" &&
+    (await noteTags.getOwnNoteTags(null, "20260101010102")).join() ===
+      "Existing tag,Thinking Note" &&
+    (await noteTags.getOwnNoteTags(null, "20260101010103")).join() === "Zettel",
+);
+check(
+  "Conversion retains links, parent identities, note mappings and old aliases",
+  (await zettel.getOutgoing("20260101010102"))[0].targetId ===
+    "20260101010101" &&
+    (await hierarchy.getFamily("20260101010102")).parent.id ===
+      "20260101010101" &&
+    (await db.getOne("SELECT card_id FROM note_keys WHERE key='OldAlias'"))
+      .card_id === "20260101010102" &&
+    (
+      await db.getOne(
+        "SELECT note_key FROM card_notes WHERE card_id='20260101010101'",
+      )
+    ).note_key === "OLDNOTE1",
+);
+const convertedDraft = await drafts.getEditorDraft("legacy-draft");
+const convertedJournal = (await operations.listNoteOperations())[0];
+check(
+  "Unsaved drafts and interrupted save intent keep content while replacing type with tags",
+  convertedDraft.body === draftBefore.body &&
+    convertedDraft.sourceDocument === draftBefore.sourceDocument &&
+    convertedDraft.draftRevision === 7 &&
+    !("kind" in convertedDraft) &&
+    convertedDraft.initialTags[0] === "Thinking Note" &&
+    convertedJournal.expectedHTML === journalBefore.expectedHTML &&
+    convertedJournal.intendedHTML === journalBefore.intendedHTML &&
+    convertedJournal.input.sourceNote &&
+    !("kind" in convertedJournal.input) &&
+    convertedJournal.input.initialTags[0] === "Literature Note",
+);
+const priorConversionItems = zoteroStub.Items,
+  priorLibraries = zoteroStub.Libraries;
+const nativeTagSet = new Set(["Native existing"]);
+const convertedNative = {
+  id: 5001,
+  key: "OLDNOTE1",
+  libraryID: 1,
+  isNote: () => true,
+  isInTrash: () => false,
+  getTags: () => [...nativeTagSet].map((tag) => ({ tag })),
+  addTag: (tag) => nativeTagSet.add(tag),
+  removeTag: (tag) => nativeTagSet.delete(tag),
+  saveTx: async () => {},
+};
+zoteroStub.Items = {
+  getByLibraryAndKeyAsync: async () => convertedNative,
+  getAsync: async () => convertedNative,
+  loadDataTypes: async () => {},
+};
+zoteroStub.Libraries = { get: () => ({ editable: true }) };
+await noteTags.applyPendingTagsToMappedNotes(() => false);
+check(
+  "Converted tags merge into the original native note and clear only delivered pending tags",
+  nativeTagSet.has("Native existing") &&
+    nativeTagSet.has("Literature Note") &&
+    !(await db.getAll("SELECT tag FROM tags WHERE zettel_id='20260101010101'"))
+      .length,
+);
+await noteTags.changeNoteTag(5001, "20260101010101", "Literature Note", false);
+await db.closeDB();
+await db.initDB();
+await noteTags.applyPendingTagsToMappedNotes(() => false);
+check(
+  "Deleting a converted tag remains deleted after reopening and never changes the source note",
+  !nativeTagSet.has("Literature Note") &&
+    nativeTagSet.has("Native existing") &&
+    (await zettel.getZettel("20260101010101")).source_note === 1 &&
+    (await zettel.getZettel("20260101010101")).body === "body one",
+);
+zoteroStub.Items = priorConversionItems;
+zoteroStub.Libraries = priorLibraries;
+await db.closeDB();
+
+// Trash operations target managed originals and recheck their state at write time.
+const trashDir = path.join(workspace, "trash");
+await mkdir(trashDir);
+zoteroStub.DataDirectory.dir = trashDir;
+await db.initDB();
+const trashOriginalItems = zoteroStub.Items;
+const trashOriginalLibraries = zoteroStub.Libraries;
+const trashOriginalDB = zoteroStub.DB;
+const trashOriginalPromise = zoteroStub.Promise;
+const trashItems = new Map();
+const erasedTrashIDs = [];
+let eraseFailure = false;
+let trashNativeTransaction = false;
+for (const [index, id] of [
+  "trash-a",
+  "trash-b",
+  "trash-readonly",
+  "trash-active",
+].entries()) {
+  await zettel.saveZettel({ id, title: id, body: "Original body" });
+  const note = {
+    id: 7000 + index,
+    key: `TRASH00${index}`,
+    libraryID: id === "trash-readonly" ? 2 : 1,
+    deleted: id !== "trash-active",
+    isNote: () => true,
+    isInTrash() {
+      return this.deleted;
+    },
+    async erase() {
+      if (!trashNativeTransaction)
+        throw new Error("Erase requires a transaction");
+      if (eraseFailure) throw new Error("Injected native erase failure");
+      trashItems.delete(this.key);
+      erasedTrashIDs.push(this.id);
+    },
+  };
+  trashItems.set(note.key, note);
+  await db.exec(
+    "INSERT INTO card_notes(card_id,note_key,library_id,original_body) VALUES(?,?,?,'Original body')",
+    [id, note.key, note.libraryID],
+  );
+  if (note.deleted)
+    await db.exec(
+      "INSERT INTO unavailable_notes(card_id,state) VALUES(?,'trashed')",
+      [id],
+    );
+}
+await zettel.saveZettel({
+  id: "trash-referrer",
+  title: "Keep me",
+  body: "[[trash-a]]",
+});
+await zettel.saveZettel({
+  id: "trash-unmapped",
+  title: "No original",
+  body: "Keep me",
+});
+await db.exec(
+  "INSERT INTO editor_drafts(id,body,data,revision,updated_at) VALUES('owned','Draft',?,1,1),('unrelated','Keep','{}',1,1)",
+  [JSON.stringify({ id: "trash-a", noteID: 7000 })],
+);
+await db.exec(
+  "INSERT INTO note_save_operations(id,card_id,data,created_at) VALUES('owned-op','trash-a','{}',1)",
+);
+zoteroStub.Libraries = { get: (id) => ({ editable: id === 1 }) };
+zoteroStub.Promise = { delay: async () => {} };
+zoteroStub.DB = {
+  executeTransaction: async (callback) => {
+    if (trashNativeTransaction) throw new Error("Nested native transaction");
+    trashNativeTransaction = true;
+    try {
+      return await callback();
+    } finally {
+      trashNativeTransaction = false;
+    }
+  },
+};
+zoteroStub.Items = {
+  ...trashOriginalItems,
+  getByLibraryAndKeyAsync: async (_library, key) =>
+    trashItems.get(key) || false,
+  erase: async () => {
+    throw new Error("Use note.erase inside the native transaction");
+  },
+};
+check(
+  "KB Trash lists only managed trashed originals with per-library editability",
+  JSON.stringify(
+    (await nativeNotes.getTrashNotes()).map(({ id, editable }) => [
+      id,
+      editable,
+    ]),
+  ) ===
+    JSON.stringify([
+      ["trash-a", true],
+      ["trash-b", true],
+      ["trash-readonly", false],
+    ]),
+);
+const ignoredTrash = await nativeNotes.permanentlyDeleteNotes([
+  "trash-active",
+  "trash-readonly",
+  "trash-unmapped",
+  "unknown",
+]);
+check(
+  "Permanent deletion skips active, read-only, unmapped and unknown notes",
+  ignoredTrash.deleted === 0 &&
+    ignoredTrash.skipped === 4 &&
+    erasedTrashIDs.length === 0 &&
+    !!(await zettel.getZettel("trash-active")),
+);
+trashItems.get("TRASH001").deleted = false;
+const restoredRace = await nativeNotes.permanentlyDeleteNotes(["trash-b"]);
+check(
+  "Restoration after confirmation prevents permanent deletion",
+  restoredRace.skipped === 1 &&
+    erasedTrashIDs.length === 0 &&
+    !!(await zettel.getZettel("trash-b")),
+);
+trashItems.get("TRASH001").deleted = true;
+let cancelTrash = false;
+const cancelledTrash = await nativeNotes.permanentlyDeleteNotes(
+  ["trash-a", "trash-a", "trash-b"],
+  () => cancelTrash,
+  () => {
+    cancelTrash = true;
+  },
+);
+check(
+  "A cancelled batch deduplicates IDs and stops before the next original",
+  cancelledTrash.deleted === 1 &&
+    cancelledTrash.cancelled &&
+    erasedTrashIDs.join() === "7000" &&
+    !!(await zettel.getZettel("trash-b")),
+);
+check(
+  "Permanent deletion removes its projection, mapping, recovery draft and pending save only",
+  !(await zettel.getZettel("trash-a")) &&
+    !(await db.getOne("SELECT * FROM card_notes WHERE card_id='trash-a'")) &&
+    !(await db.getOne("SELECT * FROM editor_drafts WHERE id='owned'")) &&
+    !(await db.getOne(
+      "SELECT * FROM note_save_operations WHERE id='owned-op'",
+    )) &&
+    !!(await db.getOne("SELECT * FROM editor_drafts WHERE id='unrelated'")) &&
+    !!(await zettel.getZettel("trash-unmapped")),
+);
+check(
+  "Referring notes survive permanent deletion with an unresolved reference",
+  !!(await zettel.getZettel("trash-referrer")) &&
+    (await zettel.getOutgoing("trash-referrer"))[0]?.targetId === null,
+);
+eraseFailure = true;
+let nativeEraseRejected = false;
+try {
+  await nativeNotes.permanentlyDeleteNotes(["trash-b"]);
+} catch {
+  nativeEraseRejected = true;
+}
+check(
+  "A failed native erase leaves the original and KB projection available for retry",
+  nativeEraseRejected &&
+    trashItems.has("TRASH001") &&
+    !!(await zettel.getZettel("trash-b")),
+);
+eraseFailure = false;
+const retriedTrash = await nativeNotes.permanentlyDeleteNotes(["trash-b"]);
+check(
+  "The operation queue recovers after native erase failure",
+  retriedTrash.deleted === 1 && !(await zettel.getZettel("trash-b")),
+);
+let invalidTrashRejected = false;
+try {
+  await nativeNotes.permanentlyDeleteNotes([null]);
+} catch {
+  invalidTrashRejected = true;
+}
+check(
+  "Invalid destructive-operation inputs are rejected before writes",
+  invalidTrashRejected && erasedTrashIDs.length === 2,
+);
+zoteroStub.Items = trashOriginalItems;
+zoteroStub.Libraries = trashOriginalLibraries;
+zoteroStub.DB = trashOriginalDB;
+zoteroStub.Promise = trashOriginalPromise;
+await db.closeDB();
 
 // An unsupported schema is rejected without rewriting its data.
 const invalidDir = path.join(workspace, "unsupported-schema");

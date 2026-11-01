@@ -1,4 +1,6 @@
 import { config } from "../../package.json";
+import { isAccelKey } from "../ui/platform";
+import { getDOMWindow } from "../utils/dom";
 import type { EditorArgs, ManagerArgs } from "./api";
 
 interface Browser extends Element {
@@ -9,6 +11,7 @@ interface Browser extends Element {
   };
 }
 interface Tabs {
+  selectedID: string;
   getState(): { type: string }[];
   add(options: {
     type: string;
@@ -27,7 +30,7 @@ const workbenches = new Map<
     browser: Browser;
     tabs: Tabs;
     args: ManagerArgs;
-    restoreSession(): void;
+    dispose(): void;
   }
 >();
 let workbenchWindow:
@@ -68,6 +71,7 @@ function loadView(
 
 export function openWorkbench(args: ManagerArgs = {}): void {
   const win = Zotero.getMainWindow();
+  if (!win || win.closed) return openWorkbenchWindow(args);
   const existing = workbenches.get(win);
   if (existing) {
     existing.tabs.select(existing.id);
@@ -103,7 +107,7 @@ export function openWorkbench(args: ManagerArgs = {}): void {
     select: true,
     onClose: () => {
       stopWorkbench(win);
-      workbenches.get(win)?.restoreSession();
+      workbenches.get(win)?.dispose();
       workbenches.delete(win);
     },
   });
@@ -119,12 +123,32 @@ export function openWorkbench(args: ManagerArgs = {}): void {
     embedded: true,
     onClose: () => tabs.close(tab.id),
   };
+  // Window capture also covers focus outside the embedded editors, before Zotero closes a tab.
+  const closeShortcut = (event: KeyboardEvent) => {
+    if (
+      tabs.selectedID !== tab.id ||
+      event.defaultPrevented ||
+      event.shiftKey ||
+      (Zotero.isMac ? event.ctrlKey : event.metaKey) ||
+      !isAccelKey(event) ||
+      event.key.toLowerCase() !== "w"
+    )
+      return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.repeat) return;
+    const request = browser.contentWindow.knowledgeBaseRequestClose;
+    if (request) void request().catch((error) => Zotero.logError(error));
+    else tabs.close(tab.id);
+  };
+  win.addEventListener("keydown", closeShortcut, true);
   workbenches.set(win, {
     id: tab.id,
     browser,
     tabs,
     args: viewArgs,
-    restoreSession: () => {
+    dispose: () => {
+      win.removeEventListener("keydown", closeShortcut, true);
       if (tabs.getState === sessionState) tabs.getState = getState;
     },
   });
@@ -156,7 +180,7 @@ export function openWorkbenchWindow(args: ManagerArgs = {}): void {
     },
   };
   workbenchWindow = record;
-  record.win = Zotero.getMainWindow().openDialog(
+  record.win = getDOMWindow().openDialog(
     `chrome://${config.addonRef}/content/workbench.xhtml`,
     "_blank",
     "chrome,centerscreen,resizable=yes,width=1100,height=760",

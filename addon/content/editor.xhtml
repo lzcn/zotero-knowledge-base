@@ -15,6 +15,7 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
+  <script src="chrome://knowledge-base/content/ui.js" />
   <script src="chrome://knowledge-base/content/markdown.js" />
   <script src="chrome://knowledge-base/content/editor-formatting.js" />
   <script src="chrome://global/content/globalOverlay.js" />
@@ -49,27 +50,22 @@ type="text/css"?>
     </html:div>
     <html:div class="note-identity-row">
       <html:label
-        id="knowledge-base-kind-label"
-        for="knowledge-base-note-kind"
-      />
-      <html:select id="knowledge-base-note-kind" />
-      <html:span id="knowledge-base-note-kind-text" hidden="hidden" />
-      <html:label
         id="knowledge-base-key-label"
         for="knowledge-base-editor-key"
       />
       <html:div class="note-key-group">
         <html:div class="note-key-control">
-          <html:input
+          <html:button
+            id="knowledge-base-key-copy"
+            aria-labelledby="knowledge-base-key-label knowledge-base-key-copy"
+          />
+          <html:textarea
             id="knowledge-base-editor-key"
-            type="text"
+            rows="1"
+            wrap="soft"
             hidden="hidden"
             aria-describedby="knowledge-base-key-status"
             spellcheck="false"
-          />
-          <html:button
-            id="knowledge-base-editor-reference"
-            class="note-reference"
           />
         </html:div>
         <html:div id="knowledge-base-key-feedback" hidden="hidden">
@@ -77,14 +73,14 @@ type="text/css"?>
           <html:button id="knowledge-base-key-resolve" />
         </html:div>
       </html:div>
-      <html:div class="spacer" />
       <html:button id="knowledge-base-establish-connections" />
       <html:details id="knowledge-base-editor-more" class="editor-more">
         <html:summary id="knowledge-base-editor-more-label">…</html:summary>
         <html:div class="editor-more-menu">
+          <html:button id="knowledge-base-key-edit" />
           <html:button id="knowledge-base-src-pick" />
           <html:button id="knowledge-base-parent-change" />
-          <html:button id="knowledge-base-kind-convert" />
+          <html:button id="knowledge-base-tags-edit" />
           <html:hr />
           <html:button id="knowledge-base-open-window" hidden="hidden" />
           <html:button id="knowledge-base-editor-graph" />
@@ -119,6 +115,10 @@ type="text/css"?>
       role="list"
       hidden="hidden"
     />
+    <html:div id="knowledge-base-tag-editor" hidden="hidden">
+      <html:div id="knowledge-base-own-tags" class="note-tags" />
+      <html:input id="knowledge-base-tag-input" type="text" />
+    </html:div>
     <html:div id="knowledge-base-markdown-toolbar">
       <button
         id="knowledge-base-command-open"

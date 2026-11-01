@@ -27,6 +27,10 @@ import {
 } from "./modules/bibliography";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import {
+  registerReaderToolbar,
+  unregisterReaderToolbar,
+} from "./modules/reader-toolbar";
+import {
   initAssets,
   closeAssets,
   stopAssets,
@@ -37,6 +41,8 @@ import {
   reportStartupFailure,
 } from "./modules/startup-errors";
 
+// Same-version development installs must not reuse Zotero's cached sidebar CSS.
+const sectionStyleVersion = `${version}-${Date.now()}`;
 const windows = new Map<Window, Element[]>();
 let ready = false;
 let generation = 0;
@@ -109,6 +115,7 @@ async function start(token: number): Promise<void> {
       ["registerItemPaneUI", registerItemPaneUI],
       ["nativeMarkdown", initNativeMarkdown],
       ["registerPreferences", registerPreferences],
+      ["registerReaderToolbar", registerReaderToolbar],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -141,6 +148,10 @@ async function onMainWindowLoad(win: Window): Promise<void> {
   windows.set(win, nodes);
   try {
     const doc = win.document;
+    doc.documentElement.toggleAttribute(
+      "data-plugin-bear",
+      Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true,
+    );
     const chromeWindow = win as Window & {
       MozXULElement: { insertFTLIfNeeded(path: string): void };
     };
@@ -151,7 +162,7 @@ async function onMainWindowLoad(win: Window): Promise<void> {
     style.setAttribute("rel", "stylesheet");
     style.setAttribute(
       "href",
-      `chrome://${config.addonRef}/content/section.css?v=${version}`,
+      `chrome://${config.addonRef}/content/section.css?v=${sectionStyleVersion}`,
     );
     doc.documentElement.appendChild(style);
     nodes.push(style);
@@ -249,6 +260,7 @@ async function releaseResources(): Promise<void> {
       }
     },
     unregisterItemPaneUI,
+    unregisterReaderToolbar,
     unregisterPreferences,
     closeAI,
     closeNativeMarkdown,

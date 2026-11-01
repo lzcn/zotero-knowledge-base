@@ -4,6 +4,10 @@ pref("extensions.zotero.knowledge-base.ai.provider", "deepseek");
 pref("extensions.zotero.knowledge-base.ai.deepseek.model", "deepseek-flash");
 pref("extensions.zotero.knowledge-base.ai.opencode-go.model", "glm-5.3-flash");
 pref("extensions.zotero.knowledge-base.workbenchMode", "tab");
+pref(
+  "extensions.zotero.knowledge-base.literatureTemplates",
+  '{"selected":null,"templates":[]}',
+);
 pref("extensions.zotero.knowledge-base.inheritParentTags", true);
 pref("extensions.zotero.knowledge-base.graph.groups", "[]");
 pref("extensions.zotero.knowledge-base.graph.outline", true);

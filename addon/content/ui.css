@@ -1,0 +1,60 @@
+/* Shared visual values; keep this file identical in the three plugin packages. */
+:root {
+  --ui-bg: #fff;
+  --ui-fg: #242424;
+  --ui-surface: #f7f7f8;
+  --ui-border: #e4e4e7;
+  --ui-hover: #f0f0f2;
+  --ui-active: #e9edf4;
+  --ui-accent: #3768ad;
+  --ui-muted: #6b6b70;
+  --ui-source: #527561;
+  --ui-danger: #b63742;
+  --ui-font: system-ui, sans-serif;
+  --ui-editor-font: system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ui-bg: #202124;
+    --ui-fg: #e6e6e8;
+    --ui-surface: #28292d;
+    --ui-border: #3b3c41;
+    --ui-hover: #303136;
+    --ui-active: #343b49;
+    --ui-accent: #9dbdf0;
+    --ui-muted: #ababaf;
+    --ui-source: #9fbaa8;
+    --ui-danger: #ef9aa2;
+  }
+}
+
+/* Operational UI keeps system typography; Bear typography belongs to note content. */
+:root[data-plugin-bear] {
+  --ui-bg: #fff;
+  --ui-fg: #393735;
+  --ui-surface: #faf9f8;
+  --ui-border: #e9e7e4;
+  --ui-hover: #f3f1ef;
+  --ui-active: #f0edeb;
+  --ui-accent: #aa5962;
+  --ui-muted: #787470;
+  --ui-source: #5d7b70;
+  --ui-danger: #b5515a;
+  --ui-editor-font:
+    "Avenir Next", Avenir, "PingFang SC", "Microsoft YaHei", system-ui,
+    sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-plugin-bear] {
+    --ui-bg: #242526;
+    --ui-fg: #e5e1dc;
+    --ui-surface: #2a2b2c;
+    --ui-border: #3b3c3d;
+    --ui-hover: #333435;
+    --ui-active: #393637;
+    --ui-accent: #d58e97;
+    --ui-muted: #b0aaa4;
+    --ui-source: #9db9aa;
+    --ui-danger: #e49da4;
+  }
+}

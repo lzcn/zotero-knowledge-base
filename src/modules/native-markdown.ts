@@ -1,3 +1,4 @@
+import { attachTextTools, textToolLabels } from "../ui/text-tools";
 import { isAccelKey } from "../ui/platform";
 import {
   attachMarkdownToggle,
@@ -164,6 +165,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           };
         }
       ).KnowledgeBaseMarkdownSource.create(sourceTextarea, {
+        ...textToolLabels((key, args) => getString(key, { args })).phrases,
         citation: getString("markdown-node-citation"),
         annotation: getString("markdown-node-annotation"),
         notelink: getString("markdown-node-note-link"),
@@ -544,6 +546,12 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         void api.openLink(href).catch(report);
       },
     );
+    const removeTextTools = attachTextTools(instance._iframeWindow, {
+      labels: textToolLabels((key, args) => getString(key, { args })),
+      source: () => (sourceMode ? source : undefined),
+      canEdit: () => !closed && !stopped && !readingMode,
+      report,
+    });
     const controller: Controller = {
       stop() {
         if (closed) return;
@@ -579,6 +587,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         frame.hidden = false;
         container.style.position = previousPosition;
         removeMarkdownToggle();
+        removeTextTools();
         readingView.destroy();
         bar.remove();
         source?.destroy();

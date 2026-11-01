@@ -2,6 +2,7 @@ import createDOMPurify from "dompurify";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 import { getSourceRevision } from "./events";
+import { getDOMWindow } from "../utils/dom";
 
 const stylePreference = `${config.prefsPrefix}.sourceStyle`;
 const defaultStyle = "http://www.zotero.org/styles/apa";
@@ -86,7 +87,7 @@ async function formatSourceBibliography(
       [item],
       "html",
     );
-    const win = Zotero.getMainWindow();
+    const win = getDOMWindow();
     const fragment = createDOMPurify(
       win as unknown as Parameters<typeof createDOMPurify>[0],
     ).sanitize(html, {
@@ -126,7 +127,11 @@ export async function registerPreferences(): Promise<void> {
     label: config.addonName,
     image: `chrome://${config.addonRef}/content/icons/icon-20.svg`,
     src: `chrome://${config.addonRef}/content/preferences.xhtml`,
-    scripts: [`chrome://${config.addonRef}/content/preferences.js`],
+    scripts: [
+      `chrome://${config.addonRef}/content/ui.js`,
+      `chrome://${config.addonRef}/content/preferences.js`,
+    ],
+    stylesheets: [`chrome://${config.addonRef}/content/preferences.css`],
   });
   if (!active) {
     Zotero.PreferencePanes.unregister(id);
@@ -140,6 +145,7 @@ export async function registerPreferences(): Promise<void> {
     label: getString("pref-ai-heading"),
     src: `chrome://${config.addonRef}/content/ai-preferences.xhtml`,
     scripts: [`chrome://${config.addonRef}/content/ai-settings.js`],
+    stylesheets: [`chrome://${config.addonRef}/content/preferences.css`],
   });
   if (active) paneIDs.push(aiID);
   else Zotero.PreferencePanes.unregister(aiID);

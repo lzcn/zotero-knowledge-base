@@ -9,7 +9,7 @@ let listVersion = 0;
 let nextCursor = null;
 let pageTimer = null;
 let renderTimer = null;
-const ROW_HEIGHT = 112;
+const ROW_HEIGHT = 120;
 let unresolvedVersion = 0;
 const rowIndices = new Map();
 let listScope = "";
@@ -17,6 +17,12 @@ let listReferences;
 let navigationVersion = 0;
 let managerLoaded = false;
 let deleting = false;
+let purging = false;
+let purgeCancelled = false;
+let trashVersion = 0;
+let menuVersion = 0;
+/** @type {import("../../src/modules/native-notes").TrashNote[]} */
+let trashNotes = [];
 const history = [];
 let historyIndex = -1;
 const scrollPositions = new Map();
@@ -39,7 +45,32 @@ const args = /** @type {import("../../src/modules/api").ManagerArgs} */ (
 /** @type {import("../../src/modules/api").KnowledgeBaseAPI} */
 let api = null;
 
+window.knowledgeBaseRequestClose = () =>
+  safeCall(async () => {
+    const frame = /** @type {HTMLIFrameElement} */ (
+      /** @type {unknown} */ (
+        document.getElementById("knowledge-base-workbench-editor")
+      )
+    );
+    if (!frame.hidden && frame.contentWindow?.knowledgeBaseRequestClose)
+      await frame.contentWindow.knowledgeBaseRequestClose();
+    else if (args.embedded) args.onClose?.();
+    else window.close();
+  });
+
+function inTrash() {
+  return $("knowledge-base-view").value === "trash";
+}
+function setActionLabel(id, key) {
+  const element = document.getElementById(id),
+    text = api.loc(key);
+  for (const attribute of ["label", "tooltiptext", "aria-label"])
+    element.setAttribute(attribute, text);
+}
 function updateActions() {
+  const trash = inTrash();
+  const editable =
+    !trash || !!trashNotes.find((note) => note.id === selectedId)?.editable;
   for (const id of [
     "knowledge-base-btn-edit",
     "knowledge-base-btn-local-graph",
@@ -47,7 +78,159 @@ function updateActions() {
   ])
     document
       .getElementById(id)
-      .toggleAttribute("disabled", !selectedId || deleting);
+      .toggleAttribute(
+        "disabled",
+        !selectedId ||
+          deleting ||
+          !editable ||
+          (trash && id !== "knowledge-base-btn-delete"),
+      );
+  for (const id of [
+    "knowledge-base-btn-new",
+    "knowledge-base-btn-graph",
+    "knowledge-base-btn-copy-zettels",
+  ])
+    document.getElementById(id).toggleAttribute("disabled", trash || deleting);
+  document.getElementById("knowledge-base-btn-local-graph").hidden = trash;
+  document.getElementById("knowledge-base-btn-restore").hidden = !trash;
+  document
+    .getElementById("knowledge-base-btn-restore")
+    .toggleAttribute("disabled", !selectedId || !editable || deleting);
+  document.getElementById("knowledge-base-empty-trash").hidden =
+    !trash || purging;
+  document
+    .getElementById("knowledge-base-empty-trash")
+    .toggleAttribute(
+      "disabled",
+      deleting || !trashNotes.some((note) => note.editable),
+    );
+  document.getElementById("knowledge-base-trash-cancel").hidden = !purging;
+  $("knowledge-base-view").disabled = deleting;
+  $("knowledge-base-search").disabled = purging;
+  $("knowledge-base-sort").disabled = purging;
+  setActionLabel(
+    "knowledge-base-btn-delete",
+    trash ? "trash-delete" : "manager-delete",
+  );
+  $("knowledge-base-detail-empty").textContent = api.loc(
+    trash ? "trash-select-note" : "manager-empty-detail",
+  );
+}
+async function refreshTrashState() {
+  const version = ++trashVersion;
+  const notes = await api.getTrashNotes();
+  if (window.closed || version !== trashVersion) return;
+  trashNotes = notes;
+  updateActions();
+}
+function setTrashStatus(message = "") {
+  const status = document.getElementById("knowledge-base-trash-status");
+  status.textContent = message;
+  status.hidden = !message;
+}
+async function closeSelectedEditor() {
+  const frame = /** @type {HTMLIFrameElement} */ (
+    /** @type {unknown} */ (
+      document.getElementById("knowledge-base-workbench-editor")
+    )
+  );
+  if (
+    args.embedded &&
+    frame.contentWindow?.knowledgeBasePrepareNavigation &&
+    !(await frame.contentWindow.knowledgeBasePrepareNavigation())
+  )
+    return false;
+  if (args.embedded) {
+    api.clearEditor(frame);
+    frame.hidden = true;
+  }
+  selectedId = null;
+  $("knowledge-base-detail").hidden = true;
+  $("knowledge-base-detail-empty").hidden = false;
+  return true;
+}
+async function changeView() {
+  if (deleting) return;
+  if (!(await closeSelectedEditor())) {
+    $("knowledge-base-view").value = inTrash() ? "notes" : "trash";
+    updateActions();
+    return;
+  }
+  setTrashStatus();
+  await api.auditNativeNotes(true);
+  if (window.closed) return;
+  await refreshTrashState();
+  await refresh(false);
+  await refreshDrafts();
+  if (zettels.length) await select(zettels[0].id);
+  else {
+    $("knowledge-base-detail").hidden = true;
+    $("knowledge-base-detail-empty").hidden = false;
+  }
+}
+async function restoreSelected(id = selectedId) {
+  if (!inTrash() || deleting || !id) return;
+  deleting = true;
+  updateActions();
+  try {
+    await api.restoreNote(id);
+    if (window.closed) return;
+    if (!(await closeSelectedEditor())) return;
+    await refreshTrashState();
+    await refresh(false);
+    if (zettels.length) await select(zettels[0].id);
+    setTrashStatus(api.loc("trash-restored"));
+  } finally {
+    deleting = false;
+    if (!window.closed) updateActions();
+  }
+}
+async function purgeNotes(ids) {
+  if (deleting || !ids.length) return;
+  deleting = true;
+  purging = true;
+  purgeCancelled = false;
+  updateActions();
+  try {
+    if (!(await closeSelectedEditor())) return;
+    setTrashStatus(api.loc("trash-progress", { done: 0, total: ids.length }));
+    const result = await api.permanentlyDeleteNotes(
+      ids,
+      () =>
+        window.closed ||
+        !!window.knowledgeBaseStopping ||
+        purgeCancelled ||
+        !inTrash(),
+      (done, total) => {
+        if (!window.closed)
+          setTrashStatus(api.loc("trash-progress", { done, total }));
+      },
+    );
+    if (window.closed) return;
+    await refreshTrashState();
+    await refresh(false);
+    if (zettels.length) await select(zettels[0].id);
+    let message = api.loc(
+      result.cancelled ? "trash-delete-cancelled" : "trash-delete-done",
+      { count: result.deleted },
+    );
+    if (result.skipped)
+      message +=
+        " " + api.loc("trash-delete-skipped", { count: result.skipped });
+    setTrashStatus(message);
+  } finally {
+    deleting = false;
+    purging = false;
+    if (!window.closed) updateActions();
+  }
+}
+async function emptyTrash() {
+  if (!inTrash() || deleting) return;
+  const notes = (await api.getTrashNotes()).filter((note) => note.editable);
+  if (window.closed || !inTrash() || deleting || !notes.length) return;
+  if (!window.confirm(api.loc("trash-confirm-empty", { count: notes.length })))
+    return;
+  await purgeNotes(notes.map((note) => note.id));
 }
 
 function showError(error) {
@@ -83,6 +266,7 @@ async function load() {
   }
   updateActions();
   bindEvents();
+  await refreshTrashState();
   window.KnowledgeBasePanels.attach(
     $("knowledge-base-splitter"),
     $("knowledge-base-list-pane"),
@@ -90,8 +274,6 @@ async function load() {
     api,
   );
   await refreshDrafts();
-  if (args.selectId) $("knowledge-base-entries").checked = false;
-  $("knowledge-base-kind").value = "";
   await refresh();
   const wanted =
     args.selectId && (await api.getZettel(args.selectId))
@@ -113,6 +295,8 @@ async function load() {
         safeCall(async () => {
           if (window.closed) return;
           const all = !change || change.all;
+          if (all || change.fields.includes("availability"))
+            await refreshTrashState();
           if (
             !change ||
             !change.fields.length ||
@@ -168,8 +352,8 @@ window.ZoteroKnowledgeBase_selectZettel = function (id) {
   const version = ++navigationVersion;
   safeCall(async () => {
     $("knowledge-base-search").value = "";
-    $("knowledge-base-entries").checked = false;
-    $("knowledge-base-kind").value = "";
+    $("knowledge-base-view").value = "notes";
+    updateActions();
     await refresh();
     const card = await api.getZettel(id);
     if (version === navigationVersion && card) select(id);
@@ -199,13 +383,6 @@ function applyLocale() {
   ))
     option.textContent = api.loc("manager-sort-" + option.value);
 
-  $("knowledge-base-kind").setAttribute("aria-label", api.loc("note-kind"));
-  for (const option of /** @type {HTMLOptionElement[]} */ (
-    Array.from($("knowledge-base-kind").options)
-  ))
-    option.textContent = api.loc(
-      option.value ? "note-kind-" + option.value : "note-kind-all",
-    );
   for (const [id, key] of [
     ["knowledge-base-back", "manager-back"],
     ["knowledge-base-forward", "manager-forward"],
@@ -218,7 +395,19 @@ function applyLocale() {
   document
     .getElementById("knowledge-base-drafts-label")
     .setAttribute("value", api.loc("manager-drafts"));
-  $("knowledge-base-entries-label").textContent = api.loc("entries");
+  $("knowledge-base-view").setAttribute("aria-label", api.loc("manager-view"));
+  for (const option of $("knowledge-base-view").options)
+    option.textContent = api.loc(
+      option.getAttribute("value") === "trash"
+        ? "trash-title"
+        : "manager-notes",
+    );
+  for (const [id, key] of [
+    ["knowledge-base-btn-restore", "trash-restore"],
+    ["knowledge-base-empty-trash", "trash-empty"],
+    ["knowledge-base-trash-cancel", "trash-cancel"],
+  ])
+    setActionLabel(id, key);
   document.title = api.loc("manager-title");
   $("knowledge-base-search").placeholder = api.loc(
     "manager-search-placeholder",
@@ -249,6 +438,37 @@ function applyLocale() {
 }
 
 function bindEvents() {
+  const pane = $("knowledge-base-list-pane");
+  const menu = noteMenu();
+  pane.addEventListener("contextmenu", (event) => {
+    if (
+      event.target instanceof window.Element &&
+      event.target.closest("input, select")
+    )
+      return;
+    event.preventDefault();
+    safeCall(() => showNoteMenu(event));
+  });
+  $("knowledge-base-list").addEventListener("keydown", (event) => {
+    if (event.isComposing || event.repeat) return;
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+      return;
+    event.preventDefault();
+    safeCall(() => showNoteMenu(event, true));
+  });
+  menu.addEventListener("popuphidden", (event) => {
+    if (event.target !== menu) return;
+    for (const row of document.querySelectorAll(".zettel-row.context-target"))
+      if (row instanceof window.Element) row.classList.remove("context-target");
+  });
+  window.addEventListener(
+    "unload",
+    () => {
+      menuVersion++;
+      menu.hidePopup();
+    },
+    { once: true },
+  );
   const copyButton = document.getElementById("knowledge-base-btn-copy-zettels");
   copyButton.addEventListener("command", () =>
     safeCall(async () => {
@@ -285,13 +505,6 @@ function bindEvents() {
     },
     { once: true },
   );
-  $("knowledge-base-kind").addEventListener("change", () => {
-    if (!args.embedded) selectedId = null;
-    updateActions();
-    safeCall(refresh);
-    $("knowledge-base-detail").hidden = true;
-    $("knowledge-base-detail-empty").hidden = false;
-  });
   $("knowledge-base-sort").addEventListener("change", () => {
     api.setNoteSort($("knowledge-base-sort").value);
     safeCall(refresh, true);
@@ -343,8 +556,7 @@ function bindEvents() {
       event.key.toLowerCase() === "w"
     ) {
       event.preventDefault();
-      if (args.embedded) args.onClose?.();
-      else window.close();
+      void window.knowledgeBaseRequestClose?.();
     }
   });
   $("knowledge-base-list").addEventListener("mousedown", (event) => {
@@ -373,6 +585,7 @@ function bindEvents() {
     });
   window.addEventListener("focus", () => safeCall(refreshDrafts));
   $("knowledge-base-list").addEventListener("keydown", (event) => {
+    if (deleting) return;
     if (
       event.isComposing ||
       !["ArrowDown", "ArrowUp", "Home", "End", "PageDown", "PageUp"].includes(
@@ -409,29 +622,22 @@ function bindEvents() {
     }
   });
   $("knowledge-base-btn-child").addEventListener("click", () => {
-    if (!selectedId) return;
-    if (args.embedded) {
-      safeCall(() => showInlineEditor({ prefillParentId: selectedId }));
-      return;
-    }
-    api.openEditor({
-      prefillParentId: selectedId,
-      onSaved: (id) =>
-        safeCall(async () => {
-          $("knowledge-base-entries").checked = false;
-          $("knowledge-base-kind").value = "";
-          await refresh();
-          select(id);
-        }),
+    if (selectedId) safeCall(() => newChildNote(selectedId));
+  });
+  $("knowledge-base-view").addEventListener("change", () =>
+    safeCall(changeView),
+  );
+  document
+    .getElementById("knowledge-base-btn-restore")
+    .addEventListener("click", () => safeCall(restoreSelected));
+  document
+    .getElementById("knowledge-base-empty-trash")
+    .addEventListener("command", () => safeCall(emptyTrash));
+  document
+    .getElementById("knowledge-base-trash-cancel")
+    .addEventListener("command", () => {
+      purgeCancelled = true;
     });
-  });
-  $("knowledge-base-entries").addEventListener("change", () => {
-    selectedId = null;
-    updateActions();
-    $("knowledge-base-detail").hidden = true;
-    $("knowledge-base-detail-empty").hidden = false;
-    safeCall(refresh);
-  });
   $("knowledge-base-btn-graph").addEventListener("click", () =>
     api.openGraph(),
   );
@@ -487,6 +693,136 @@ function bindEvents() {
   });
 }
 
+function noteMenu() {
+  return /** @type {XULPopupElement} */ (
+    /** @type {unknown} */ (document.getElementById("knowledge-base-note-menu"))
+  );
+}
+
+async function showNoteMenu(event, keyboard = false) {
+  const menu = noteMenu();
+  menu.hidePopup();
+  const version = ++menuVersion;
+  if (deleting || window.knowledgeBaseStopping) return;
+  const row =
+    event.target.closest?.(".zettel-row") ||
+    (keyboard ? getRenderedRow(selectedId) : null);
+  const id = row?.dataset.id;
+  const scope = currentScope();
+  const navigation = navigationVersion;
+  const trash = inTrash();
+  const card = id ? await api.getZettel(id) : null;
+  const health = card ? await api.getNoteHealth(id) : null;
+  if (
+    window.closed ||
+    window.knowledgeBaseStopping ||
+    deleting ||
+    version !== menuVersion ||
+    navigation !== navigationVersion ||
+    scope !== currentScope() ||
+    (id && (!card || !rowIndices.has(id)))
+  )
+    return;
+  const editable =
+    health?.editable && !["trashed", "missing"].includes(health.note);
+  const trashed = trashNotes.find((note) => note.id === id);
+  const editableTrash =
+    !!trashed?.editable && !!health?.editable && health.note === "trashed";
+  menu.replaceChildren();
+  const add = (action, label, run, disabled = false) => {
+    const item = document.createXULElement("menuitem");
+    item.setAttribute("data-action", action);
+    item.setAttribute("label", api.loc(label));
+    item.toggleAttribute("disabled", disabled);
+    item.addEventListener("command", () => {
+      if (
+        disabled ||
+        deleting ||
+        window.knowledgeBaseStopping ||
+        scope !== currentScope() ||
+        (id && !rowIndices.has(id))
+      )
+        return;
+      safeCall(run);
+    });
+    menu.append(item);
+  };
+  const separator = () =>
+    menu.append(document.createXULElement("menuseparator"));
+  if (card) {
+    add("open", "manager-open-note", () => select(id));
+    add("window", "manager-open-note-window", () =>
+      api.openEditor({ zettelId: id, window: true }),
+    );
+    separator();
+    add("copy", "manager-copy-note-link", async () => {
+      const current = await api.getZettel(id);
+      if (current) api.copyNoteReference(current.reference || current.id);
+    });
+    if (trash) {
+      separator();
+      add(
+        "restore",
+        "trash-restore",
+        () => restoreSelected(id),
+        !editableTrash,
+      );
+      add("delete", "trash-delete", () => removeZettel(id), !editableTrash);
+    } else {
+      add("graph", "manager-show-graph", () => api.openGraph({ centerId: id }));
+      separator();
+      add("child", "new-child", () => newChildNote(id), !editable);
+      add(
+        "tags",
+        "note-tags-edit",
+        async () => {
+          if (args.embedded) {
+            if (await showInlineEditor({ zettelId: id, editTags: true }))
+              select(id, true, true);
+          } else api.openEditor({ zettelId: id, editTags: true });
+        },
+        !editable,
+      );
+      separator();
+      add("delete", "manager-delete", () => removeZettel(id), !editable);
+    }
+    const target = getRenderedRow(id);
+    target?.focus({ preventScroll: true });
+    target?.classList.add("context-target");
+  } else if (trash) {
+    add(
+      "empty",
+      "trash-empty",
+      emptyTrash,
+      !trashNotes.some((note) => note.editable),
+    );
+  } else add("new", "manager-new", () => newZettel());
+  if (keyboard)
+    menu.openPopup(
+      getRenderedRow(id) || $("knowledge-base-list"),
+      "after_start",
+      0,
+      0,
+      true,
+      false,
+    );
+  else menu.openPopupAtScreen(event.screenX, event.screenY, true);
+}
+
+function newChildNote(id) {
+  if (deleting || inTrash()) return;
+  if (args.embedded) return showInlineEditor({ prefillParentId: id });
+  api.openEditor({
+    prefillParentId: id,
+    onSaved: (savedID) =>
+      safeCall(async () => {
+        $("knowledge-base-view").value = "notes";
+        await refresh();
+        select(savedID);
+      }),
+  });
+}
+
 function invalidatePages() {
   listVersion++;
   clearTimeout(pageTimer);
@@ -498,8 +834,7 @@ function invalidatePages() {
 function currentScope() {
   return JSON.stringify([
     $("knowledge-base-search").value,
-    $("knowledge-base-kind").value,
-    $("knowledge-base-entries").checked,
+    $("knowledge-base-view").value,
     $("knowledge-base-sort").value,
   ]);
 }
@@ -518,11 +853,7 @@ async function refreshChanged(cardIDs, referencesChanged) {
     {
       cardIDs,
       limit: 500,
-      entriesOnly: $("knowledge-base-entries").checked,
-      kind: /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
-        $("knowledge-base-kind").value || undefined
-      ),
-      availability: "active",
+      availability: inTrash() ? "trash" : "active",
       sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
         $("knowledge-base-sort").value
       ),
@@ -561,7 +892,9 @@ async function refreshChanged(cardIDs, referencesChanged) {
     selectedId = null;
     updateActions();
     $("knowledge-base-detail").hidden = true;
-    $("knowledge-base-detail-empty").hidden = false;
+    $("knowledge-base-detail-empty").hidden =
+      args.embedded &&
+      !document.getElementById("knowledge-base-workbench-editor").hidden;
   }
   await refreshUnresolved();
 }
@@ -575,11 +908,7 @@ async function refresh(preserve = listScope === currentScope()) {
   listScope = currentScope();
   listReferences = undefined;
   const options = {
-    entriesOnly: $("knowledge-base-entries").checked,
-    kind: /** @type {import("../../src/modules/db").NoteKind | undefined} */ (
-      $("knowledge-base-kind").value || undefined
-    ),
-    availability: "active",
+    availability: inTrash() ? "trash" : "active",
     sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
       $("knowledge-base-sort").value
     ),
@@ -637,7 +966,9 @@ async function loadPage(version, query, options, append, position = null) {
       selectedId = null;
       updateActions();
       $("knowledge-base-detail").hidden = true;
-      $("knowledge-base-detail-empty").hidden = false;
+      $("knowledge-base-detail-empty").hidden =
+        args.embedded &&
+        !document.getElementById("knowledge-base-workbench-editor").hidden;
     }
   } catch (error) {
     if (version !== listVersion || window.closed) return;
@@ -655,7 +986,7 @@ function scheduleListRender() {
 }
 
 function listHeaderHeight() {
-  return $("knowledge-base-sort").parentElement.offsetHeight || 34;
+  return $("knowledge-base-sort").parentElement.offsetHeight || 48;
 }
 function captureListPosition() {
   const pane = $("knowledge-base-list-pane");
@@ -746,6 +1077,7 @@ function renderList() {
     li.title = z.title;
     li.setAttribute("aria-current", z.id === selectedId ? "true" : "false");
     li.addEventListener("keydown", (ev) => {
+      if (deleting) return;
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
         safeCall(select, z.id);
@@ -784,12 +1116,22 @@ function renderList() {
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
     id.className = "zid muted";
-    id.textContent = `${api.loc("note-kind-" + (z.kind || "zettel"))} · ${z.reference || z.id}`;
+    const reference = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    reference.className = "note-row-reference";
+    reference.textContent = z.reference || z.id;
+    id.append(reference);
     id.title = z.id;
     li.appendChild(id);
 
-    li.addEventListener("click", () => safeCall(select, z.id));
-    li.addEventListener("dblclick", () => safeCall(openEditor, z.id));
+    li.addEventListener("click", () => {
+      if (!deleting) safeCall(select, z.id);
+    });
+    li.addEventListener("dblclick", () => {
+      if (!deleting && !inTrash()) safeCall(openEditor, z.id);
+    });
     list.appendChild(li);
   }
   spacer((zettels.length - end) * ROW_HEIGHT);
@@ -805,6 +1147,11 @@ async function safeCall(fn, ...args) {
 }
 
 async function refreshUnresolved() {
+  if (inTrash()) {
+    $("knowledge-base-unresolved").hidden = true;
+    return;
+  }
+  $("knowledge-base-unresolved").hidden = false;
   const version = ++unresolvedVersion;
   const refs = await api.getUnresolvedRefs();
   if (version !== unresolvedVersion || window.closed) return;
@@ -943,6 +1290,7 @@ function select(id, record = true, mounted = false) {
 }
 
 async function navigateHistory(direction) {
+  if (deleting) return;
   let index = historyIndex + direction;
   let card;
   while (index >= 0 && index < history.length) {
@@ -958,8 +1306,8 @@ async function navigateHistory(direction) {
   if (!card) return;
   historyIndex = index;
   $("knowledge-base-search").value = "";
-  $("knowledge-base-entries").checked = false;
-  $("knowledge-base-kind").value = "";
+  $("knowledge-base-view").value = "notes";
+  updateActions();
   await refresh();
   select(card.id, false);
 }
@@ -985,7 +1333,8 @@ async function refreshDrafts() {
     )
   );
   menu.value = drafts[0]?.draftId || "";
-  document.getElementById("knowledge-base-drafts").hidden = !drafts.length;
+  document.getElementById("knowledge-base-drafts").hidden =
+    inTrash() || !drafts.length;
 }
 
 async function renderDetail(id) {
@@ -1006,9 +1355,7 @@ async function renderDetail(id) {
   $("knowledge-base-detail-empty").hidden = true;
   $("knowledge-base-detail").hidden = false;
 
-  $("knowledge-base-detail-id").textContent = api.loc(
-    "note-kind-" + (z.kind || "zettel"),
-  );
+  $("knowledge-base-detail-id").textContent = api.loc("editor-key");
   window.ZoteroKnowledgeBaseMarkdown.reference(
     $("knowledge-base-detail-reference"),
     z.reference || z.id,
@@ -1122,7 +1469,11 @@ async function renderDetail(id) {
 }
 
 async function showInlineEditor(options) {
-  const frame = document.getElementById("knowledge-base-workbench-editor");
+  const frame = /** @type {HTMLIFrameElement} */ (
+    /** @type {unknown} */ (
+      document.getElementById("knowledge-base-workbench-editor")
+    )
+  );
   if (
     !(await api.mountEditor(frame, {
       ...options,
@@ -1143,6 +1494,7 @@ async function showInlineEditor(options) {
   )
     return false;
   frame.hidden = false;
+  if (options.editTags) await frame.contentWindow.knowledgeBaseEditTags?.();
   $("knowledge-base-error").hidden = true;
   for (const id of ["knowledge-base-detail", "knowledge-base-detail-empty"])
     document.getElementById(id).hidden = true;
@@ -1162,17 +1514,15 @@ function openEditor(id) {
 }
 
 function newZettel(title = "") {
+  if (inTrash() || deleting) return;
   navigationVersion++;
   if (args.embedded)
     return safeCall(() =>
       showInlineEditor({
-        kind:
-          $("knowledge-base-kind").value === "thinking" ? "thinking" : "zettel",
         prefillTitle: title,
       }),
     );
   api.openEditor({
-    kind: $("knowledge-base-kind").value === "thinking" ? "thinking" : "zettel",
     prefillTitle: title,
     onSaved: (id) =>
       safeCall(async () => {
@@ -1184,6 +1534,17 @@ function newZettel(title = "") {
 
 async function removeZettel(id) {
   if (deleting) return;
+  if (inTrash()) {
+    const note = trashNotes.find((note) => note.id === id);
+    if (
+      !note?.editable ||
+      !window.confirm(
+        api.loc("trash-confirm-delete", { title: note.title || id }),
+      )
+    )
+      return;
+    return purgeNotes([id]);
+  }
   deleting = true;
   updateActions();
   try {
@@ -1228,12 +1589,14 @@ async function removeZettel(id) {
       getRenderedRow(next.id)?.focus({ preventScroll: true });
     } else {
       $("knowledge-base-detail").hidden = true;
-      $("knowledge-base-detail-empty").hidden = false;
+      $("knowledge-base-detail-empty").hidden =
+        args.embedded &&
+        !document.getElementById("knowledge-base-workbench-editor").hidden;
       $("knowledge-base-list").focus();
     }
   } finally {
     deleting = false;
-    updateActions();
+    if (!window.closed) updateActions();
   }
 }
 

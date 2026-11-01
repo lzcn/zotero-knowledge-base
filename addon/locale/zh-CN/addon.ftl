@@ -11,13 +11,11 @@ pref-workbench-window =
     .label = 独立窗口
 pref-source-heading = 来源引用
 pref-source-style = 参考文献格式
-pref-source-help = 在设置 → 引用中管理格式。
+    .tooltiptext = 在设置 → 引用中管理格式。
 source-style-missing = 请选择可用的引用格式。
 editor-source-format-failed = 来源格式生成失败：
 editor-more = 更多
 editor-open-window = 在独立窗口中打开
-editor-convert-zettel = 转为 Zettel
-editor-convert-thinking = 转为 Thinking
 personal-knowledge-title = 个人知识
 
 menu-new-zettel = 新建卡片
@@ -30,20 +28,22 @@ section-count =
     { $count } 篇笔记
 section-no-item = 选中文献条目后显示其笔记
 section-loading = 加载中…
-section-new = ＋ 新建笔记
+section-new = 新建笔记
+section-new-zettel = 新建 Zettel
+section-zettels = Zettel · { $count }
 
 manager-title = 知识库
 manager-new = 新建笔记
-manager-copy-zettels = 复制卡片目录
-manager-copy-zettels-done = 已复制 { $count } 条 Zettel
-manager-copy-zettels-empty = 没有可复制的 Zettel
+manager-copy-zettels = 复制笔记目录
+manager-copy-zettels-done = 已复制 { $count } 条笔记
+manager-copy-zettels-empty = 没有可复制的笔记
 manager-search-placeholder = 搜索笔记…
 manager-empty-detail = 选择笔记
 manager-outgoing = 链接的笔记
 manager-backlinks = 反向链接
 manager-preview = 内容
 manager-edit = 编辑
-manager-delete = 移入 Zotero 回收站
+manager-delete = 移入回收站
 manager-unresolved = 不可用的链接
 manager-unresolved-tip = 打开引用此链接的笔记进行修正
 manager-link-trashed = 从 Zotero 回收站恢复笔记后重新连接。
@@ -56,7 +56,7 @@ manager-source-missing = 来源不可用
 manager-count =
     { $count } 篇笔记
 manager-updated = 更新于
-manager-confirm-delete = 将「{ $title }」移入 Zotero 回收站？
+manager-confirm-delete = 将「{ $title }」移入回收站？
 
 editor-title-new = 新建笔记
 editor-title-edit = 编辑笔记
@@ -163,8 +163,7 @@ editor-visual = 所见即所得
 hierarchy = 知识脉络
 parent = 父节点
 children = 子节点
-entries = 入口点
-root = 入口点
+root = 无上级
 parent-search = 用编号或标题查找父节点
 references = 双链
 both = 脉络 + 双链
@@ -224,11 +223,6 @@ editor-note-missing = 笔记不可用，请检查 Zotero 回收站。
 editor-browse = 浏览
 editor-edit = 编辑
 
-note-kind = 笔记类型
-note-kind-all = 全部笔记
-note-kind-literature = 文献笔记
-note-kind-zettel = 卡片
-note-kind-thinking = 思考笔记
 literature-source-required = 请先选择文献条目作为来源。
 literature-exists = 这个条目已有文献笔记，请从条目侧栏打开。
 
@@ -261,6 +255,7 @@ editor-outline-parent = 上级
 manager-source-item = 来源 · Zotero
 
 note-reference-copy = 复制笔记引用
+note-reference-copied = 已复制引用。
 
 markdown-node-citation = 引用
 markdown-node-annotation = 标注
@@ -268,6 +263,7 @@ markdown-node-note-link = 笔记链接
 markdown-node-image = 图片
 
 editor-key = 笔记 ID
+editor-key-edit = 修改笔记 ID
 
 editor-key-auto = 自动生成
 
@@ -282,14 +278,12 @@ editor-key-invalid = ID 不能含空格、方括号、|，或以 @ 开头。
 editor-key-exists = 此 ID 已被另一篇笔记使用。
 editor-key-resolve = 使用可用 ID
 
-pref-tags-heading = 笔记标签
 pref-inherit-tags =
-    .label = 继承父级标签
-pref-inherit-tags-help = 包含来源条目和上级笔记的标签。
-pref-groups-heading = 图谱分组
+    .label = 继承来源和上级笔记标签
+pref-groups-heading = 分组
 pref-graph-label-length = 标题长度
 pref-graph-label-length-unit = 个字符
-pref-groups-help = 按列表顺序匹配分组。
+pref-groups-help = 首个匹配的分组优先。
 pref-add-group =
     .label = 新建分组
 graph-group-tag = 选择标签
@@ -317,7 +311,8 @@ pref-ai-key = API 密钥
 pref-ai-show-key = 显示 API 密钥
 pref-ai-hide-key = 隐藏 API 密钥
 pref-ai-path = CLI 路径
-ai-remove-key = 移除
+ai-remove-key =
+    .label = 移除
 ai-connect = 建立联系
 ai-apply = 应用
 ai-close = 关闭
@@ -343,7 +338,7 @@ ai-progress-evidence = 正在核对双方原文证据…
 ai-progress-summaries = 读取摘要 · { $count } / { $total }
 ai-progress-reading = 读取笔记 · { $count }
 ai-applied = 已应用
-ai-zettel-required = 请打开可编辑的卡片。
+ai-zettel-required = 请打开可编辑的笔记。
 ai-save-required = 请先保存笔记。
 ai-plan-stale = 笔记已变化，请重新分析。
 ai-note-too-long = 笔记超过 60,000 字符，未应用修改。
@@ -364,14 +359,13 @@ ai-test = 测试连接
 ai-testing = 正在测试连接…
 ai-test-success = 连接成功。
 
-pref-general-heading = 常规
 pref-ai-advanced = 高级
-pref-ai-api-help = 可使用已有的环境密钥。
-pref-ai-opencode-go-help = 使用 OpenCode Go 订阅密钥。
+pref-ai-api-help = 可用已设置的环境密钥。
+pref-ai-opencode-go-help = 使用 Go 订阅密钥。
 ai-context-too-long = 候选全文超过本次分析的上下文上限，未应用任何修改。
 ai-free-restricted = OpenCode 拒绝在其客户端以外调用此 Free 模型。请选择支持的 Go 或 API 模型，已保存的密钥不变。
 pref-ai-cli-help = 使用已有的 { $provider } 登录。
-pref-ai-privacy = 分析时将当前及相关笔记发送至所选服务。
+pref-ai-privacy = 将当前及相关笔记发送至所选服务。
 ai-cli-auto-path = 自动查找
 ai-cli-not-found = 请安装 { $provider }，或在高级设置中指定路径。
 ai-balance-required = { $provider } 余额不足。
@@ -379,7 +373,7 @@ ai-models-unavailable = 无法加载模型，请手动输入。
 ai-show-key-short = 显示
 ai-hide-key-short = 隐藏
 
-pref-graph-appearance = 图谱显示
+pref-graph-appearance = 图谱
 
 ai-list-models = 选择模型
 ai-listing-models = 加载模型…
@@ -387,7 +381,74 @@ ai-models-listed = { $count } 个模型
 ai-default-model = 默认模型
 
 ai-provider-unavailable = 服务不可用，请重新选择。
-pref-ai-open = AI 设置…
+pref-ai-open =
+    .label = AI 设置…
 pref-ai-enabled = 启用 AI 功能
-pref-ai-enabled-help = 默认关闭。关闭后取消分析并隐藏 AI 操作，保留已保存的配置和密钥。
 ai-disabled = 请先在设置中启用 AI 功能。
+
+pref-literature-template = 笔记模板
+pref-template-choice = 新建时使用
+template-none = 不使用模板
+pref-template-edit = 正文（Markdown）
+pref-template-name = 名称
+template-untitled = 未命名模板
+template-delete-confirm = 删除模板“{ $name }”？已有笔记保持不变。
+literature-template-invalid = 模板设置无效，未覆盖已保存的模板。
+literature-template-name-invalid = 请输入非空且不重复的模板名称。
+pref-template-new =
+    .label = 新增
+pref-template-delete =
+    .label = 删除
+
+note-tags = 标签
+note-tags-edit = 编辑标签…
+note-tag-add = 输入标签，按回车添加
+note-tag-remove = 移除标签 { $tag }
+section-source-note = 文献笔记
+section-source-note-open = 打开文献笔记
+section-source-note-new = 新建文献笔记
+
+manager-view = 笔记视图
+manager-notes = 笔记
+trash-title = 回收站
+trash-restore = 恢复
+trash-empty = 清空回收站…
+trash-cancel = 取消
+trash-delete = 永久删除…
+trash-select-note = 选择已删除的笔记以查看或恢复
+trash-confirm-delete = 永久删除“{ $title }”及其附件？此操作无法撤销。
+trash-confirm-empty = 永久删除 Knowledge Base 回收站中的 { $count } 条笔记及其附件？此操作无法撤销。来源文献和 Knowledge Base 以外的笔记会保留。
+trash-progress = 正在删除笔记：{ $done } / { $total }
+trash-delete-done = 已永久删除 { $count } 条笔记。
+trash-delete-cancelled = 已取消，已永久删除 { $count } 条笔记。
+trash-delete-skipped = 已保留 { $count } 条已恢复、不可用或只读的笔记。
+trash-delete-failed = 已删除 { $count } 条笔记，删除 { $note } 时失败：{ $error }
+trash-restored = 笔记已恢复。
+
+manager-open-note = 打开笔记
+manager-open-note-window = 在新窗口打开
+manager-copy-note-link = 复制笔记链接
+
+pref-ui-style = 界面风格
+
+text-tools-normalize = 整理格式
+text-tools-find = 查找替换
+text-tools-unchanged = 未发现需要整理的格式。
+text-tools-failed = 无法完成文本操作。
+text-tools-done = 已整理 { $count } 处格式。
+text-search-find = 查找
+text-search-replace = 替换
+text-search-next = 下一个
+text-search-previous = 上一个
+text-search-all = 全部选择
+text-search-case = 区分大小写
+text-search-regexp = 正则表达式
+text-search-word = 全词匹配
+text-search-replace-all = 全部替换
+text-search-close = 关闭
+text-search-line = 跳转到行
+text-search-go = 跳转
+text-search-current = 当前匹配项
+text-search-on-line = 所在行
+text-search-replaced-line = 已替换第 $ 行的匹配项
+text-search-replaced-count = 已替换 $ 处

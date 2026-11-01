@@ -1,11 +1,19 @@
 import { EditorState, Transaction, Compartment } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { markdown } from "@codemirror/lang-markdown";
+import { EditorView, keymap, runScopeHandlers } from "@codemirror/view";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  isolateHistory,
+} from "@codemirror/commands";
+import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { configureNodeLabels, zNodeField } from "./markdown-nodes";
 import { markdownMath } from "./markdown-math";
 import { tags } from "@lezer/highlight";
+import type { MarkdownParser } from "@lezer/markdown";
+import { markdownMathEdits, type TextRange } from "./text-format";
 
 // Markdown punctuation is syntax, not an error. Keep prose/math in the host text color.
 const sourceHighlightStyle = HighlightStyle.define([
@@ -31,6 +39,8 @@ export interface MarkdownSource extends HTMLElement {
   setSelectionRange(start: number, end: number): void;
   setRangeText(text: string, start?: number, end?: number, mode?: string): void;
   setTypography(properties: Record<string, string>): void;
+  normalizeMath(): number;
+  openSearch(): void;
   destroy(): void;
 }
 
@@ -98,6 +108,8 @@ function mount(
     state: EditorState.create({
       doc: textarea.value,
       extensions: [
+        search({ top: true }),
+        EditorState.phrases.of(labels),
         EditorView.contentAttributes.of({
           "aria-label": textarea.getAttribute("aria-label") || "",
           spellcheck: "false",
@@ -106,7 +118,17 @@ function mount(
         markdown({ extensions: [markdownMath] }),
         EditorView.lineWrapping,
         syntaxHighlighting(sourceHighlightStyle),
-        keymap.of([...defaultKeymap, ...historyKeymap]),
+        keymap.of([
+          {
+            key: "Mod-h",
+            mac: "Mod-Alt-f",
+            run: openSearchPanel,
+            scope: "editor search-panel",
+          },
+          ...searchKeymap,
+          ...defaultKeymap,
+          ...historyKeymap,
+        ]),
         zNodeField,
         editable.of([
           EditorState.readOnly.of(readOnly),
@@ -141,6 +163,26 @@ function mount(
           },
           "&.cm-focused": { outline: "none" },
           ".cm-line": { padding: "0" },
+          ".cm-search": {
+            fontFamily: "system-ui, sans-serif",
+            fontSize: "13px",
+            lineHeight: "1.5",
+            whiteSpace: "normal",
+          },
+          ".cm-search button, .cm-search input": {
+            font: "inherit",
+            boxSizing: "border-box",
+            maxWidth: "100%",
+          },
+          ".cm-search button, .cm-search input[type=text]": {
+            minHeight: "26px",
+            padding: "2px 6px",
+          },
+          ".cm-search label": {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+          },
           ".cm-cursor": { borderLeftColor: "currentColor" },
           ".knowledge-base-md-node": {
             display: "inline-block",
@@ -290,6 +332,22 @@ function mount(
   let detachEvents = () => {};
   if (root.ownerDocument !== document) {
     const relay = (event: Event) => {
+      // Keep note search ahead of the outer workbench's search/close shortcuts.
+      if (
+        event instanceof KeyboardEvent &&
+        !event.defaultPrevented &&
+        !event.isComposing &&
+        event.keyCode !== 229 &&
+        (((event.metaKey || event.ctrlKey) &&
+          (["f", "h"].includes(event.key.toLowerCase()) ||
+            event.code === "KeyF")) ||
+          (event.key === "Escape" && view.dom.querySelector(".cm-search"))) &&
+        runScopeHandlers(view, event, "editor")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       let forwarded: Event;
       if (event instanceof KeyboardEvent)
         forwarded = new KeyboardEvent(event.type, event);
@@ -305,13 +363,15 @@ function mount(
           cancelable: true,
           dataTransfer: event.dataTransfer,
         });
+      else if (event instanceof MouseEvent)
+        forwarded = new MouseEvent(event.type, event);
       else return;
       if (!root.dispatchEvent(forwarded)) {
         event.preventDefault();
         event.stopPropagation();
       }
     };
-    const types = ["keydown", "paste", "dragover", "drop"];
+    const types = ["keydown", "paste", "dragover", "drop", "mousedown"];
     for (const type of types) document.addEventListener(type, relay, true);
     detachEvents = () => {
       for (const type of types) document.removeEventListener(type, relay, true);
@@ -325,6 +385,64 @@ function mount(
     for (const [name, value] of Object.entries(properties))
       if (value) view.dom.style.setProperty(`--knowledge-base-${name}`, value);
     view.requestMeasure();
+  };
+  root.openSearch = () => {
+    if (!destroyed) openSearchPanel(view);
+  };
+  root.normalizeMath = () => {
+    if (destroyed || readOnly || disabled || composing) return 0;
+    const text = root.value,
+      ranges: TextRange[] = [];
+    // Parse the complete source so fenced/inline code and links remain literal.
+    (markdownLanguage.parser as MarkdownParser)
+      .configure([markdownMath])
+      .parse(text)
+      .iterate({
+        enter(node) {
+          if (
+            [
+              "FencedCode",
+              "CodeBlock",
+              "InlineCode",
+              "Link",
+              "LinkReference",
+              "Image",
+              "Autolink",
+              "HTMLTag",
+              "HTMLBlock",
+              "CommentBlock",
+              "ProcessingInstructionBlock",
+              "BlockMath",
+              "InlineMath",
+            ].includes(node.name)
+          ) {
+            ranges.push({ from: node.from, to: node.to });
+            return false;
+          }
+        },
+      });
+    const selection =
+      root.selectionStart !== root.selectionEnd
+        ? { from: root.selectionStart, to: root.selectionEnd }
+        : undefined;
+    const edits = markdownMathEdits(text, ranges, selection);
+    if (!edits.length) return 0;
+    const changes = view.state.changes(
+      edits.map((edit) => ({
+        from: edit.start,
+        to: edit.end,
+        insert: edit.replacement,
+      })),
+    );
+    view.dispatch({
+      changes,
+      effects: view.scrollSnapshot().map(changes),
+      annotations: [
+        Transaction.userEvent.of("input.format"),
+        isolateHistory.of("full"),
+      ],
+    });
+    return edits.length;
   };
   root.destroy = () => {
     if (destroyed) return;

@@ -26,8 +26,7 @@ export async function getZettelOutline() {
     FROM zettels z
     LEFT JOIN card_parents p ON p.card_id = z.id
     LEFT JOIN zettels parent ON parent.id = p.parent_id
-    WHERE z.kind = 'zettel'
-      AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)
+    WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)
     ORDER BY z.title_folded, z.id`);
   return rows.map((row) => ({
     id: row.id,

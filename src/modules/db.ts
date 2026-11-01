@@ -10,12 +10,10 @@
  */
 
 const DB_FILENAME = "knowledge-base.sqlite";
-const SCHEMA_VERSION = 11;
-
-export type NoteKind = "literature" | "zettel" | "thinking";
+const SCHEMA_VERSION = 12;
 
 export interface ZettelRow {
-  kind: NoteKind;
+  source_note: number;
   custom_key: string | null;
   id: string;
   title: string;
@@ -54,7 +52,7 @@ const SCHEMA_TABLES: string[] = [
     library_id INTEGER,
     annotation_key TEXT,
     custom_key TEXT,
-    kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
+    source_note INTEGER NOT NULL DEFAULT 0 CHECK(source_note IN (0, 1) AND (source_note = 0 OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   )`,
@@ -188,7 +186,8 @@ async function ensureSchema(): Promise<void> {
           "SELECT value FROM meta WHERE key = 'schemaVersion'",
         )
       : undefined;
-    if (row?.value !== String(SCHEMA_VERSION))
+    if (row?.value === "11") await convertNoteTypesToTags();
+    else if (row?.value !== String(SCHEMA_VERSION))
       throw new Error(
         `Knowledge Base: unsupported schema ${row?.value ?? "missing"}; expected ${SCHEMA_VERSION}`,
       );
@@ -197,7 +196,7 @@ async function ensureSchema(): Promise<void> {
     await runSchemaStatement(sql);
   }
   await exec(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_literature_source ON zettels(library_id, item_key) WHERE kind = 'literature'",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_literature_source ON zettels(library_id, item_key) WHERE source_note = 1",
   );
   for (const sql of SCHEMA_INDEXES) {
     await runSchemaStatement(sql, true);
@@ -209,6 +208,45 @@ async function ensureSchema(): Promise<void> {
 
   await ensureSearchIndex();
   await assertSchema();
+}
+
+/** Convert the previously supported schema once; classification becomes editable tags. */
+async function convertNoteTypesToTags(): Promise<void> {
+  await exec(`INSERT OR IGNORE INTO tags(zettel_id, tag)
+    SELECT id, CASE kind WHEN 'literature' THEN 'Literature Note' WHEN 'thinking' THEN 'Thinking Note' ELSE 'Zettel' END FROM zettels`);
+  await exec("DROP INDEX IF EXISTS idx_literature_source");
+  await exec(
+    "ALTER TABLE zettels ADD COLUMN source_note INTEGER NOT NULL DEFAULT 0 CHECK(source_note IN (0, 1) AND (source_note = 0 OR (item_key IS NOT NULL AND library_id IS NOT NULL)))",
+  );
+  await exec("UPDATE zettels SET source_note = (kind = 'literature')");
+  await exec("ALTER TABLE zettels DROP COLUMN kind");
+  for (const table of ["editor_drafts", "note_save_operations"]) {
+    const rows = await getAll<{ id: string; data: string }>(
+      `SELECT id, data FROM ${table}`,
+    );
+    for (const row of rows) {
+      const data = JSON.parse(row.data);
+      const input = table === "note_save_operations" ? data.input : data;
+      if (input.kind) {
+        input.sourceNote = input.kind === "literature";
+        input.initialTags = [
+          ...new Set([
+            ...(input.initialTags ?? []),
+            input.kind === "literature"
+              ? "Literature Note"
+              : input.kind === "thinking"
+                ? "Thinking Note"
+                : "Zettel",
+          ]),
+        ];
+        delete input.kind;
+        await exec(`UPDATE ${table} SET data = ? WHERE id = ?`, [
+          JSON.stringify(data),
+          row.id,
+        ]);
+      }
+    }
+  }
 }
 
 async function ensureSearchIndex(): Promise<void> {
@@ -252,7 +290,7 @@ const REQUIRED_COLUMNS = [
   "item_key",
   "library_id",
   "annotation_key",
-  "kind",
+  "source_note",
   "custom_key",
   "created_at",
   "updated_at",

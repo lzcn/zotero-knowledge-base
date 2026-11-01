@@ -4,7 +4,6 @@ export interface NoteOutline {
   id: string;
   title: string;
   reference: string;
-  kind: string;
   parentId: string | null;
   version: number;
   canParent: boolean;
@@ -68,12 +67,12 @@ Choose the smallest complete sentence or passage showing the claim and its condi
 Do not propose references already present in the current note.`;
 
 function noteContext(note: NoteOutline) {
-  const { id, title, kind, parentId, canParent, summary } = note;
-  return { id, title, kind, parentId, canParent, summary };
+  const { id, title, parentId, canParent, summary } = note;
+  return { id, title, parentId, canParent, summary };
 }
 
 function titleEntry(note: NoteOutline) {
-  return [note.id, note.title, note.parentId, note.kind, note.canParent];
+  return [note.id, note.title, note.parentId, note.canParent];
 }
 
 /** Walk descendants once; checking every candidate's ancestry is quadratic for deep trees. */
@@ -189,7 +188,7 @@ export async function planConnections(
     const results = await Promise.allSettled(
       batches.slice(offset, offset + 2).map(async (batch) => {
         const result = await ask(
-          `${instruction}\nSelect up to 24 notes worth inspecting for a parent or meaningful connection. Rows are [id,title,parentId,kind,canParent]. Also propose up to 6 short search queries (specific concepts, synonyms or translations, in English and/or Chinese) to find relevant BODY passages even when titles differ. Return {"ids":[],"queries":[]}; either array may be empty.\n${JSON.stringify({ ...task, titles: batch.map(titleEntry) })}`,
+          `${instruction}\nSelect up to 24 notes worth inspecting for a parent or meaningful connection. Rows are [id,title,parentId,canParent]. Also propose up to 6 short search queries (specific concepts, synonyms or translations, in English and/or Chinese) to find relevant BODY passages even when titles differ. Return {"ids":[],"queries":[]}; either array may be empty.\n${JSON.stringify({ ...task, titles: batch.map(titleEntry) })}`,
         );
         context.check();
         const ids = selectedIDs(

@@ -99,6 +99,17 @@ function pass(label) {
 const exists = async (url) =>
   IOUtils.exists(path.join(dir, "knowledge-base/assets", url.split(":")[1]));
 try {
+  await mkdir(path.join(dir, "knowledge-base/assets"), { recursive: true });
+  const cardBodies = globalThis.__cardBodies;
+  globalThis.__cardBodies = () => {
+    throw new Error("Empty asset storage must not scan note bodies");
+  };
+  try {
+    assert.equal(await assets.cleanupUnusedImages(), 0);
+  } finally {
+    globalThis.__cardBodies = cardBodies;
+  }
+  pass("Empty asset storage skips reading the full note and draft bodies");
   const saved = await assets.importImage([1, 2, 3], "image/png", "saved");
   rows = [`![figure](${saved})`];
   await assets.releaseImageDraft("saved");

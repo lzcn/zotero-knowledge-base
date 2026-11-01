@@ -44,6 +44,10 @@ export function cleanupUnusedImages(): Promise<number> {
     if (stopping) return 0;
     if (!(await IOUtils.exists(assetDirectory()))) return 0;
     if (stopping) return 0;
+    const files = (await IOUtils.getChildren(assetDirectory())).filter((file) =>
+      FILE_RE.test(PathUtils.filename(file)),
+    );
+    if (!files.length || stopping) return 0;
     const rows = await getAll<{ body: string }>(
       "SELECT body FROM zettels UNION ALL SELECT body FROM editor_drafts UNION ALL SELECT original_body AS body FROM card_notes",
     );
@@ -58,7 +62,6 @@ export function cleanupUnusedImages(): Promise<number> {
       }
     }
     if (stopping) return 0;
-    const files = await IOUtils.getChildren(assetDirectory());
     let removed = 0;
     for (const file of files) {
       if (stopping) return removed;

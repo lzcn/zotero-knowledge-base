@@ -1,0 +1,38 @@
+/* Generated labels stay outside the saved document and text selection. */
+:where(.primary-editor, #knowledge-base-preview, #knowledge-base-editor-preview)
+  :is(h1, h2, h3, h4, h5, h6)::after {
+  content: "\00a0" var(--knowledge-base-heading-level);
+  display: inline;
+  margin-inline-start: 4px;
+  vertical-align: middle;
+  color: var(--fill-tertiary, var(--muted, #8b8b91));
+  font:
+    400 10px/1 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+h1 {
+  --knowledge-base-heading-level: "H1";
+}
+h2 {
+  --knowledge-base-heading-level: "H2";
+}
+h3 {
+  --knowledge-base-heading-level: "H3";
+}
+h4 {
+  --knowledge-base-heading-level: "H4";
+}
+h5 {
+  --knowledge-base-heading-level: "H5";
+}
+h6 {
+  --knowledge-base-heading-level: "H6";
+}

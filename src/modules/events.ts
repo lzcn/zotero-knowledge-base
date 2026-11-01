@@ -20,6 +20,8 @@ const listeners = new Set<(change: DataChange) => void>();
 let revision = 0;
 let identityRevision = 0;
 export const getIdentityRevision = () => identityRevision;
+let tagRevision = 0;
+export const getTagRevision = () => tagRevision;
 let sourceRevision = 0;
 export const getSourceRevision = () => sourceRevision;
 let pending: Omit<DataChange, "revision"> | undefined;
@@ -47,6 +49,14 @@ export function notifyDataChange(
     )
   )
     identityRevision++;
+  if (
+    change.all ||
+    !change.fields?.length ||
+    change.fields.some((field) =>
+      ["tags", "hierarchy", "availability", "source"].includes(field),
+    )
+  )
+    tagRevision++;
   const scheduled = !!pending;
   pending = {
     all: !!pending?.all || !!change.all,

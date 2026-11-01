@@ -72,6 +72,8 @@ await build({
       export const unregisterItemPaneUI = () => run("unregisterPane");
       export const registerReaderUI = () => run("registerReader");
       export const unregisterReaderUI = () => run("unregisterReader");
+      export const registerReaderToolbar = () => run("registerReaderToolbar");
+      export const unregisterReaderToolbar = () => run("unregisterReaderToolbar");
       export const clearStartupLog = () => run("clearLog");
       export const reportStartupFailure = async (step, error) => { state().failures.push({ step, error }); };
     `,
@@ -103,6 +105,7 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
   globalThis.lifecycle = { calls: [], failures: [], errors: [], fail, gate };
   const state = globalThis.lifecycle;
   globalThis.Zotero = {
+    Prefs: { get: () => undefined },
     initializationPromise: Promise.resolve(),
     unlockPromise: Promise.resolve(),
     uiReadyPromise: unready ? new Promise(() => {}) : Promise.resolve(),
@@ -162,6 +165,10 @@ test("two windows retain independent resources; duplicate registration and shutd
     await Promise.all([h.hooks.onStartup(), h.hooks.onStartup()]);
     assert.equal(h.state.calls.filter((name) => name === "initDB").length, 1);
     assert.ok(!h.state.calls.includes("registerReader"));
+    assert.equal(
+      h.state.calls.filter((name) => name === "registerReaderToolbar").length,
+      1,
+    );
     for (const dom of h.doms)
       assert.equal(dom.window.document.querySelectorAll("menuitem").length, 2);
     await h.hooks.onMainWindowLoad(h.doms[1].window);
@@ -169,6 +176,11 @@ test("two windows retain independent resources; duplicate registration and shutd
       h.doms[1].window.document.querySelectorAll("menuitem").length,
       2,
     );
+    const styles = h.doms.map(
+      (dom) => dom.window.document.querySelector("link").href,
+    );
+    assert.equal(styles[0], styles[1]);
+    assert.match(styles[0], /section\.css\?v=[\d.]+-\d+$/);
     await h.hooks.onMainWindowUnload(h.doms[0].window);
     assert.equal(
       h.doms[0].window.document.querySelectorAll("menuitem").length,

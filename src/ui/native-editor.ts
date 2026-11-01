@@ -5,6 +5,8 @@ import {
 } from "./native-markdown-toolbar";
 import { attachReadingView } from "./native-reading-view";
 import type { NativeNoteChange } from "../modules/note-sessions";
+import { attachTextTools, type textToolLabels } from "./text-tools";
+import type { MarkdownSource } from "./markdown-source";
 
 interface NoteLinkTarget {
   id: string;
@@ -102,6 +104,10 @@ export interface NativeNoteElement extends HTMLElement {
   destroy(): void;
 }
 export interface NativeEditorOptions {
+  textTools: {
+    labels: ReturnType<typeof textToolLabels>;
+    source(): MarkdownSource | undefined;
+  };
   element: NativeNoteElement;
   item: Zotero.Item;
   readOnly?: boolean;
@@ -125,6 +131,7 @@ export interface NativeEditorOptions {
   resolveNoteLink(ref: string): Promise<NoteLinkTarget | null>;
 }
 export interface NativeEditorController {
+  captureChanges(): void;
   getHTML(): string;
   getSavedHTML(): string;
   flush(): Promise<void>;
@@ -155,10 +162,12 @@ async function create(
   let destroyed = false;
   let removeMarkdownToggle: ReturnType<typeof attachMarkdownToggle> | undefined;
   let removeNoteLink = () => {};
+  let removeTextTools = () => {};
   let sourceMode = false;
   let readingMode = false;
   let composing = false;
   let readingView: ReturnType<typeof attachReadingView> | undefined;
+  let appearance: HTMLStyleElement | undefined;
   let previousDisableSaving = element.getCurrentInstance()._disableSaving;
   type LinkRange = {
     view: NativeEditorView;
@@ -404,8 +413,10 @@ async function create(
       options.onNoteQuery(null);
     }
     readingView?.destroy();
+    appearance?.remove();
     removeMarkdownToggle?.();
     removeNoteLink();
+    removeTextTools();
     if (!frame) return;
     frame.document.removeEventListener("input", input, true);
     frame.document.removeEventListener("paste", paste, true);
@@ -424,12 +435,54 @@ async function create(
   const attach = () => {
     ownedInstances.add(element.getCurrentInstance().instanceID);
     frame = element.getCurrentInstance()._iframeWindow;
+    frame.document.documentElement.toggleAttribute(
+      "data-plugin-bear",
+      Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true,
+    );
+    appearance = frame.document.createElement("style");
+    appearance.id = "knowledge-base-note-appearance";
+    // Apply display typography only to this KB editor, never the note HTML or preferences.
+    appearance.textContent = `
+      @import url("chrome://knowledge-base/content/ui.css");
+      @import url("chrome://knowledge-base/content/note-headings.css");
+      .primary-editor {
+        --editor-padding-block: 24px;
+        --editor-padding-inline: 36px;
+        font-family: var(--ui-editor-font) !important;
+        max-width: 760px !important;
+        box-sizing: border-box;
+        margin-inline: auto !important;
+        padding-inline: var(--editor-padding-inline) !important;
+        padding-block: var(--editor-padding-block) 50vh !important;
+      }
+      .primary-editor p, .primary-editor li { line-height: 1.7; }
+      .primary-editor p { margin-block: 0 .85em; }
+      .primary-editor h1, .primary-editor h2, .primary-editor h3 {
+        font-family: inherit; font-weight: 600; line-height: 1.35;
+      }
+      .primary-editor h1 { font-size: 1.8em; letter-spacing: -.02em; }
+      .primary-editor h2 { font-size: 1.4em; }
+      .primary-editor h3 { font-size: 1.15em; }
+      @media (max-width: 640px) {
+        .primary-editor { --editor-padding-inline: 20px; }
+      }
+    `;
+    frame.document.head.append(appearance);
     if (!readOnly)
       removeMarkdownToggle = attachMarkdownToggle(
         frame,
         options.markdownLabel,
         options.onMarkdown,
       );
+    if (!readOnly)
+      removeTextTools = attachTextTools(frame, {
+        ...options.textTools,
+        canEdit: () => !destroyed && !readOnly && !readingMode,
+        report: (error) =>
+          Zotero.logError(
+            error instanceof Error ? error : new Error(String(error)),
+          ),
+      });
     if (!readOnly) {
       const link = frame.document.createElement("button");
       link.className = "toolbar-button knowledge-base-note-link";
@@ -491,6 +544,7 @@ async function create(
     }
   };
   return {
+    captureChanges: changed,
     getHTML: () => getHTML() || lastHTML,
     getSavedHTML: () => options.item.getNote(),
     flush,
@@ -515,7 +569,10 @@ async function create(
       readingView?.show(value, html);
       if (value) readingView?.focus();
     },
-    getTypography: () => getNativeTypography(frame),
+    getTypography: () => ({
+      ...getNativeTypography(frame),
+      "font-family": "var(--ui-editor-font)",
+    }),
     async setReadOnly(value) {
       if (readOnly === value) return;
       await flush();
