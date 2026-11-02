@@ -12,9 +12,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { unzipSync, zipSync, strFromU8, strToU8 } from "fflate";
 
-const count = Number(process.env.KB_STARTUP_NOTES || 500);
+const count = Number(process.env.KNOWLEDGE_BASE_STARTUP_NOTES || 500);
 if (!Number.isSafeInteger(count) || count < 10 || count > 2000)
-  throw new Error("KB_STARTUP_NOTES must be between 10 and 2000");
+  throw new Error("KNOWLEDGE_BASE_STARTUP_NOTES must be between 10 and 2000");
 const root = await mkdtemp(join(tmpdir(), "knowledge-base-startup-"));
 const profile = join(root, "profile");
 const data = join(root, "data");
@@ -54,7 +54,7 @@ files[bundlePath] = strToU8(
     `step = name;
         const measureStarted = Date.now();
         await run();
-        (Zotero.__kbStartupSteps ||= []).push({name,ms:Date.now()-measureStarted});`,
+        (Zotero.__knowledgeBaseStartupSteps ||= []).push({name,ms:Date.now()-measureStarted});`,
   ),
 );
 files["content/editor.js"] = strToU8(
@@ -64,13 +64,13 @@ for (const name of ['loadEditor','refreshRelations','refreshHealth','setEditorMo
   const original=window[name];
   window[name]=async function(...args) {
     const start=Date.now();
-    try {return await original.apply(this,args);} finally {(Zotero.__kbOpeningSteps ||= []).push({name,ms:Date.now()-start});}
+    try {return await original.apply(this,args);} finally {(Zotero.__knowledgeBaseOpeningSteps ||= []).push({name,ms:Date.now()-start});}
   };
 }
 const originalCreate=window.KnowledgeBaseNativeEditor.create;
 window.KnowledgeBaseNativeEditor.create=async function(...args) {
   const start=Date.now();
-  try {return await originalCreate.apply(this,args);} finally {(Zotero.__kbOpeningSteps ||= []).push({name:'nativeEditorCreate',ms:Date.now()-start});}
+  try {return await originalCreate.apply(this,args);} finally {(Zotero.__knowledgeBaseOpeningSteps ||= []).push({name:'nativeEditorCreate',ms:Date.now()-start});}
 };
 `,
 );
@@ -82,7 +82,7 @@ files["bootstrap.js"] = strToU8(
     trigger,
     `const measureStarted = Date.now();
   ${trigger}
-  Zotero.__kbStartupMs = Date.now()-measureStarted;
+  Zotero.__knowledgeBaseStartupMs = Date.now()-measureStarted;
   benchmarkStartup();`,
   ) +
     `
@@ -91,7 +91,7 @@ function benchmarkStartup() {
   const pause = ms => new Promise(resolve=>setTimeout(resolve,ms));
   const run = async () => {
     try {
-      const kb=Zotero.ZoteroKnowledgeBase, api=kb.api, main=Zotero.getMainWindow();
+      const knowledgeBase=Zotero.ZoteroKnowledgeBase, api=knowledgeBase.api, main=Zotero.getMainWindow();
       if(!main?.document.getElementById('knowledge-base-menu-open-manager'))throw new Error('Startup did not register Knowledge Base');
       if(!(await IOUtils.exists(${JSON.stringify(seeded)}))) {
         const source=new Zotero.Item('journalArticle');source.libraryID=Zotero.Libraries.userLibraryID;source.setField('title','Startup benchmark source');await source.saveTx();
@@ -119,7 +119,7 @@ function benchmarkStartup() {
         await IOUtils.writeUTF8(${JSON.stringify(seeded)},JSON.stringify({sourceID:source.id,notes}));
       } else {
         const fixture=JSON.parse(await IOUtils.readUTF8(${JSON.stringify(seeded)}));
-        const result={notes:fixture.notes.length,startupMs:Zotero.__kbStartupMs,steps:Zotero.__kbStartupSteps};
+        const result={notes:fixture.notes.length,startupMs:Zotero.__knowledgeBaseStartupMs,steps:Zotero.__knowledgeBaseStartupSteps};
         const started=Date.now();api.openManager({selectId:fixture.notes[0].id});
         let manager,editor,firstRowsMs;
         for(let i=0;i<800;i++) {
@@ -130,7 +130,7 @@ function benchmarkStartup() {
           await pause(10);
         }
         if(editor?.knowledgeBaseCardId!==fixture.notes[0].id || !editor.eval('richEditor && !noteUnavailable && !libraryReadOnly && !recoveryPending'))throw new Error('Workbench did not load an editable original');
-        result.firstRowsMs=firstRowsMs;result.editorReadyMs=Date.now()-started;result.openingSteps=Zotero.__kbOpeningSteps;
+        result.firstRowsMs=firstRowsMs;result.editorReadyMs=Date.now()-started;result.openingSteps=Zotero.__knowledgeBaseOpeningSteps;
         for(let i=0;i<800 && !editor.document.querySelector('#knowledge-base-src-display .csl-entry');i++)await pause(10);
         if(!editor.document.querySelector('#knowledge-base-src-display .csl-entry'))throw new Error('Source bibliography did not finish');
         result.sourceReadyMs=Date.now()-started;
@@ -190,9 +190,9 @@ try {
     }
   }
   console.log(JSON.stringify({ runs }, null, 2));
-  if (process.env.KB_STARTUP_BENCHMARK_OUTPUT)
+  if (process.env.KNOWLEDGE_BASE_STARTUP_BENCHMARK_OUTPUT)
     await writeFile(
-      resolve(process.env.KB_STARTUP_BENCHMARK_OUTPUT),
+      resolve(process.env.KNOWLEDGE_BASE_STARTUP_BENCHMARK_OUTPUT),
       JSON.stringify({ runs }, null, 2) + "\n",
     );
   passed = true;

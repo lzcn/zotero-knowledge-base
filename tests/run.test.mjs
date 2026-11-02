@@ -4,10 +4,6 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 for (const [file, name] of [
-  [
-    "connections.mjs",
-    "AI providers, progressive reading and reviewed connections",
-  ],
   ["document-merge.mjs", "Three-way document merging and conflict boundaries"],
   ["text-format.mjs", "Conservative formula delimiter normalization"],
   ["graph-worker.mjs", "Background graph geometry and cancellation"],

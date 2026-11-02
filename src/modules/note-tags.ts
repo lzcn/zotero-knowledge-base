@@ -13,20 +13,24 @@ export async function getGraphTags(): Promise<string[]> {
   return [...(await getTagIndex()).keys()].sort((a, b) => a.localeCompare(b));
 }
 
-let tagIndex: Promise<Map<string, string[]>> | undefined;
-let tagIndexVersion = "";
-async function getTagIndex(): Promise<Map<string, string[]>> {
-  const version = `${getDatabaseGeneration()}:${getDatabaseRevision()}:${getTagRevision()}:${getTagInheritance()}`;
-  if (!tagIndex || tagIndexVersion !== version) {
-    tagIndexVersion = version;
-    tagIndex = loadTagIndex().catch((error) => {
-      if (tagIndexVersion === version) tagIndex = undefined;
-      throw error;
-    });
-  }
-  return tagIndex;
+const tagIndexes = new Map<
+  boolean,
+  { version: string; index: Promise<Map<string, string[]>> }
+>();
+async function getTagIndex(
+  inherit = getTagInheritance(),
+): Promise<Map<string, string[]>> {
+  const version = `${getDatabaseGeneration()}:${getDatabaseRevision()}:${getTagRevision()}`;
+  const cached = tagIndexes.get(inherit);
+  if (cached?.version === version) return cached.index;
+  const index = loadTagIndex(inherit).catch((error) => {
+    if (tagIndexes.get(inherit)?.index === index) tagIndexes.delete(inherit);
+    throw error;
+  });
+  tagIndexes.set(inherit, { version, index });
+  return index;
 }
-async function loadTagIndex(): Promise<Map<string, string[]>> {
+async function loadTagIndex(inherit: boolean): Promise<Map<string, string[]>> {
   const rows = await getAll<{
     id: string;
     library_id: number | null;
@@ -38,7 +42,6 @@ async function loadTagIndex(): Promise<Map<string, string[]>> {
     WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id)`,
   );
   const own = new Map<string, string[]>(rows.map((row) => [row.id, []]));
-  const inherit = getTagInheritance();
   for (let offset = 0; offset < rows.length; offset += 100) {
     const batch = rows.slice(offset, offset + 100);
     const items = await Promise.all(
@@ -75,8 +78,13 @@ async function loadTagIndex(): Promise<Map<string, string[]>> {
     }
   return index;
 }
-export async function getTaggedNoteIDs(tag: string): Promise<string[]> {
-  return (await getTagIndex()).get(tag) || [];
+export async function getTaggedNoteIDs(
+  tag: string,
+  ownOnly = false,
+): Promise<string[]> {
+  return (
+    (await getTagIndex(ownOnly ? false : getTagInheritance())).get(tag) || []
+  );
 }
 
 /** The tags table holds tags awaiting a native note, including one-time type conversion. */

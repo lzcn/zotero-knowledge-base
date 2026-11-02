@@ -1,3 +1,4 @@
+import { SWStorage } from "../library/storage.js";
 import { getString } from "../utils/locale";
 import { getAll } from "./db";
 import { parseAssetNames } from "./markdown";
@@ -102,14 +103,11 @@ function resourceHandler() {
 }
 
 function assetDirectory(): string {
-  return PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base", "assets");
+  return SWStorage.assets();
 }
 
 async function ensureAssetDirectory(): Promise<void> {
-  await IOUtils.makeDirectory(
-    PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base"),
-    { ignoreExisting: true },
-  );
+  await IOUtils.makeDirectory(SWStorage.root(), { ignoreExisting: true });
   await IOUtils.makeDirectory(assetDirectory(), { ignoreExisting: true });
 }
 

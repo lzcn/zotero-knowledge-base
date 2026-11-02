@@ -7,8 +7,10 @@ const buttons = new Map<
 >();
 let registered = false;
 let iconURL = "";
+let openVersion = 0;
 
 function addButton(
+  reader: _ZoteroTypes.ReaderInstance,
   doc: Document,
   append: (button: HTMLButtonElement) => void,
 ): void {
@@ -30,8 +32,37 @@ function addButton(
   icon.alt = "";
   icon.draggable = false;
   button.append(icon);
-  const open = () => addon.api.openManager();
+  let disposed = false;
+  const open = async () => {
+    if (button.disabled || disposed) return;
+    const version = ++openVersion;
+    button.disabled = true;
+    try {
+      const attachment = reader.itemID
+        ? await Zotero.Items.getAsync(reader.itemID)
+        : undefined;
+      const source = attachment?.parentItemID
+        ? await Zotero.Items.getAsync(attachment.parentItemID)
+        : attachment;
+      if (disposed || !registered || version !== openVersion) return;
+      const note = source?.isRegularItem()
+        ? (await addon.api.listByItem(source.key, source.libraryID)).find(
+            (note) => note.source_note,
+          )
+        : undefined;
+      if (!disposed && registered && version === openVersion)
+        addon.api.openManager(note ? { selectId: note.id } : {});
+    } catch (error) {
+      if (!disposed)
+        Zotero.logError(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+    } finally {
+      if (!disposed) button.disabled = false;
+    }
+  };
   const dispose = () => {
+    disposed = true;
     button.removeEventListener("click", open);
     win.removeEventListener("unload", dispose);
     const section = button.parentElement;
@@ -49,7 +80,7 @@ function addButton(
 function renderToolbar(
   event: _ZoteroTypes.Reader.EventParams<"renderToolbar">,
 ): void {
-  addButton(event.doc, event.append);
+  addButton(event.reader, event.doc, event.append);
 }
 
 export function registerReaderToolbar(): void {
@@ -73,7 +104,7 @@ export function registerReaderToolbar(): void {
     const doc = reader._iframeWindow?.document;
     const target = doc?.querySelector(".toolbar .custom-sections");
     if (!doc || !target) continue;
-    addButton(doc, (button) => {
+    addButton(reader, doc, (button) => {
       const section = doc.createElement("div");
       section.className = "section";
       section.append(button);
@@ -83,6 +114,7 @@ export function registerReaderToolbar(): void {
 }
 
 export function unregisterReaderToolbar(): void {
+  ++openVersion;
   if (registered) {
     registered = false;
     Zotero.Reader.unregisterEventListener("renderToolbar", renderToolbar);

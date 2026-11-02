@@ -68,7 +68,8 @@ class Connection {
     // Match Gecko Sqlite.sys.mjs: LIKE patterns must use bound parameters.
     if (/\bLIKE\b\s(?![@:?])/i.test(sql))
       throw new Error("Please enter a LIKE clause with bindings");
-    if (failStatement?.(sql)) throw new Error("Injected KB commit failure");
+    if (failStatement?.(sql))
+      throw new Error("Injected Knowledge Base commit failure");
     executedStatements.push(sql);
     const bound = Array.isArray(params)
       ? params
@@ -755,8 +756,20 @@ if (currentSchema) {
   check(
     "List summaries cap transferred text while full-text search and selected-note retrieval retain the entire body",
     summaryPage.items.some(
-      (row) => row.id === longNoteID && row.body.length === 2048,
+      (row) =>
+        row.id === longNoteID &&
+        row.body.length <= 2048 &&
+        row.body.includes("Body search beyond prefix"),
     ) && (await zettel.getZettel(longNoteID)).body.length > 20000,
+  );
+  check(
+    "Keyword searches combine non-adjacent terms, while quotes keep phrases literal",
+    (await zettel.searchZettels("prefix Body", { summary: true })).items.some(
+      (row) => row.id === longNoteID,
+    ) &&
+      !(await zettel.searchZettels('"prefix Body"')).items.some(
+        (row) => row.id === longNoteID,
+      ),
   );
   check(
     "Changed-note summaries obey both ID scope and full-text filters",
@@ -840,11 +853,13 @@ if (currentSchema) {
   try {
     await nativeNotes.saveNativeCard(journalInput());
   } catch (error) {
-    interrupted = String(error).includes("Injected KB commit failure");
+    interrupted = String(error).includes(
+      "Injected Knowledge Base commit failure",
+    );
   }
   failStatement = undefined;
   check(
-    "A failure after the native commit rolls back KB metadata while retaining its intent and draft",
+    "A failure after the native commit rolls back Knowledge Base metadata while retaining its intent and draft",
     interrupted &&
       journalNote.html.includes("After interruption") &&
       (await zettel.getZettel(journalID)).body === "Before interruption" &&
@@ -891,7 +906,7 @@ if (currentSchema) {
   });
   await nativeNotes.recoverNativeSaves();
   check(
-    "Recovery never overwrites newer KB metadata",
+    "Recovery never overwrites newer Knowledge Base metadata",
     (await zettel.getZettel(journalID)).title === "Changed metadata" &&
       (await operations.listNoteOperations()).length === 1,
   );
@@ -1341,6 +1356,36 @@ if (currentSchema) {
       !(await zettel.searchZettels("Survey", { tag: "Other tag" })).items
         .length,
   );
+  await zettel.saveZettel({
+    id: firstCard,
+    title: "First claim",
+    body: "",
+    parentId: thought,
+  });
+  check(
+    "Category tags do not classify children through inheritance",
+    (
+      await zettel.searchZettels("First claim", { tag: "Thinking Note" })
+    ).items.some((row) => row.id === firstCard) &&
+      !(
+        await zettel.searchZettels("First claim", {
+          tag: "Thinking Note",
+          ownTagsOnly: true,
+        })
+      ).items.length &&
+      (
+        await zettel.searchZettels("Survey", {
+          tag: "Thinking Note",
+          ownTagsOnly: true,
+        })
+      ).items.some((row) => row.id === thought),
+  );
+  await zettel.saveZettel({
+    id: firstCard,
+    title: "First claim",
+    body: "",
+    parentId: null,
+  });
   await zettel.saveZettel({ id: thought, title: "Survey edited", body: "" });
   check(
     "Editing content preserves ordinary tags",
@@ -2400,7 +2445,7 @@ zoteroStub.Items = {
   },
 };
 check(
-  "KB Trash lists only managed trashed originals with per-library editability",
+  "Knowledge Base Trash lists only managed trashed originals with per-library editability",
   JSON.stringify(
     (await nativeNotes.getTrashNotes()).map(({ id, editable }) => [
       id,
@@ -2474,7 +2519,7 @@ try {
   nativeEraseRejected = true;
 }
 check(
-  "A failed native erase leaves the original and KB projection available for retry",
+  "A failed native erase leaves the original and Knowledge Base projection available for retry",
   nativeEraseRejected &&
     trashItems.has("TRASH001") &&
     !!(await zettel.getZettel("trash-b")),

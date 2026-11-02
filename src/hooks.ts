@@ -1,6 +1,4 @@
 import { config, version } from "../package.json";
-import { initAI, stopAI, closeAI } from "./modules/ai";
-import { closeConnections } from "./modules/connections";
 import { getString, initLocale } from "./utils/locale";
 import { closeDB, initDB } from "./modules/db";
 import {
@@ -21,10 +19,8 @@ import {
   closeNoteSessions,
 } from "./modules/note-sessions";
 import { stopWorkbenches, closeWorkbenches } from "./modules/workbench";
-import {
-  registerPreferences,
-  unregisterPreferences,
-} from "./modules/bibliography";
+import { registerPreferences, unregisterPreferences } from "./modules/settings";
+import { closeBibliographies } from "./modules/bibliography";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import {
   registerReaderToolbar,
@@ -74,7 +70,7 @@ async function onStartup(): Promise<void> {
   );
   quitClient = AsyncShutdown.quitApplicationGranted;
   quitClient!.addBlocker(
-    "Knowledge Base: finish local writes and stop AI",
+    "Knowledge Base: finish local writes and searches",
     finishAppShutdown,
   );
   Services.obs.addObserver(quitObserver, "quit-application-granted");
@@ -102,7 +98,6 @@ async function start(token: number): Promise<void> {
     initLocale();
     const steps: [string, () => Promise<unknown> | unknown][] = [
       ["initDB", initDB],
-      ["initAI", initAI],
       ["initAssets", initAssets],
       ["noteSessions", initNoteSessions],
       [
@@ -112,10 +107,11 @@ async function start(token: number): Promise<void> {
       ["nativeNotes", initNativeNotes],
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
-      ["registerItemPaneUI", registerItemPaneUI],
       ["nativeMarkdown", initNativeMarkdown],
       ["registerPreferences", registerPreferences],
       ["registerReaderToolbar", registerReaderToolbar],
+      ["libraryRuntime", () => libraryRuntime.start()],
+      ["registerItemPaneUI", registerItemPaneUI],
     ];
     for (const [name, run] of steps) {
       step = name;
@@ -147,6 +143,7 @@ async function onMainWindowLoad(win: Window): Promise<void> {
   const nodes: Element[] = [];
   windows.set(win, nodes);
   try {
+    libraryRuntime.onWindowLoad(win);
     const doc = win.document;
     doc.documentElement.toggleAttribute(
       "data-plugin-bear",
@@ -223,6 +220,7 @@ async function onMainWindowLoad(win: Window): Promise<void> {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   const actions = [
+    () => libraryRuntime.onWindowUnload(win),
     () => closeWorkbenches(win),
     ...(windows.get(win) ?? []).map((node) => () => node.remove()),
   ];
@@ -259,15 +257,15 @@ async function releaseResources(): Promise<void> {
           win.close();
       }
     },
+    () => libraryRuntime.close(),
     unregisterItemPaneUI,
     unregisterReaderToolbar,
     unregisterPreferences,
-    closeAI,
+    closeBibliographies,
     closeNativeMarkdown,
     closeNativeNotes,
     closeNoteSessions,
     closeAssets,
-    closeConnections,
     () => ztoolkit.unregisterAll(),
     closeDB,
     removeQuitBlocker,
@@ -295,7 +293,6 @@ function onAppShutdown(): void {
       );
     }
   };
-  stop(stopAI);
   stop(() => {
     draftWrites.push(
       stopWorkbenches().catch((error) => Zotero.logError(error)),
@@ -325,6 +322,7 @@ function onAppShutdown(): void {
   ++generation;
   ready = false;
   addon.data.alive = false;
+  stop(() => libraryRuntime.stop());
   stop(stopAssets);
   stop(() => cancelReadiness?.());
   stop(removeQuitObserver);
@@ -344,12 +342,11 @@ function finishAppShutdown(): Promise<void> {
     await Promise.allSettled(draftWrites);
     draftWrites = [];
     for (const close of [
-      closeAI,
+      () => libraryRuntime.close(true),
       () => closeNativeMarkdown(false),
       closeNativeNotes,
       closeNoteSessions,
       closeAssets,
-      closeConnections,
     ]) {
       try {
         await close();

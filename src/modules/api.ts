@@ -2,17 +2,6 @@ import { getNewNoteBody } from "./preferences";
 import { compareNoteSummaries } from "./note-sort";
 import { getDOMWindow } from "../utils/dom";
 import { getGraphTags, getOwnNoteTags } from "./note-tags";
-import {
-  isAIEnabled,
-  setAIEnabled,
-  onAIEnabledChange,
-  getAISettings,
-  getAIModels,
-  setAISettings,
-  testAIConnection,
-  cancelAIJob,
-} from "./ai";
-import { establishConnections, validateConnectionPlan } from "./connections";
 import { isAccelKey } from "../ui/platform";
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
@@ -77,7 +66,6 @@ import {
   nativeNoteRefFromURL,
   renderMarkdown,
   noteSnippet,
-  linkNotePassages,
 } from "./markdown";
 import { prepareCitations, getCitation, resolveCitation } from "./references";
 import {
@@ -101,6 +89,8 @@ import {
   onGraphOptionsChange,
   getNoteSort,
   setNoteSort,
+  getNoteEditorMode,
+  setNoteEditorMode,
   getWorkbenchMode,
   setWorkbenchMode,
   getTagInheritance,
@@ -198,17 +188,8 @@ function mainWindow(): Window {
 const editorWindows = new Map<string, Window>();
 
 export const api = {
-  linkNotePassages,
-  isAIEnabled,
-  setAIEnabled,
-  onAIEnabledChange,
-  getAISettings,
-  getAIModels,
-  setAISettings,
-  testAIConnection,
-  cancelAIJob,
-  establishConnections,
-  validateConnectionPlan,
+  getLibraryState: () => libraryRuntime.state,
+  getLibraryStatus: () => libraryRuntime.getStatus(),
   checkNoteKey,
   getAvailableNoteID,
   ensureLiteratureNote,
@@ -361,6 +342,8 @@ export const api = {
   getGraphGroups,
   setGraphGroups,
   getGraphTags,
+  getNoteEditorMode,
+  setNoteEditorMode,
   getLiteratureTemplateSettings,
   setLiteratureTemplate,
   createLiteratureTemplate,
@@ -478,8 +461,8 @@ export const api = {
     };
   },
 
-  async listByItem(itemKey: string): Promise<Zettel[]> {
-    return withNoteReferences(await listByItem(itemKey));
+  async listByItem(itemKey: string, libraryID?: number): Promise<Zettel[]> {
+    return withNoteReferences(await listByItem(itemKey, libraryID));
   },
 
   countByItem(itemKey: string): Promise<number> {

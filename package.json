@@ -1,8 +1,8 @@
 {
   "name": "zotero-knowledge-base",
   "type": "module",
-  "version": "0.5.0",
-  "description": "Connected idea cards for Zotero",
+  "version": "0.6.0",
+  "description": "Notes, tags and related papers for Zotero",
   "config": {
     "addonName": "Knowledge Base",
     "addonID": "knowledge-base@lzcn",
@@ -23,12 +23,13 @@
     "lint:check": "prettier --check . && eslint .",
     "lint:fix": "prettier --write . && eslint . --fix",
     "release": "npm run check && node scripts/package-release.mjs",
-    "test": "node --test tests/run.test.mjs tests/lifecycle.test.mjs tests/package.test.mjs",
+    "test": "node --test tests/run.test.mjs tests/lifecycle.test.mjs tests/package.test.mjs && npm run test:library",
     "test:db": "node tests/database.mjs",
     "test:ui": "node tests/ui.mjs",
     "test:pane": "node tests/item-pane.mjs",
     "test:host": "node scripts/test-zotero-quit.mjs",
     "test:workbench:host": "node scripts/test-zotero-quit.mjs --workbench",
+    "test:views:host": "node scripts/test-zotero-quit.mjs --views",
     "test:metadata:host": "node scripts/test-zotero-quit.mjs --metadata",
     "test:text-tools:host": "node scripts/test-zotero-quit.mjs --text-tools",
     "test:reader-toolbar:host": "node scripts/test-zotero-quit.mjs --reader-toolbar",
@@ -37,7 +38,7 @@
     "test:appearance:host": "node scripts/test-zotero-quit.mjs --appearance",
     "test:toolbar:host": "node scripts/test-zotero-quit.mjs --toolbar",
     "test:templates:host": "node scripts/test-zotero-quit.mjs --templates",
-    "test:connections:host": "node scripts/test-zotero-quit.mjs --connections",
+    "test:retired-features:host": "node scripts/test-zotero-quit.mjs --retired-features",
     "test:links:host": "node scripts/test-zotero-quit.mjs --links",
     "test:relations:host": "node scripts/test-zotero-quit.mjs --relations",
     "benchmark:graph": "node scripts/benchmark-graph.mjs",
@@ -48,7 +49,9 @@
     "lint": "npm run lint:check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ui.json",
     "build:force": "node scripts/build.mjs --force",
-    "test:tags-conversion:host": "node scripts/test-zotero-quit.mjs --tags-conversion"
+    "test:tags-conversion:host": "node scripts/test-zotero-quit.mjs --tags-conversion",
+    "test:library": "node --test tests/library/*.test.js",
+    "test:library:host": "node scripts/test-library-host.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "6.20.3",
@@ -84,7 +87,8 @@
     "typescript": "5.8.2",
     "typescript-eslint": "8.26.1",
     "zotero-plugin-scaffold": "0.9.2",
-    "zotero-types": "3.1.9"
+    "zotero-types": "3.1.9",
+    "@huggingface/transformers": "3.8.1"
   },
   "prettier": {
     "printWidth": 80,

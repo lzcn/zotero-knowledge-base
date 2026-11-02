@@ -76,17 +76,8 @@ async function runCursorTest() {
         win.resizeTo(win.outerWidth,win.outerHeight-120);await pause(200);await sourceEnd();
         const sourceResized=sourceMetrics();
         if(Math.abs(sourceResized.padding-sourceResized.viewport/2)>2 || Math.abs(sourceResized.gap-sourceResized.viewport/2)>4) throw new Error('Markdown end-space did not follow resize: '+JSON.stringify(sourceResized));
-        const originalSource=source.value,sourceNoteHTML=item.getNote();
-        source.setSelectionRange(8,11);
-        const readingSelection={start:source.selectionStart,end:source.selectionEnd,scroll:source.scrollTop};
-        const toolbar=nativeFrame.document.querySelector('.toolbar');
-        const readingButton=toolbar.querySelector('.knowledge-base-reading-toggle');
-        readingButton.click();await wait(()=>readingButton.getAttribute('aria-pressed')==='true');
-        const readingPanel=nativeFrame.document.querySelector('.knowledge-base-reading-view');
-        if(!source.hidden || !readingPanel.querySelector('.katex-display') || readingPanel.querySelector('[contenteditable]') || nativeFrame.document.querySelector('.toolbar')!==toolbar || item.getNote()!==sourceNoteHTML) throw new Error('Reading changed native storage/toolbar or did not render display formulas');
-        readingButton.click();
-        if(source.hidden || source.value!==originalSource || JSON.stringify({start:source.selectionStart,end:source.selectionEnd,scroll:source.scrollTop})!==JSON.stringify(readingSelection)) throw new Error('Reading lost source text, selection or scroll');
-        result.source={initial:sourceInitial,resized:sourceResized,typography:true,readingPreserved:true};
+        if(nativeFrame.document.querySelector('.knowledge-base-reading-toggle,.knowledge-base-reading-view')) throw new Error('Browsing mode is still exposed');
+        result.source={initial:sourceInitial,resized:sourceResized,typography:true};
         source.value += '\\n\\nRoundtrip saved';
         source.dispatchEvent(new win.Event('input',{bubbles:true}));
         source.dispatchEvent(new win.KeyboardEvent('keydown',{key:'s',metaKey:true,bubbles:true,cancelable:true}));
@@ -142,7 +133,7 @@ async function runCursorTest() {
       const bounds=scroller.getBoundingClientRect(), previousTop=scroller.scrollTop;
       frame.windowUtils.sendWheelEvent(bounds.left+bounds.width/2,bounds.top+bounds.height/3,0,-120,0,0,0,0,-3,0);
       try { await wait(()=>scroller.scrollTop<previousTop); }
-      catch(error) {throw new Error('Wheel scroll failed: '+JSON.stringify({stage,metrics:metrics(),previousTop,rect:bounds.toJSON(),hit:doc.elementFromPoint(bounds.left+bounds.width/2,bounds.top+bounds.height/3)?.outerHTML.slice(0,300),readerHidden:doc.querySelector('.knowledge-base-reading-view')?.hidden,readerDisplay:doc.querySelector('.knowledge-base-reading-view')&&frame.getComputedStyle(doc.querySelector('.knowledge-base-reading-view')).display,focused:doc.hasFocus()})+' '+error);}
+      catch(error) {throw new Error('Wheel scroll failed: '+JSON.stringify({stage,metrics:metrics(),previousTop,rect:bounds.toJSON(),hit:doc.elementFromPoint(bounds.left+bounds.width/2,bounds.top+bounds.height/3)?.outerHTML.slice(0,300),focused:doc.hasFocus()})+' '+error);}
       const wheelTop=scroller.scrollTop;
       await scrollEnd();
       if(nativeData().html!==htmlBeforeScroll) throw new Error('Native scrolling changed note HTML');
@@ -205,7 +196,7 @@ try {
   console.log(`Cursor fixture: ${root}`);
   if (!result.ok) throw new Error(result.error);
   console.log(
-    "PASS Native and Markdown end-space resizing, typography and body-only Reading preservation; native math navigation, upward wheel scrolling and last-line saving before integration, with integration, and after a Markdown round trip.",
+    "PASS Native and Markdown end-space resizing, typography; native math navigation, upward wheel scrolling and last-line saving before integration, with integration, and after a Markdown round trip.",
   );
 } finally {
   clearTimeout(timeout);

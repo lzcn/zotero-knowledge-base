@@ -23,7 +23,6 @@ type="text/css"?>
   <script src="chrome://zotero/content/customElements.js" />
   <script src="chrome://knowledge-base/content/native-editor.js?v=__styleVersion__" />
   <script src="chrome://knowledge-base/content/editor.js" />
-  <script src="chrome://knowledge-base/content/connections.js" />
   <html:div id="knowledge-base-editor-root">
     <html:div id="knowledge-base-editor-toolbar">
       <html:span id="knowledge-base-src-label" class="lbl"></html:span>
@@ -73,7 +72,6 @@ type="text/css"?>
           <html:button id="knowledge-base-key-resolve" />
         </html:div>
       </html:div>
-      <html:button id="knowledge-base-establish-connections" />
       <html:details id="knowledge-base-editor-more" class="editor-more">
         <html:summary id="knowledge-base-editor-more-label">…</html:summary>
         <html:div class="editor-more-menu">
@@ -87,11 +85,6 @@ type="text/css"?>
         </html:div>
       </html:details>
     </html:div>
-    <html:section
-      id="knowledge-base-connections"
-      class="connection-review"
-      hidden="hidden"
-    />
     <html:div class="parent-control metadata-row">
       <html:label id="knowledge-base-parent-label" />
       <html:button id="knowledge-base-parent-display" class="metadata-value" />
@@ -194,7 +187,7 @@ type="text/css"?>
       <html:div class="spacer" />
       <button id="knowledge-base-editor-save-copy" hidden="true" />
       <button id="knowledge-base-editor-cancel"></button>
-      <button id="knowledge-base-editor-save" default="true"></button>
+      <button id="knowledge-base-editor-apply-draft" hidden="true" />
     </html:footer>
   </html:div>
 </window>

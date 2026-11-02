@@ -39,15 +39,7 @@ await build({
       export const closeWorkbenches = () => {
         if (state().fail === "closeWorkbenches") throw new Error("Workbench close failed");
       };
-      export const initPaperReading = () => run("paperReading");
-      export const stopPaperReading = () => run("stopPaperReading");
-      export const closePaperReadingTasks = () => run("closePaperReadingTasks");
-      export const closePaperReadings = () => {};
       export const initLocale = () => {};
-      export const initAI = () => {};
-      export const stopAI = () => stop("stopAI");
-      export const closeAI = () => run("closeAI");
-      export const closeConnections = () => {};
       export const getString = (key) => key;
       export const initDB = () => run("initDB");
       export const closeDB = () => run("closeDB");
@@ -68,6 +60,7 @@ await build({
       export const rebuildCounts = () => run("rebuildCounts");
       export const registerPreferences = () => run("registerPreferences");
       export const unregisterPreferences = () => {};
+      export const closeBibliographies = () => {};
       export const registerItemPaneUI = () => run("registerPane");
       export const unregisterItemPaneUI = () => run("unregisterPane");
       export const registerReaderUI = () => run("registerReader");
@@ -104,6 +97,13 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
   }
   globalThis.lifecycle = { calls: [], failures: [], errors: [], fail, gate };
   const state = globalThis.lifecycle;
+  globalThis.libraryRuntime = {
+    start: async () => {},
+    stop: () => {},
+    close: async () => {},
+    onWindowLoad: () => {},
+    onWindowUnload: () => {},
+  };
   globalThis.Zotero = {
     Prefs: { get: () => undefined },
     initializationPromise: Promise.resolve(),
@@ -350,7 +350,7 @@ test(
   },
 );
 
-test("the confirmed-quit barrier drains cancelled AI and local writes before storage shutdown", async () => {
+test("the confirmed-quit barrier drains local writes before storage shutdown", async () => {
   const h = await fixture();
   try {
     await h.hooks.onStartup();
@@ -358,12 +358,14 @@ test("the confirmed-quit barrier drains cancelled AI and local writes before sto
     const [finish] = h.blockers.keys();
     await finish();
     assert.equal(h.blockers.size, 0);
-    assert.ok(h.state.calls.includes("closeAI"));
     assert.ok(h.state.calls.includes("closeNativeMarkdown"));
     assert.ok(h.state.calls.includes("closeNoteSessions"));
     assert.equal(h.state.calls.includes("closeDB"), false);
     await finish();
-    assert.equal(h.state.calls.filter((name) => name === "closeAI").length, 1);
+    assert.equal(
+      h.state.calls.filter((name) => name === "closeNativeMarkdown").length,
+      1,
+    );
   } finally {
     h.close();
   }
@@ -371,7 +373,6 @@ test("the confirmed-quit barrier drains cancelled AI and local writes before sto
 
 test("one failing stop action cannot skip remaining quit cleanup", async () => {
   for (const fail of [
-    "stopAI",
     "stopWorkbenches",
     "stopNativeMarkdown",
     "stopNativeNotes",

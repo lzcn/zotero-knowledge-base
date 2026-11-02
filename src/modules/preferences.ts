@@ -4,6 +4,19 @@ import { notifyDataChange } from "./events";
 import { getString } from "../utils/locale";
 
 const literatureTemplatesKey = `${config.prefsPrefix}.literatureTemplates`;
+
+export function getNoteEditorMode(): "visual" | "source" {
+  return Zotero.Prefs.get(`${config.prefsPrefix}.editorMode`, true) === "source"
+    ? "source"
+    : "visual";
+}
+
+export function setNoteEditorMode(mode: "visual" | "source"): void {
+  if (mode !== "visual" && mode !== "source")
+    throw new Error("Invalid editor mode");
+  Zotero.Prefs.set(`${config.prefsPrefix}.editorMode`, mode, true);
+}
+
 interface LiteratureTemplate {
   id: string;
   name: string;

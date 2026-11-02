@@ -46,7 +46,9 @@ interface Options {
 }
 interface EditorCore {
   view: RichTextView & { composing?: boolean };
-  pluginState: { search: { openFindbar(): void } };
+  pluginState: {
+    search: { openFindbar(): void; setActive(active: boolean): void };
+  };
 }
 function editorCore(frame: Window): EditorCore | undefined {
   return (
@@ -96,12 +98,9 @@ export function attachTextTools(frame: Window, options: Options): () => void {
     '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
   );
   const findTitle =
-    options.labels.find + (Zotero.isMac ? " (⌘⌥F)" : " (Ctrl+H)");
+    options.labels.find + (Zotero.isMac ? " (⌘F)" : " (Ctrl+F)");
   find.title = findTitle;
-  find.setAttribute(
-    "aria-keyshortcuts",
-    Zotero.isMac ? "Meta+Alt+f" : "Control+h",
-  );
+  find.setAttribute("aria-keyshortcuts", Zotero.isMac ? "Meta+f" : "Control+f");
   const status = doc.createElement("span");
   status.className = "knowledge-base-text-status";
   status.setAttribute("role", "status");
@@ -141,33 +140,40 @@ export function attachTextTools(frame: Window, options: Options): () => void {
       options.report(error);
     }
   };
-  const openSearch = () => {
+  const openSearch = (replace = false, toggle = false) => {
     const source = options.source();
     if (source) {
-      source.openSearch();
+      if (toggle) source.toggleSearch();
+      else source.openSearch(replace);
       return;
     }
     const core = editorCore(frame);
     if (!core?.pluginState.search)
       throw new Error("The note editor search is not ready.");
+    if (toggle && (findObserver || doc.querySelector(".findbar"))) {
+      stopFind();
+      core.pluginState.search.setActive(false);
+      core.view.focus();
+      return;
+    }
     stopFind();
-    const revealReplace = () => {
+    const setReplace = () => {
       if (!available()) {
         stopFind();
         return;
       }
-      const replace = doc.querySelector<HTMLInputElement>("#replace-checkbox");
-      if (!replace) return;
+      const checkbox = doc.querySelector<HTMLInputElement>("#replace-checkbox");
+      if (!checkbox) return;
       stopFind();
-      if (!replace.checked) replace.click();
+      if (checkbox.checked !== replace) checkbox.click();
     };
     findObserver = new (frame as Window & typeof globalThis).MutationObserver(
-      revealReplace,
+      setReplace,
     );
     findObserver.observe(doc.body, { childList: true, subtree: true });
     findTimer = frame.setTimeout(stopFind, 2000);
     core.pluginState.search.openFindbar();
-    revealReplace();
+    setReplace();
   };
   normalize.addEventListener("click", (event) => {
     event.preventDefault();
@@ -190,7 +196,7 @@ export function attachTextTools(frame: Window, options: Options): () => void {
   find.addEventListener("click", (event) => {
     event.preventDefault();
     event.stopPropagation();
-    run(find, openSearch);
+    run(find, () => openSearch(false, true));
   });
   const keydown = (event: KeyboardEvent) => {
     if (
@@ -207,12 +213,11 @@ export function attachTextTools(frame: Window, options: Options): () => void {
         event.altKey &&
         (key === "f" || event.code === "KeyF")
       : event.ctrlKey && !event.metaKey && !event.altKey && key === "h";
-    if (!replace && !(options.source() && isAccelKey(event) && key === "f"))
-      return;
+    if (!replace && !(isAccelKey(event) && key === "f")) return;
     if (!available()) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    run(find, openSearch);
+    run(find, () => openSearch(replace));
   };
   doc.addEventListener("keydown", keydown, true);
   const observer = new (frame as Window & typeof globalThis).MutationObserver(

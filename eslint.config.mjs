@@ -14,6 +14,7 @@ export default tseslint.config(
     ],
   },
   {
+    ignores: ["src/library/**", "src/ui/library/**", "tests/library/**"],
     extends: [eslint.configs.recommended, ...tseslint.configs.recommended],
     rules: {
       "no-restricted-globals": [
@@ -90,5 +91,115 @@ export default tseslint.config(
         { args: "none", caughtErrors: "none", varsIgnorePattern: "^_" },
       ],
     },
+  },
+  {
+    ...eslint.configs.recommended,
+    files: [
+      "src/library/**/*.js",
+      "src/ui/library/**/*.js",
+      "tests/library/**/*.js",
+    ],
+  },
+  {
+    files: [
+      "src/library/**/*.js",
+      "src/ui/library/**/*.js",
+      "tests/library/**/*.js",
+    ],
+    rules: {
+      "no-empty": ["error", { allowEmptyCatch: true }],
+      "no-unused-vars": [
+        "error",
+        {
+          args: "none",
+          caughtErrors: "none",
+          varsIgnorePattern:
+            "^(SW|sw|startup|shutdown|install|uninstall|onMainWindow)",
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/library/runtime.js", "src/library/**/*.js"],
+    rules: { "no-redeclare": ["error", { builtinGlobals: false }] },
+    languageOptions: {
+      sourceType: "script",
+      globals: Object.fromEntries(
+        [
+          "Zotero",
+          "APP_SHUTDOWN",
+          "Services",
+          "Components",
+          "ChromeUtils",
+          "IOUtils",
+          "PathUtils",
+          "TextDecoder",
+          "TextEncoder",
+          "Ci",
+          "setTimeout",
+          "clearTimeout",
+          "pref",
+          "module",
+          "SWSearch",
+          "SWCorpus",
+          "SWIndexer",
+          "SWTokenizer",
+          "SWSection",
+          "SWTags",
+          "SWTagSuggestions",
+          "SWEvidence",
+          "swTagAliasKey",
+          "swTagKey",
+          "SWSemantic",
+          "SWStorage",
+          "SWPlugin",
+          "SWHost",
+          "SWPref",
+          "SWResultLimit",
+          "SW_MAX_TOKENS",
+          "URL",
+          "swPorterStem",
+          "swYield",
+        ].map((name) => [name, "readonly"]),
+      ),
+    },
+  },
+  {
+    files: ["tests/library/**/*.js"],
+    languageOptions: {
+      sourceType: "commonjs",
+      globals: Object.fromEntries(
+        [
+          "__dirname",
+          "global",
+          "console",
+          "process",
+          "TextEncoder",
+          "TextDecoder",
+          "TextEncoder",
+          "Ci",
+          "setTimeout",
+          "clearTimeout",
+          "setImmediate",
+          "URL",
+          "swPorterStem",
+        ].map((name) => [name, "readonly"]),
+      ),
+    },
+  },
+  {
+    files: ["src/ui/library/**/*.js"],
+    languageOptions: {
+      sourceType: "module",
+      globals: {
+        self: "readonly",
+        Response: "readonly",
+        performance: "readonly",
+      },
+    },
+  },
+  {
+    files: ["addon/content/library/**/*.js"],
+    languageOptions: { globals: { console: "readonly" } },
   },
 );

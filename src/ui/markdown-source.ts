@@ -7,7 +7,12 @@ import {
   isolateHistory,
 } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
+import {
+  search,
+  searchKeymap,
+  openSearchPanel,
+  closeSearchPanel,
+} from "@codemirror/search";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { configureNodeLabels, zNodeField } from "./markdown-nodes";
 import { markdownMath } from "./markdown-math";
@@ -40,7 +45,8 @@ export interface MarkdownSource extends HTMLElement {
   setRangeText(text: string, start?: number, end?: number, mode?: string): void;
   setTypography(properties: Record<string, string>): void;
   normalizeMath(): number;
-  openSearch(): void;
+  openSearch(replace?: boolean): void;
+  toggleSearch(): void;
   destroy(): void;
 }
 
@@ -122,7 +128,18 @@ function mount(
           {
             key: "Mod-h",
             mac: "Mod-Alt-f",
-            run: openSearchPanel,
+            run: () => {
+              root.openSearch(true);
+              return true;
+            },
+            scope: "editor search-panel",
+          },
+          {
+            key: "Mod-f",
+            run: () => {
+              root.openSearch();
+              return true;
+            },
             scope: "editor search-panel",
           },
           ...searchKeymap,
@@ -386,8 +403,35 @@ function mount(
       if (value) view.dom.style.setProperty(`--knowledge-base-${name}`, value);
     view.requestMeasure();
   };
-  root.openSearch = () => {
-    if (!destroyed) openSearchPanel(view);
+  root.openSearch = (replace = false) => {
+    if (destroyed) return;
+    openSearchPanel(view);
+    const panel = view.dom.querySelector<HTMLElement>(".cm-search");
+    if (!panel || view.state.readOnly) return;
+    let toggle = panel.querySelector<HTMLInputElement>(
+      'input[name="showReplace"]',
+    );
+    if (!toggle) {
+      toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.name = "showReplace";
+      const label = document.createElement("label");
+      label.append(toggle, view.state.phrase("Replace"));
+      panel.insertBefore(label, panel.querySelector("br"));
+      const checkbox = toggle;
+      checkbox.addEventListener("change", () => {
+        for (const control of Array.from(
+          panel.querySelectorAll('br, [name="replace"], [name="replaceAll"]'),
+        ) as HTMLElement[])
+          control.hidden = !checkbox.checked;
+        view.requestMeasure();
+      });
+    }
+    toggle.checked = replace;
+    toggle.dispatchEvent(new Event("change"));
+  };
+  root.toggleSearch = () => {
+    if (!destroyed && !closeSearchPanel(view)) root.openSearch();
   };
   root.normalizeMath = () => {
     if (destroyed || readOnly || disabled || composing) return 0;

@@ -22,34 +22,76 @@ type="text/css"?>
   </popupset>
   <html:div id="knowledge-base-root">
     <html:header id="knowledge-base-toolbar">
-      <toolbarbutton id="knowledge-base-back" class="kb-native-tool" />
-      <toolbarbutton id="knowledge-base-forward" class="kb-native-tool" />
-      <toolbarbutton id="knowledge-base-btn-new" class="kb-native-tool" />
-      <toolbarbutton id="knowledge-base-btn-graph" class="kb-native-tool" />
+      <toolbarbutton
+        id="knowledge-base-back"
+        class="knowledge-base-native-tool"
+      />
+      <toolbarbutton
+        id="knowledge-base-forward"
+        class="knowledge-base-native-tool"
+      />
+      <toolbarbutton
+        id="knowledge-base-btn-new"
+        class="knowledge-base-native-tool"
+      />
+      <toolbarbutton
+        id="knowledge-base-btn-graph"
+        class="knowledge-base-native-tool"
+      />
       <toolbarbutton
         id="knowledge-base-btn-copy-zettels"
-        class="kb-native-tool"
+        class="knowledge-base-native-tool"
       />
       <html:input id="knowledge-base-search" type="search" />
-      <html:select id="knowledge-base-view"
-        ><html:option value="notes" /><html:option value="trash"
-      /></html:select>
+      <html:div id="knowledge-base-views" role="group">
+        <toolbarbutton
+          id="knowledge-base-view-all"
+          class="knowledge-base-native-tool knowledge-base-view-button"
+          data-note-view="all"
+        />
+        <toolbarbutton
+          id="knowledge-base-view-literature"
+          class="knowledge-base-native-tool knowledge-base-view-button"
+          data-note-view="literature"
+        />
+        <toolbarbutton
+          id="knowledge-base-view-zettel"
+          class="knowledge-base-native-tool knowledge-base-view-button"
+          data-note-view="zettel"
+        />
+        <toolbarbutton
+          id="knowledge-base-view-thinking"
+          class="knowledge-base-native-tool knowledge-base-view-button"
+          data-note-view="thinking"
+        />
+      </html:div>
+      <toolbarbutton
+        id="knowledge-base-view-trash"
+        class="knowledge-base-native-tool knowledge-base-view-button"
+        data-note-view="trash"
+      />
       <html:div class="spacer" />
       <html:span id="knowledge-base-stats" class="muted"></html:span>
       <html:div class="card-actions" role="group">
-        <toolbarbutton id="knowledge-base-btn-edit" class="kb-native-tool" />
+        <toolbarbutton
+          id="knowledge-base-btn-edit"
+          class="knowledge-base-native-tool"
+        />
         <toolbarbutton
           id="knowledge-base-btn-local-graph"
-          class="kb-native-tool"
+          class="knowledge-base-native-tool"
         />
         <toolbarbutton
           id="knowledge-base-btn-restore"
-          class="kb-native-tool"
+          class="knowledge-base-native-tool"
           hidden="true"
         />
         <button id="knowledge-base-empty-trash" hidden="true" />
         <button id="knowledge-base-trash-cancel" hidden="true" />
-        <toolbarbutton id="knowledge-base-btn-delete" class="kb-native-tool" />
+        <toolbarbutton
+          id="knowledge-base-btn-delete"
+          class="knowledge-base-native-tool"
+        />
       </html:div>
     </html:header>
     <html:div id="knowledge-base-trash-status" hidden="hidden" role="status" />

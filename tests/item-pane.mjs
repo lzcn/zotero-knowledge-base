@@ -13,6 +13,10 @@ const state = {
   listeners: new Set(),
   errors: [],
   opens: [],
+  wakes: 0,
+  similarities: 0,
+  collapses: 0,
+  tags: [],
 };
 globalThis.paneTest = state;
 await build({
@@ -45,7 +49,40 @@ await build({
     },
   ],
 });
+globalThis.libraryRuntime = {
+  wakeIndex() {
+    state.wakes++;
+  },
+  openTagManager(_win, libraryID) {
+    state.tagManagerLibrary = libraryID;
+  },
+  setItemPaneID() {},
+  getItemPaneCallbacks: () => ({
+    onItemChange(props) {
+      props.setEnabled(props.item?.key !== "PERSONAL");
+    },
+    onRender() {},
+    onAsyncRender() {
+      state.similarities++;
+    },
+    onToggle() {},
+    onRefresh() {},
+    onCollapse() {
+      state.collapses++;
+    },
+    onDestroy() {},
+  }),
+};
 globalThis.Zotero = {
+  Notifier: {
+    registerObserver(observer) {
+      state.tagObserver = observer;
+      return "tags";
+    },
+    unregisterObserver() {
+      state.tagObserver = null;
+    },
+  },
   ItemTreeManager: {
     registerColumn() {
       return "knowledge-base-count";
@@ -87,9 +124,20 @@ const { registerItemPaneUI, unregisterItemPaneUI } = await import(
 await registerItemPaneUI();
 const dom = new JSDOM('<main><div id="body"></div></main>');
 const body = dom.window.document.getElementById("body");
-const item = (key) => ({ key, libraryID: 1, isRegularItem: () => true });
+const item = (key) => ({
+  key,
+  libraryID: 1,
+  isRegularItem: () => true,
+  async loadDataType() {},
+  getTags: () => state.tags,
+  isEditable: () => true,
+});
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 let count = 0;
+assert.equal(
+  body.querySelectorAll(".knowledge-base-similar-section").length,
+  0,
+);
 function check(label, fn) {
   fn();
   count++;
@@ -98,8 +146,20 @@ function check(label, fn) {
 state.cards = [{ id: "card-a", title: "A linked idea" }];
 state.section.onRender({ body, item: item("A") });
 await settle();
+check("One native pane defaults to notes and defers similarity", () => {
+  assert.equal(body.querySelectorAll(".knowledge-base-note-body").length, 1);
+  assert.equal(body.querySelectorAll('[role="tab"]').length, 3);
+  assert.equal(body.dataset.view, "notes");
+  assert.equal(body.querySelector(".knowledge-base-similar-body").hidden, true);
+  assert.equal(state.wakes, 0);
+  assert.equal(state.similarities, 0);
+});
 check("Disabled paper reading leaves only the native note actions", () => {
-  assert.equal(body.querySelectorAll("button").length, 2);
+  assert.equal(
+    body.querySelector(".knowledge-base-note-body").querySelectorAll("button")
+      .length,
+    2,
+  );
   assert.equal(
     body.querySelectorAll(".knowledge-base-section-action").length,
     2,
@@ -125,11 +185,15 @@ check(
       body.querySelector(".knowledge-base-add-note").getAttribute("aria-label"),
       "section-new-zettel",
     );
-    assert.equal(body.querySelectorAll("button").length, 2);
+    assert.equal(
+      body.querySelector(".knowledge-base-note-body").querySelectorAll("button")
+        .length,
+      2,
+    );
     assert.equal(state.errors.length, 0);
   },
 );
-body.querySelector("button").click();
+body.querySelector(".knowledge-base-source-note").click();
 await settle();
 check("The source pane opens its unique Literature Note", () =>
   assert.deepEqual(state.literature, { key: "A", libraryID: 1 }),
@@ -221,10 +285,54 @@ await settle();
 check("A title change refreshes only the matching source sidebar", () =>
   assert.equal(refreshes, 2),
 );
-state.section.onDestroy({ body });
-check("Closing the section removes its refresh listener", () =>
-  assert.equal(state.listeners.size, 0),
+body.querySelector('button[data-view="similar"]').click();
+check("Activating Similar Items prioritizes retrieval", () => {
+  assert.equal(state.wakes, 1);
+  assert.equal(state.similarities, 1);
+  assert.equal(body.querySelector(".knowledge-base-note-body").hidden, true);
+  assert.equal(
+    body.querySelector(".knowledge-base-similar-body").hidden,
+    false,
+  );
+});
+body.querySelector('button[data-view="tags"]').click();
+await settle();
+check("Leaving similarity cancels its visible work", () => {
+  assert.equal(state.collapses, 1);
+  assert.equal(body.querySelector(".knowledge-base-similar-body").hidden, true);
+});
+state.tags = [{ tag: "Actual item tag" }];
+state.tagObserver.notify();
+await settle();
+check("Tags show existing item tags and open the native manager", () => {
+  assert.equal(
+    body.querySelector(".knowledge-base-item-tags").textContent,
+    "Actual item tag",
+  );
+  assert.equal(body.querySelector(".sw-tags"), null);
+  body.querySelector(".knowledge-base-manage-tags").click();
+  assert.equal(state.tagManagerLibrary, 1);
+});
+state.section.onRender({ body, item: item("B") });
+check("Selected view carries across item changes without retrieval", () => {
+  assert.equal(body.dataset.view, "tags");
+  assert.equal(state.wakes, 1);
+});
+body.querySelector('button[data-view="tags"]').dispatchEvent(
+  new dom.window.KeyboardEvent("keydown", {
+    key: "Home",
+    bubbles: true,
+    cancelable: true,
+  }),
 );
+check("Tabs support keyboard navigation", () =>
+  assert.equal(body.dataset.view, "notes"),
+);
+state.section.onDestroy({ body });
+check("Closing the section removes its refresh listener", () => {
+  assert.equal(state.listeners.size, 0);
+  assert.equal(state.tagObserver, null);
+});
 let resolveA;
 state.query = (key) =>
   key === "A"
@@ -248,10 +356,14 @@ check(
   () => {
     assert.equal(state.unsourcedLibrary, 1);
     assert.equal(body.querySelector("li").textContent, "My project");
-    assert.equal(body.querySelectorAll("button").length, 1);
+    assert.equal(
+      body.querySelector(".knowledge-base-note-body").querySelectorAll("button")
+        .length,
+      1,
+    );
   },
 );
-body.querySelector("button").click();
+body.querySelector(".knowledge-base-add-note").click();
 check("Creating a personal note leaves its literature source empty", () =>
   assert.deepEqual(state.opens.at(-1), { sourceItem: undefined }),
 );

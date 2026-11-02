@@ -16,6 +16,16 @@ let listScope = "";
 let listReferences;
 let navigationVersion = 0;
 let managerLoaded = false;
+let activeView = "all";
+let viewVersion = 0;
+/** @type {Record<string, { label: string; tag?: string }>} */
+const NOTE_VIEWS = {
+  all: { label: "manager-view-all" },
+  literature: { label: "manager-view-literature", tag: "Literature Note" },
+  zettel: { label: "manager-view-zettel", tag: "Zettel" },
+  thinking: { label: "manager-view-thinking", tag: "Thinking Note" },
+  trash: { label: "trash-title" },
+};
 let deleting = false;
 let purging = false;
 let purgeCancelled = false;
@@ -59,7 +69,25 @@ window.knowledgeBaseRequestClose = () =>
   });
 
 function inTrash() {
-  return $("knowledge-base-view").value === "trash";
+  return activeView === "trash";
+}
+function syncViewButtons() {
+  for (const button of /** @type {Element[]} */ (
+    Array.from(document.querySelectorAll("[data-note-view]"))
+  )) {
+    const view = button.getAttribute("data-note-view");
+    button.setAttribute("aria-pressed", String(activeView === view));
+    button.toggleAttribute("disabled", deleting);
+  }
+}
+function setView(view) {
+  if (!NOTE_VIEWS[view]) throw new Error("Invalid note view");
+  ++viewVersion;
+  activeView = view;
+  syncViewButtons();
+}
+function viewTag() {
+  return NOTE_VIEWS[activeView].tag;
 }
 function setActionLabel(id, key) {
   const element = document.getElementById(id),
@@ -105,7 +133,7 @@ function updateActions() {
       deleting || !trashNotes.some((note) => note.editable),
     );
   document.getElementById("knowledge-base-trash-cancel").hidden = !purging;
-  $("knowledge-base-view").disabled = deleting;
+  syncViewButtons();
   $("knowledge-base-search").disabled = purging;
   $("knowledge-base-sort").disabled = purging;
   setActionLabel(
@@ -128,16 +156,29 @@ function setTrashStatus(message = "") {
   status.textContent = message;
   status.hidden = !message;
 }
-async function closeSelectedEditor() {
+async function closeSelectedEditor(version = viewVersion) {
   const frame = /** @type {HTMLIFrameElement} */ (
     /** @type {unknown} */ (
       document.getElementById("knowledge-base-workbench-editor")
     )
   );
+  const current = frame.contentWindow;
+  const editorDocument = current?.document;
+  if (args.embedded && current?.knowledgeBaseReady) {
+    await current.knowledgeBaseReady();
+    if (window.closed || frame.contentWindow?.document !== editorDocument)
+      return false;
+  }
   if (
     args.embedded &&
     frame.contentWindow?.knowledgeBasePrepareNavigation &&
     !(await frame.contentWindow.knowledgeBasePrepareNavigation())
+  )
+    return false;
+  if (
+    window.closed ||
+    version !== viewVersion ||
+    frame.contentWindow?.document !== editorDocument
   )
     return false;
   if (args.embedded) {
@@ -149,19 +190,25 @@ async function closeSelectedEditor() {
   $("knowledge-base-detail-empty").hidden = false;
   return true;
 }
-async function changeView() {
-  if (deleting) return;
-  if (!(await closeSelectedEditor())) {
-    $("knowledge-base-view").value = inTrash() ? "notes" : "trash";
-    updateActions();
-    return;
-  }
+async function changeView(view) {
+  if (deleting || view === activeView) return;
+  if (!NOTE_VIEWS[view]) throw new Error("Invalid note view");
+  const version = ++viewVersion;
+  const wasTrash = inTrash();
+  if (!(await closeSelectedEditor(version)) || version !== viewVersion) return;
+  setView(view);
+  const request = viewVersion;
   setTrashStatus();
-  await api.auditNativeNotes(true);
-  if (window.closed) return;
-  await refreshTrashState();
+  if (wasTrash !== inTrash()) {
+    await api.auditNativeNotes(true);
+    if (window.closed || request !== viewVersion) return;
+    await refreshTrashState();
+  }
+  if (request !== viewVersion) return;
   await refresh(false);
+  if (request !== viewVersion) return;
   await refreshDrafts();
+  if (request !== viewVersion) return;
   if (zettels.length) await select(zettels[0].id);
   else {
     $("knowledge-base-detail").hidden = true;
@@ -234,7 +281,9 @@ async function emptyTrash() {
 }
 
 function showError(error) {
-  const msg = String(error?.message || error);
+  const code = String(error?.message || error);
+  const msg =
+    code === "SEARCH_QUERY_TOO_LONG" ? api.loc("search-query-too-long") : code;
   if (!window.closed) {
     const box = $("knowledge-base-error");
     box.hidden = false;
@@ -298,7 +347,8 @@ async function load() {
           if (all || change.fields.includes("availability"))
             await refreshTrashState();
           if (
-            !change ||
+            all ||
+            viewTag() ||
             !change.fields.length ||
             change.fields.some((field) => field !== "tags")
           ) {
@@ -352,7 +402,7 @@ window.ZoteroKnowledgeBase_selectZettel = function (id) {
   const version = ++navigationVersion;
   safeCall(async () => {
     $("knowledge-base-search").value = "";
-    $("knowledge-base-view").value = "notes";
+    setView("all");
     updateActions();
     await refresh();
     const card = await api.getZettel(id);
@@ -395,13 +445,10 @@ function applyLocale() {
   document
     .getElementById("knowledge-base-drafts-label")
     .setAttribute("value", api.loc("manager-drafts"));
-  $("knowledge-base-view").setAttribute("aria-label", api.loc("manager-view"));
-  for (const option of $("knowledge-base-view").options)
-    option.textContent = api.loc(
-      option.getAttribute("value") === "trash"
-        ? "trash-title"
-        : "manager-notes",
-    );
+  $("knowledge-base-views").setAttribute("aria-label", api.loc("manager-view"));
+  for (const [view, options] of Object.entries(NOTE_VIEWS))
+    setActionLabel("knowledge-base-view-" + view, options.label);
+  syncViewButtons();
   for (const [id, key] of [
     ["knowledge-base-btn-restore", "trash-restore"],
     ["knowledge-base-empty-trash", "trash-empty"],
@@ -624,9 +671,12 @@ function bindEvents() {
   $("knowledge-base-btn-child").addEventListener("click", () => {
     if (selectedId) safeCall(() => newChildNote(selectedId));
   });
-  $("knowledge-base-view").addEventListener("change", () =>
-    safeCall(changeView),
-  );
+  for (const button of /** @type {Element[]} */ (
+    Array.from(document.querySelectorAll("[data-note-view]"))
+  ))
+    button.addEventListener("command", () =>
+      safeCall(changeView, button.getAttribute("data-note-view")),
+    );
   document
     .getElementById("knowledge-base-btn-restore")
     .addEventListener("click", () => safeCall(restoreSelected));
@@ -816,7 +866,7 @@ function newChildNote(id) {
     prefillParentId: id,
     onSaved: (savedID) =>
       safeCall(async () => {
-        $("knowledge-base-view").value = "notes";
+        setView("all");
         await refresh();
         select(savedID);
       }),
@@ -834,7 +884,7 @@ function invalidatePages() {
 function currentScope() {
   return JSON.stringify([
     $("knowledge-base-search").value,
-    $("knowledge-base-view").value,
+    activeView,
     $("knowledge-base-sort").value,
   ]);
 }
@@ -854,6 +904,8 @@ async function refreshChanged(cardIDs, referencesChanged) {
       cardIDs,
       limit: 500,
       availability: inTrash() ? "trash" : "active",
+      tag: viewTag(),
+      ownTagsOnly: true,
       sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
         $("knowledge-base-sort").value
       ),
@@ -909,6 +961,8 @@ async function refresh(preserve = listScope === currentScope()) {
   listReferences = undefined;
   const options = {
     availability: inTrash() ? "trash" : "active",
+    tag: viewTag(),
+    ownTagsOnly: true,
     sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
       $("knowledge-base-sort").value
     ),
@@ -1127,7 +1181,8 @@ function renderList() {
     li.appendChild(id);
 
     li.addEventListener("click", () => {
-      if (!deleting) safeCall(select, z.id);
+      if (deleting) return;
+      safeCall(select, z.id);
     });
     li.addEventListener("dblclick", () => {
       if (!deleting && !inTrash()) safeCall(openEditor, z.id);
@@ -1306,7 +1361,7 @@ async function navigateHistory(direction) {
   if (!card) return;
   historyIndex = index;
   $("knowledge-base-search").value = "";
-  $("knowledge-base-view").value = "notes";
+  setView("all");
   updateActions();
   await refresh();
   select(card.id, false);

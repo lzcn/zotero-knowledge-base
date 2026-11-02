@@ -32,7 +32,6 @@ await writeFile(
     `\nexport * as platform from ${JSON.stringify(path.join(ROOT, "src/ui/platform.ts"))};` +
     `\nexport * as graph_canvas from ${JSON.stringify(path.join(ROOT, "src/ui/graph-canvas.ts"))};` +
     `\nexport * as graph_layout from ${JSON.stringify(path.join(ROOT, "src/ui/graph-layout.ts"))};` +
-    `\nexport * as native_reading_view from ${JSON.stringify(path.join(ROOT, "src/ui/native-reading-view.ts"))};` +
     `\nexport * as native_markdown_toolbar from ${JSON.stringify(path.join(ROOT, "src/ui/native-markdown-toolbar.ts"))};` +
     `\nimport { markdownLanguage } from ${JSON.stringify(path.join(ROOT, "node_modules/@codemirror/lang-markdown/dist/index.js"))};` +
     `\nimport { markdownMath } from ${JSON.stringify(path.join(ROOT, "src/ui/markdown-math.ts"))};` +
@@ -60,7 +59,6 @@ const {
   references,
   native_notes,
   native_markdown_toolbar,
-  native_reading_view,
   preferences,
   note_sort,
   graph_layout,
@@ -143,77 +141,6 @@ check("Toolbar cleanup removes the switch and its observer", () => {
   assert.equal(toolbar.querySelector(".knowledge-base-markdown-toggle"), null);
 });
 menuDOM.window.close();
-const readingDOM = new JSDOM(
-  '<div id="editor-container"><div class="editor"><div class="toolbar"><div class="start"></div><div class="middle"><button>Format</button></div></div><div class="editor-core"><div class="primary-editor ProseMirror" contenteditable="true"><p id="paragraph">Native <strong>text</strong></p><span class="katex">Formula</span><img src="https://example.test/image.png" /></div></div></div></div>',
-  { pretendToBeVisual: true },
-);
-const readingWin = readingDOM.window;
-const nativeBody = readingWin.document.querySelector(".primary-editor");
-const originalNativeDOM = nativeBody.outerHTML;
-const originalToolbar = readingWin.document.querySelector(".toolbar");
-let openedLink;
-const reading = native_reading_view.attachReadingView(
-  readingWin,
-  "Reading view",
-  () => {},
-  (href) => (openedLink = href),
-);
-reading.show(true);
-check(
-  "Reading reuses native rendering without changing the toolbar or editable document",
-  () => {
-    const panel = readingWin.document.querySelector(
-      ".knowledge-base-reading-view",
-    );
-    assert.equal(panel.hidden, false);
-    assert.ok(panel.querySelector(".katex"));
-    assert.ok(panel.querySelector("img"));
-    assert.equal(panel.querySelector("[contenteditable], [id]"), null);
-    assert.equal(nativeBody.outerHTML, originalNativeDOM);
-    assert.equal(
-      readingWin.document.querySelector(".toolbar"),
-      originalToolbar,
-    );
-  },
-);
-reading.show(true, '<p>Draft <a href="knowledge-base://card/A">link</a></p>');
-readingWin.document.querySelector(".knowledge-base-reading-view a").click();
-check(
-  "Reading a Markdown draft follows links without applying it to the native writer",
-  () => {
-    assert.equal(openedLink, "knowledge-base://card/A");
-    assert.equal(nativeBody.outerHTML, originalNativeDOM);
-  },
-);
-reading.show(true);
-nativeBody.querySelector("p").textContent = "External native update";
-await new Promise((resolve) => setTimeout(resolve, 40));
-check(
-  "Native reading follows live changes and disposes its observer and surface",
-  () => {
-    assert.ok(
-      readingWin.document
-        .querySelector(".knowledge-base-reading-view")
-        .textContent.includes("External native update"),
-    );
-    reading.destroy();
-    assert.equal(
-      readingWin.document.querySelector(".knowledge-base-reading-view"),
-      null,
-    );
-    assert.equal(
-      readingWin.document.querySelector(".knowledge-base-reading-toggle"),
-      null,
-    );
-    assert.equal(
-      readingWin.document.body.classList.contains(
-        "knowledge-base-reading-mode",
-      ),
-      false,
-    );
-  },
-);
-readingWin.close();
 const equations = String.raw`Inline $E = mc^2$.
 
 $$
@@ -984,10 +911,13 @@ check(
   },
 );
 for (const locale of ["en-US", "zh-CN"]) {
-  const fluent = await readFile(
-    path.join(ROOT, "addon/locale", locale, "addon.ftl"),
-    "utf8",
-  );
+  const fluent = (
+    await Promise.all(
+      ["addon.ftl", "similar-works.ftl"].map((file) =>
+        readFile(path.join(ROOT, "addon/locale", locale, file), "utf8"),
+      ),
+    )
+  ).join("\n");
   const messages = new Map(
     Array.from(
       fluent.matchAll(/^([a-z][\w-]*)[ \t]*=([^\n]*(?:\n[ \t]+[^\n]*)*)/gm),
@@ -1059,6 +989,7 @@ prefsWin.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
       ...preferences,
+      getLibraryState: () => "ready",
       getGraphTags: async () => ["Machine learning", "中文 标签"],
       getSourceStyles: async () => [{ id: "apa", title: "APA" }],
       getSourceStyle: () => "apa",
@@ -1335,6 +1266,8 @@ async function editor(args = {}, overrides = {}) {
     getNoteTags: async () => [],
     getOwnNoteTags: async () => [],
     getNewNoteBody: () => "",
+    getNoteEditorMode: () => "visual",
+    setNoteEditorMode: () => {},
     getGraphTags: async () => ["Thinking Note"],
     getNoteHealth: async () => ({
       note: "available",
@@ -1465,10 +1398,6 @@ async function editor(args = {}, overrides = {}) {
           "font-size": "14px",
           "line-height": "25px",
         }),
-        setReadingMode: (value, html) => {
-          options.element.setAttribute("data-reading-mode", String(value));
-          dom.window.__readingHTML = html;
-        },
         setReadOnly: async (value) => {
           options.element.mode = value ? "view" : "edit";
         },
@@ -1506,6 +1435,40 @@ async function editor(args = {}, overrides = {}) {
     saved: () => saved,
   };
 }
+let rememberedMode = "visual";
+const rememberedModeAPI = {
+  getNoteEditorMode: () => rememberedMode,
+  setNoteEditorMode: (mode) => {
+    rememberedMode = mode;
+  },
+};
+const firstModeEditor = await editor(
+  { prefillTitle: "First mode note" },
+  rememberedModeAPI,
+);
+await firstModeEditor.win.__editorEval('setEditorMode("visual", false)');
+await firstModeEditor.win.__editorEval("toggleMarkdown()");
+const secondModeEditor = await editor(
+  { prefillTitle: "Second mode note" },
+  rememberedModeAPI,
+);
+check("New notes retain Markdown after a toolbar mode change", () => {
+  assert.equal(rememberedMode, "source");
+  assert.equal(secondModeEditor.initialMode, "source");
+  assert.equal(secondModeEditor.initialSourceAllocated, true);
+});
+await secondModeEditor.win.__editorEval("toggleMarkdown()");
+const thirdModeEditor = await editor(
+  { prefillTitle: "Third mode note" },
+  rememberedModeAPI,
+);
+check("Returning to native editing also carries across notes", () => {
+  assert.equal(rememberedMode, "visual");
+  assert.equal(thirdModeEditor.initialMode, "visual");
+  assert.equal(thirdModeEditor.initialSourceAllocated, false);
+});
+for (const fixture of [firstModeEditor, secondModeEditor, thirdModeEditor])
+  fixture.win.close();
 const completionEditor = await editor();
 const completionBody = completionEditor.$("knowledge-base-editor-body");
 completionBody.value = "Before [[";
@@ -1593,6 +1556,42 @@ check(
 );
 const cursorFixture = await editor({ prefillTitle: "Cursor" });
 const cursorBody = cursorFixture.$("knowledge-base-editor-body");
+const searchDocument = cursorBody.querySelector("iframe").contentDocument;
+const beforeSearch = cursorBody.value;
+check("Markdown search opens in find mode and replacement is optional", () => {
+  cursorBody.toggleSearch();
+  const panel = searchDocument.querySelector(".cm-search");
+  assert.ok(panel);
+  assert.equal(panel.querySelector('[name="showReplace"]').checked, false);
+  assert.equal(panel.querySelector('input[name="replace"]').hidden, true);
+  panel.querySelector('[name="showReplace"]').click();
+  assert.equal(panel.querySelector('input[name="replace"]').hidden, false);
+  cursorBody.openSearch();
+  assert.equal(panel.querySelector('[name="showReplace"]').checked, false);
+  assert.equal(panel.querySelector('input[name="replace"]').hidden, true);
+});
+check(
+  "Search shortcuts open the requested mode without toggling the panel",
+  () => {
+    cursorBody.openSearch(true);
+    cursorBody.openSearch(true);
+    const panel = searchDocument.querySelector(".cm-search");
+    assert.equal(panel.querySelector('[name="showReplace"]').checked, true);
+    assert.equal(panel.querySelector('input[name="replace"]').hidden, false);
+  },
+);
+check("Toggling Markdown search closes it and reopening resets to find", () => {
+  cursorBody.toggleSearch();
+  assert.equal(searchDocument.querySelector(".cm-search"), null);
+  cursorBody.toggleSearch();
+  assert.equal(
+    searchDocument.querySelector('[name="showReplace"]').checked,
+    false,
+  );
+  cursorBody.toggleSearch();
+  assert.equal(searchDocument.querySelector(".cm-search"), null);
+  assert.equal(cursorBody.value, beforeSearch);
+});
 check(
   "Programmatic source updates map the cursor without rewriting unchanged text",
   () => {
@@ -1822,6 +1821,8 @@ const unavailableEditor = await editor(
     getNoteTags: async () => [],
     getOwnNoteTags: async () => [],
     getNewNoteBody: () => "",
+    getNoteEditorMode: () => "visual",
+    setNoteEditorMode: () => {},
     getGraphTags: async () => ["Thinking Note"],
     getNoteHealth: async () => ({
       note: "missing",
@@ -1848,7 +1849,7 @@ check(
         .textContent.includes("Retained content"),
     );
     assert.equal(
-      unavailableEditor.$("knowledge-base-editor-save").disabled,
+      unavailableEditor.$("knowledge-base-editor-apply-draft").hidden,
       true,
     );
     assert.equal(
@@ -1939,8 +1940,8 @@ check(
       true,
     );
     assert.equal(
-      restoredEditor.$("knowledge-base-editor-save").disabled,
-      false,
+      restoredEditor.$("knowledge-base-editor-apply-draft").hidden,
+      true,
     );
     assert.equal(restoredEditor.saved(), undefined);
   },
@@ -2034,6 +2035,25 @@ closeEditor.win.Services = {
     },
   },
 };
+const escapeBody = closeEditor.$("knowledge-base-editor-body");
+const escapeFrame = escapeBody.querySelector("iframe").contentWindow;
+for (let press = 0; press < 2; press++)
+  escapeFrame.document.querySelector(".cm-content").dispatchEvent(
+    new escapeFrame.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+await wait();
+check(
+  "Escape in Markdown leaves unsaved work open without a close prompt",
+  () => {
+    assert.equal(promptCalls, 0);
+    assert.equal(closeCalls, 0);
+    assert.equal(escapeBody.value, "# Unsaved idea\n\nKeep this text");
+  },
+);
 closeEditor.win.dispatchEvent(
   new closeEditor.win.KeyboardEvent("keydown", {
     key: "w",
@@ -2401,7 +2421,7 @@ deferredEditor.win.__editorEval("setDirty()");
 const deferredSave = deferredEditor.win.__editorEval("save(false)");
 for (let n = 0; n < 20 && !releaseDeferredSave; n++) await wait();
 assert.ok(releaseDeferredSave);
-// The native write has committed, while KB metadata completion is still pending.
+// The native write has committed, while Knowledge Base metadata completion is still pending.
 const interveningHTML =
   await deferredEditor.win.Zotero.ZoteroKnowledgeBase.api.nativeNoteHTML(
     savingInput.title,
@@ -3116,6 +3136,8 @@ check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
   assert.equal(ed.$("knowledge-base-editor-title"), null);
   assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
+  assert.equal(ed.$("knowledge-base-editor-save"), null);
+  assert.equal(ed.$("knowledge-base-editor-apply-draft").hidden, true);
 });
 ed.$("knowledge-base-editor-format").dispatchEvent(
   new ed.win.Event("command", { bubbles: true }),
@@ -3125,6 +3147,8 @@ await wait();
 check(
   "Markdown keeps the same native toolbar with its body writer paused",
   () => {
+    assert.equal(ed.$("knowledge-base-editor-save"), null);
+    assert.equal(ed.$("knowledge-base-editor-apply-draft").hidden, true);
     assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "source");
     assert.equal(ed.$("knowledge-base-editor-body").hidden, false);
     assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
@@ -3164,33 +3188,6 @@ check(
     assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
   },
 );
-await chooseMode(ed, "source");
-const readingSource = ed.$("knowledge-base-editor-body");
-readingSource.value = "# Kept draft\n\n$$x^2$$\n\nUnformatted  text";
-readingSource.setSelectionRange(8, 13);
-const sourceBeforeReading = readingSource.value;
-const writesBeforeReading = ed.saved();
-await ed.win.__editorEval("toggleReading()");
-check(
-  "Source Reading retains the draft and writer mode without saving or formatting",
-  () => {
-    assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "reading");
-    assert.equal(readingSource.hidden, true);
-    assert.equal(readingSource.value, sourceBeforeReading);
-    assert.equal(readingSource.selectionStart, 8);
-    assert.equal(readingSource.selectionEnd, 13);
-    assert.equal(ed.win.__editorEval("snapshot().sourceMode"), true);
-    assert.equal(ed.saved(), writesBeforeReading);
-    assert.ok(ed.win.__readingHTML.includes("katex-display"));
-  },
-);
-await ed.win.__editorEval("toggleReading()");
-assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "source");
-assert.equal(readingSource.hidden, false);
-assert.equal(readingSource.value, sourceBeforeReading);
-assert.equal(readingSource.selectionStart, 8);
-assert.equal(readingSource.selectionEnd, 13);
-await chooseMode(ed, "visual");
 check(
   "Native insertion uses host formatting instead of offering Markdown commands",
   () => {
@@ -3230,20 +3227,26 @@ check(
       "body",
     );
     assert.equal(recovery.$("knowledge-base-rich-frame").mode, "view");
+    assert.equal(recovery.$("knowledge-base-editor-apply-draft").hidden, false);
     assert.equal(recovery.saved(), undefined);
   },
 );
 recovery
-  .$("knowledge-base-editor-save")
+  .$("knowledge-base-editor-apply-draft")
   .dispatchEvent(new recovery.win.Event("command", { bubbles: true }));
 await wait();
 await wait();
-check("Explicitly saving a recovery draft returns to native editing", () => {
-  assert.equal(recovery.saved().sourceMode, true);
-  assert.equal(recovery.$("knowledge-base-editor-preview").hidden, true);
-  assert.equal(recovery.$("knowledge-base-rich-frame").hidden, false);
-  assert.equal(recovery.$("knowledge-base-rich-frame").mode, "edit");
-});
+check(
+  "Applying a recovery draft returns to native editing without a Save button",
+  () => {
+    assert.equal(recovery.saved().sourceMode, true);
+    assert.equal(recovery.$("knowledge-base-editor-apply-draft").hidden, true);
+    assert.equal(recovery.$("knowledge-base-editor-save"), null);
+    assert.equal(recovery.$("knowledge-base-editor-preview").hidden, true);
+    assert.equal(recovery.$("knowledge-base-rich-frame").hidden, false);
+    assert.equal(recovery.$("knowledge-base-rich-frame").mode, "edit");
+  },
+);
 check("Native code remains fenced and opaque to formula formatting", () => {
   const code = "\\(literal\\)\n\\[code\\]\n```";
   const source = rich_text.richTextToMarkdown("<pre>" + code + "</pre>");
@@ -3512,7 +3515,7 @@ check(
       ).citationItems[0].locator,
       "23",
     );
-    assert.ok(!fragmentRestore.includes("zkb:"));
+    assert.ok(!fragmentRestore.includes("knowledge-base-native:"));
   },
 );
 await chooseMode(ed, "source");
@@ -4074,6 +4077,8 @@ graphDom.window.Zotero = {
       getNoteTags: async () => [],
       getOwnNoteTags: async () => [],
       getNewNoteBody: () => "",
+      getNoteEditorMode: () => "visual",
+      setNoteEditorMode: () => {},
       getGraphTags: async () => ["Thinking Note"],
       getTrashNotes: async () => [],
       getNoteHealth: async () => ({
@@ -4797,6 +4802,8 @@ managerWin.Zotero = {
       getNoteTags: async () => [],
       getOwnNoteTags: async () => [],
       getNewNoteBody: () => "",
+      getNoteEditorMode: () => "visual",
+      setNoteEditorMode: () => {},
       getGraphTags: async () => ["Thinking Note"],
       getTrashNotes: async () => [],
       getNoteHealth: async () => ({
@@ -5459,17 +5466,166 @@ check(
     assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1);
   },
 );
-const noteView = managerDoc.getElementById("knowledge-base-view");
-check(
-  "Notes and Trash share one native view selector without Entry points",
-  () => {
-    assert.equal(managerDoc.getElementById("knowledge-base-entries"), null);
-    assert.deepEqual(
-      [...noteView.options].map((option) => option.value),
-      ["notes", "trash"],
-    );
+const viewButtons = [...managerDoc.querySelectorAll("[data-note-view]")];
+const selectNoteView = (view) =>
+  managerDoc
+    .querySelector('[data-note-view="' + view + '"]')
+    .dispatchEvent(new managerWin.Event("command", { bubbles: true }));
+check("Four icon filters default to All, with a separate Trash entry", () => {
+  assert.equal(managerDoc.getElementById("knowledge-base-entries"), null);
+  assert.equal(managerDoc.getElementById("knowledge-base-view"), null);
+  assert.deepEqual(
+    [
+      ...managerDoc.querySelectorAll("#knowledge-base-views [data-note-view]"),
+    ].map((button) => button.getAttribute("data-note-view")),
+    ["all", "literature", "zettel", "thinking"],
+  );
+  assert.equal(
+    managerDoc
+      .getElementById("knowledge-base-view-all")
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.equal(
+    managerDoc
+      .getElementById("knowledge-base-views")
+      .contains(managerDoc.getElementById("knowledge-base-view-trash")),
+    false,
+  );
+});
+const categoryCards = managerCards,
+  categorySearch = managerAPI.searchZettelSummaries;
+managerCards = [
+  {
+    ...categoryCards[0],
+    id: "VIEW_L",
+    title: "Matched paper",
+    tags: ["Literature Note"],
   },
+  {
+    ...categoryCards[0],
+    id: "VIEW_Z",
+    title: "Matched claim",
+    tags: ["Zettel"],
+  },
+  {
+    ...categoryCards[0],
+    id: "VIEW_T",
+    title: "Matched idea",
+    tags: ["Thinking Note"],
+  },
+  { ...categoryCards[0], id: "VIEW_NONE", title: "Other note", tags: [] },
+];
+const viewQueries = [];
+managerAPI.searchZettelSummaries = async (query, options) => {
+  viewQueries.push(options);
+  return {
+    items: managerCards.filter(
+      (note) =>
+        (!options.tag || note.tags.includes(options.tag)) &&
+        (!query || note.title.includes(query)),
+    ),
+    cursor: null,
+  };
+};
+for (const [view, id] of [
+  ["literature", "VIEW_L"],
+  ["zettel", "VIEW_Z"],
+  ["thinking", "VIEW_T"],
+]) {
+  selectNoteView(view);
+  await wait();
+  await wait();
+  check("The " + view + " icon filters its own tag", () => {
+    assert.deepEqual(
+      [...managerDoc.querySelectorAll(".zettel-row")].map(
+        (row) => row.dataset.id,
+      ),
+      [id],
+    );
+    assert.equal(
+      managerDoc
+        .getElementById("knowledge-base-view-" + view)
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.equal(viewQueries.at(-1).ownTagsOnly, true);
+  });
+}
+const thinkingViewCard = managerCards.find((note) => note.id === "VIEW_T");
+thinkingViewCard.tags = [];
+managerChanged({ all: false, cardIDs: ["VIEW_T"], fields: ["tags"] });
+await wait();
+await wait();
+check("Removing a category tag immediately removes the matching row", () =>
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0),
 );
+thinkingViewCard.tags = ["Thinking Note"];
+managerChanged({ all: false, cardIDs: ["VIEW_T"], fields: ["tags"] });
+await wait();
+await wait();
+check("Adding a category tag immediately restores the matching row", () =>
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1),
+);
+const cancelledFrame = managerDoc.getElementById(
+  "knowledge-base-workbench-editor",
+);
+const wasFrameHidden = cancelledFrame.hidden;
+const wasEmbedded = managerWin.arguments[0].embedded;
+const oldFrameWindow = cancelledFrame.contentWindow;
+managerWin.arguments[0].embedded = true;
+cancelledFrame.hidden = false;
+let releaseViewLoad,
+  preparedViewChanges = 0;
+cancelledFrame.contentWindow = {
+  knowledgeBaseReady: () =>
+    new Promise((resolve) => {
+      releaseViewLoad = resolve;
+    }),
+  knowledgeBasePrepareNavigation: async () => {
+    preparedViewChanges++;
+    return false;
+  },
+};
+selectNoteView("literature");
+await wait();
+check("Category changes wait for an editor that is still loading", () =>
+  assert.equal(preparedViewChanges, 0),
+);
+releaseViewLoad();
+await wait();
+await wait();
+check("Cancelling navigation preserves the selected category", () => {
+  assert.equal(
+    managerDoc
+      .getElementById("knowledge-base-view-thinking")
+      .getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.equal(
+    managerDoc
+      .getElementById("knowledge-base-view-literature")
+      .getAttribute("aria-pressed"),
+    "false",
+  );
+});
+cancelledFrame.contentWindow = oldFrameWindow;
+if (wasEmbedded === undefined) delete managerWin.arguments[0].embedded;
+else managerWin.arguments[0].embedded = wasEmbedded;
+cancelledFrame.hidden = wasFrameHidden;
+managerDoc.getElementById("knowledge-base-search").value = "No match";
+managerChanged();
+await wait();
+await wait();
+check("Text search and category filtering intersect", () =>
+  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0),
+);
+managerDoc.getElementById("knowledge-base-search").value = "";
+managerCards = categoryCards;
+managerAPI.searchZettelSummaries = categorySearch;
+selectNoteView("all");
+await wait();
+await wait();
 const beforeTrashCards = managerCards;
 const beforeTrashSearch = managerAPI.searchZettelSummaries;
 const trashUIRows = [
@@ -5511,8 +5667,7 @@ managerAPI.getNoteHealth = async (id) => ({
   source: "none",
   editable: true,
 });
-noteView.value = "trash";
-noteView.dispatchEvent(new managerWin.Event("change"));
+selectNoteView("trash");
 await wait();
 await wait();
 check("Trash disables creation and offers restoration and emptying", () => {
@@ -5590,7 +5745,7 @@ managerDoc
 await wait();
 check("Pending emptying blocks repeated operations and view changes", () => {
   assert.equal(uiPurgeStarts, 1);
-  assert.equal(noteView.disabled, true);
+  assert.ok(viewButtons.every((button) => button.hasAttribute("disabled")));
   assert.equal(
     managerDoc.getElementById("knowledge-base-trash-cancel").hidden,
     false,
@@ -5609,7 +5764,7 @@ check(
   "Cancelling a pending batch keeps notes and releases the view controls",
   () => {
     assert.equal(uiTrashIDs.size, 1);
-    assert.equal(noteView.disabled, false);
+    assert.ok(viewButtons.every((button) => !button.hasAttribute("disabled")));
     assert.equal(
       managerDoc.getElementById("knowledge-base-trash-cancel").hidden,
       true,
@@ -5618,7 +5773,7 @@ check(
 );
 managerAPI.permanentlyDeleteNotes = completeUIPurge;
 
-// Emptying applies to the whole KB Trash, even while search hides its notes.
+// Emptying applies to the whole Knowledge Base Trash, even while search hides its notes.
 managerDoc.getElementById("knowledge-base-search").value = "No match";
 await managerWin.__managerRefresh();
 managerWin.confirm = () => true;
@@ -5628,7 +5783,7 @@ managerDoc
 await wait();
 await wait();
 check(
-  "Empty Trash uses all editable KB Trash IDs independently of the list search",
+  "Empty Trash uses all editable Knowledge Base Trash IDs independently of the list search",
   () => {
     assert.deepEqual(
       Array.from(trashBatches[0]),
@@ -5653,8 +5808,7 @@ managerCards = beforeTrashCards;
 managerAPI.getNoteHealth = beforeTrashHealth;
 managerAPI.searchZettelSummaries = beforeTrashSearch;
 managerAPI.getTrashNotes = async () => [];
-noteView.value = "notes";
-noteView.dispatchEvent(new managerWin.Event("change"));
+selectNoteView("all");
 await wait();
 await wait();
 check("Returning to Notes restores the normal compact actions", () => {

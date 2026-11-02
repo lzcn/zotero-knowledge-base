@@ -20,10 +20,7 @@ function attachToolbarPopupLayer(frame: Window): () => void {
   const update = () => {
     pending = 0;
     const body = frame.document.body;
-    if (
-      !body.classList.contains("knowledge-base-source-mode") ||
-      body.classList.contains("knowledge-base-reading-mode")
-    ) {
+    if (!body.classList.contains("knowledge-base-source-mode")) {
       restore();
       return;
     }
@@ -140,7 +137,7 @@ export function attachMarkdownToggle(
     .toolbar .knowledge-base-markdown-toggle:focus-visible,
     .toolbar .knowledge-base-note-link:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
     .knowledge-base-markdown-toggle.active { background: var(--fill-quarternary, #e6e9ee); border-radius: 4px; }
-    .knowledge-base-source-mode .primary-editor:not(.knowledge-base-reading-content) { visibility: hidden; pointer-events: none; }
+    .knowledge-base-source-mode .primary-editor { visibility: hidden; pointer-events: none; }
     .knowledge-base-source-mode .toolbar .middle,
     .knowledge-base-source-mode .toolbar .center { opacity: .5; pointer-events: none; }
   `;

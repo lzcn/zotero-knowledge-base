@@ -4,7 +4,6 @@ import {
   attachMarkdownToggle,
   getNativeTypography,
 } from "../ui/native-markdown-toolbar";
-import { attachReadingView } from "../ui/native-reading-view";
 import { api } from "./api";
 import { onNativeNoteChange, writeNativeNote } from "./note-sessions";
 import { mergeMarkdownDocuments } from "./document-merge";
@@ -188,8 +187,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       source.setTypography(getNativeTypography(instance._iframeWindow));
     };
     let sourceMode = false;
-    let readingMode = false;
-    let readingVersion = 0;
     let closed = false;
     let baseline = "";
     let original = "";
@@ -230,7 +227,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         mergeMarkdownDocuments(previousDocument, baseline, document) ??
         document;
       source!.value = merged;
-      if (readingMode) void refreshReading().catch(report);
       return true;
     };
     const unsubscribeNote = onNativeNoteChange(item.id, (change) => {
@@ -343,9 +339,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       changingMode = true;
       removeMarkdownToggle.setDisabled(true);
       try {
-        readingMode = false;
-        ++readingVersion;
-        readingView.show(false);
         if (sourceMode) source!.hidden = false;
         if (sourceMode) {
           if (!(await save()) || dirty()) return;
@@ -413,39 +406,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         }, 500);
       void persist().catch(report);
     };
-    const refreshReading = async () => {
-      const version = ++readingVersion;
-      if (!readingMode) return;
-      let html: string | undefined;
-      if (sourceMode) {
-        const body = source!.value;
-        await api.prepareMarkdown(body);
-        html = api.renderMarkdown(body);
-      }
-      if (closed || stopped || !readingMode || version !== readingVersion)
-        return;
-      readingView.show(true, html);
-    };
-    const toggleReading = async () => {
-      if (closed || stopped || changingMode) return;
-      readingMode = !readingMode;
-      ++readingVersion;
-      if (sourceMode) source!.hidden = readingMode;
-      if (readingMode) {
-        try {
-          await refreshReading();
-          if (readingMode) readingView.focus();
-        } catch (error) {
-          readingMode = false;
-          if (sourceMode) source!.hidden = false;
-          report(error);
-        }
-      } else {
-        readingView.show(false);
-        if (sourceMode) source!.focus();
-        else element.focus();
-      }
-    };
     const reloadSource = async () => {
       if (operation || stopped || closed) return;
       if (
@@ -464,7 +424,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       revision = 0;
       status.textContent = "";
       reload.hidden = true;
-      if (readingMode) await refreshReading();
     };
     const requestClose = async () => {
       if (closing) return;
@@ -536,20 +495,10 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         void changeMode();
       },
     );
-    const readingView = attachReadingView(
-      instance._iframeWindow,
-      getString("editor-reading"),
-      () => {
-        void toggleReading().catch(report);
-      },
-      (href) => {
-        void api.openLink(href).catch(report);
-      },
-    );
     const removeTextTools = attachTextTools(instance._iframeWindow, {
       labels: textToolLabels((key, args) => getString(key, { args })),
       source: () => (sourceMode ? source : undefined),
-      canEdit: () => !closed && !stopped && !readingMode,
+      canEdit: () => !closed && !stopped,
       report,
     });
     const controller: Controller = {
@@ -560,7 +509,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           void persist().catch(report);
         } finally {
           closed = true;
-          ++readingVersion;
         }
       },
       async restore() {
@@ -588,7 +536,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         container.style.position = previousPosition;
         removeMarkdownToggle();
         removeTextTools();
-        readingView.destroy();
         bar.remove();
         source?.destroy();
         source?.remove();

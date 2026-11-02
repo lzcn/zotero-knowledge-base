@@ -10,7 +10,7 @@ export default async function textToolsHost({
   restartMarker,
   screenshots,
 }) {
-  const kb = Zotero.ZoteroKnowledgeBase;
+  const knowledgeBase = Zotero.ZoteroKnowledgeBase;
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const wait = async (check, label) => {
     for (let n = 0; n < 200; n++) {
@@ -28,7 +28,7 @@ export default async function textToolsHost({
   if (await IOUtils.exists(marker)) {
     const saved = JSON.parse(await IOUtils.readUTF8(marker));
     assert(
-      (await kb.api.getZettel(saved.cardID)).body === saved.body,
+      (await knowledgeBase.api.getZettel(saved.cardID)).body === saved.body,
       "Formatted body changed after restart",
     );
     assert(
@@ -39,7 +39,7 @@ export default async function textToolsHost({
       (await Zotero.Items.getAsync(saved.ordinaryID)).getNote().includes("$z$"),
       "Ordinary note formatting was not persisted",
     );
-    await kb.hooks.onShutdown();
+    await knowledgeBase.hooks.onShutdown();
     await IOUtils.writeUTF8(
       restartMarker,
       JSON.stringify({ connectionsOnly: true }),
@@ -71,11 +71,11 @@ export default async function textToolsHost({
       new Uint8Array(await blob.arrayBuffer()),
     );
   };
-  const cardID = await kb.api.saveZettel({
+  const cardID = await knowledgeBase.api.saveZettel({
     title: "Text tools",
     body: "## Dynamic link prediction\n\nPreserve **bold**, [a link](https://example.org) and `code`.",
   });
-  kb.api.openEditor({ zettelId: cardID });
+  knowledgeBase.api.openEditor({ zettelId: cardID });
   const inline = await wait(() => {
     const workbench = main.document.querySelector(
       ".knowledge-base-workbench",
@@ -88,7 +88,7 @@ export default async function textToolsHost({
       view.document.readyState === "complete" &&
       view
     );
-  }, "KB editor did not open");
+  }, "Knowledge Base editor did not open");
   await inline.knowledgeBaseReady();
   const native = () =>
     inline.document
@@ -411,6 +411,10 @@ export default async function textToolsHost({
           mode: inline.eval("editorMode"),
         }),
     );
+    assert(
+      sourceDoc.querySelector('[name="showReplace"]').checked === altKey,
+      "Source shortcut opened the wrong search mode",
+    );
     sourceDoc.querySelector('.cm-search input[name="search"]').dispatchEvent(
       new sourceDoc.defaultView.KeyboardEvent("keydown", {
         key: "Escape",
@@ -423,16 +427,48 @@ export default async function textToolsHost({
       () => !sourceDoc.querySelector(".cm-search"),
       "Escape did not close source search",
     );
+    cm.dispatchEvent(
+      new sourceDoc.defaultView.KeyboardEvent("keydown", {
+        key: "Escape",
+        code: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    await pause(100);
     assert(
       !inline.closed && inline.knowledgeBaseCardId === cardID,
       "Closing search navigated away from the note",
     );
   }
   await invoke(native(), "find");
-  const search = await wait(
+  let search = await wait(
     () => sourceDoc.querySelector(".cm-search"),
-    "Source find and replace did not open",
+    "Source find did not open",
   );
+  assert(
+    !search.querySelector('[name="showReplace"]').checked &&
+      search.querySelector('input[name="replace"]').getBoundingClientRect()
+        .height === 0,
+    "Source toolbar search did not start in find mode",
+  );
+  await shot("search-source");
+  search.querySelector('[name="showReplace"]').click();
+  await invoke(native(), "find");
+  await wait(
+    () => !sourceDoc.querySelector(".cm-search"),
+    "Source toolbar did not close search",
+  );
+  await invoke(native(), "find");
+  search = await wait(
+    () => sourceDoc.querySelector(".cm-search"),
+    "Source search did not reopen",
+  );
+  assert(
+    !search.querySelector('[name="showReplace"]').checked,
+    "Reopened source search retained replacement mode",
+  );
+  search.querySelector('[name="showReplace"]').click();
   const fill = (field, value) => {
     field.value = value;
     field.dispatchEvent(
@@ -472,11 +508,11 @@ export default async function textToolsHost({
       () => frame.document.querySelector(".findbar"),
       "Native search shortcut failed: " + altKey,
     );
-    if (altKey)
-      await wait(
-        () => frame.document.querySelector("#replace-checkbox")?.checked,
-        "Native replace shortcut did not reveal replacement",
-      );
+    await wait(
+      () =>
+        frame.document.querySelector("#replace-checkbox")?.checked === altKey,
+      "Native shortcut opened the wrong search mode",
+    );
     core(frame).pluginState.search.setActive(false);
     await wait(
       () => !frame.document.querySelector(".findbar"),
@@ -485,8 +521,33 @@ export default async function textToolsHost({
   }
   await invoke(native(), "find");
   await wait(
-    () => native().document.querySelector("#replace-checkbox")?.checked,
-    "Native replacement controls did not open",
+    () =>
+      native().document.querySelector("#replace-checkbox")?.checked === false,
+    "Native toolbar search did not start in find mode",
+  );
+  assert(
+    native().document.querySelectorAll('.findbar input[type="text"]').length ===
+      1,
+    "Native search revealed replacement by default",
+  );
+  await shot("search-native");
+  await invoke(native(), "find");
+  await wait(
+    () => !native().document.querySelector(".findbar"),
+    "Native toolbar did not close search",
+  );
+  await invoke(native(), "find");
+  await wait(
+    () =>
+      native().document.querySelector("#replace-checkbox")?.checked === false,
+    "Native search did not reopen in find mode",
+  );
+  native().document.querySelector("#replace-checkbox").click();
+  await wait(
+    () =>
+      native().document.querySelectorAll('.findbar input[type="text"]')
+        .length === 2,
+    "Native replacement did not expand",
   );
   const findFrame = native(),
     findView = core(findFrame).view;
@@ -550,7 +611,9 @@ export default async function textToolsHost({
   const noteID = inline.eval("nativeNoteID");
   const ordinary = new Zotero.Item("note");
   ordinary.libraryID = Zotero.Libraries.userLibraryID;
-  ordinary.setNote(await kb.api.nativeNoteHTML("Ordinary tools", "Plain note"));
+  ordinary.setNote(
+    await knowledgeBase.api.nativeNoteHTML("Ordinary tools", "Plain note"),
+  );
   await ordinary.saveTx();
   const instance = await Zotero.Notes.open(ordinary.id, null, {
     openInWindow: true,
@@ -632,7 +695,7 @@ export default async function textToolsHost({
       connectionsOnly: true,
       cardID,
       noteID,
-      body: (await kb.api.getZettel(cardID)).body,
+      body: (await knowledgeBase.api.getZettel(cardID)).body,
       html: (await Zotero.Items.getAsync(noteID)).getNote(),
       ordinaryID: ordinary.id,
     }),

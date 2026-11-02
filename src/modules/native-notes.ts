@@ -500,9 +500,11 @@ function restoreMarkdownFragments(
   const originalDoc = parse(original);
   const fragments = getMarkdownSource(original).fragments;
   for (const marker of Array.from(
-    doc.querySelectorAll('a[href^="zkb:"]'),
+    doc.querySelectorAll('a[href^="knowledge-base-native:"]'),
   ) as Element[]) {
-    const match = /^zkb:(\d+)$/.exec(marker.getAttribute("href") || "");
+    const match = /^knowledge-base-native:(\d+)$/.exec(
+      marker.getAttribute("href") || "",
+    );
     if (!match || !fragments[Number(match[1])])
       throw new Error("CARD_CONFLICT: native fragment unavailable");
     const fragment = parse(fragments[Number(match[1])]);
@@ -549,7 +551,10 @@ function restoreMarkdownFragments(
 /** Restore unchanged native payloads after sanitizing the editable Markdown. */
 function protectNativePayloads(source: string, original: string): string {
   getMarkdownSource(original).fragments.forEach((fragment, index) => {
-    source = source.replaceAll(fragment, `[native](zkb:${index})`);
+    source = source.replaceAll(
+      fragment,
+      `[native](knowledge-base-native:${index})`,
+    );
   });
   return source;
 }

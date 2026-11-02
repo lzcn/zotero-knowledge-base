@@ -21,3 +21,17 @@ declare namespace Zotero {
     isInTrash(): boolean;
   }
 }
+
+declare const libraryRuntime: {
+  readonly state: "idle" | "ready" | "stopped";
+  start(): Promise<void>;
+  wakeIndex(): void;
+  openTagManager(win: Window, libraryID: number): Window;
+  getStatus(): Record<string, any> | null;
+  getItemPaneCallbacks(): Record<string, (props: any) => any>;
+  setItemPaneID(id?: string): void;
+  stop(): void;
+  close(appShutdown?: boolean): Promise<void>;
+  onWindowLoad(win: Window): void;
+  onWindowUnload(win: Window): void;
+};

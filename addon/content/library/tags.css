@@ -1,0 +1,213 @@
+@import url("chrome://similar-works/content/ui.css");
+
+:root {
+  color-scheme: light dark;
+}
+#tag-manager {
+  margin: 0;
+  padding: 14px;
+  font: 13px/1.5 var(--ui-font);
+  color: var(--ui-fg);
+  background: var(--ui-surface);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  box-sizing: border-box;
+  gap: 10px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+header input[type="search"] {
+  min-width: 0;
+  flex: 1;
+}
+label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#preview {
+  margin: 0;
+  color: var(--ui-muted);
+}
+main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--ui-border);
+  padding: 0;
+  background: var(--ui-bg);
+}
+.tag {
+  overflow-wrap: anywhere;
+}
+.tag span {
+  min-width: 0;
+}
+footer {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+#preview,
+#collision,
+.actions {
+  grid-column: 1 / -1;
+}
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+input {
+  width: auto;
+  min-width: 130px;
+  justify-self: start;
+  appearance: auto;
+  background-image: none;
+}
+#mode {
+  min-width: 160px;
+  max-width: 100%;
+  margin: 0;
+  justify-self: start;
+  font: inherit;
+}
+input[type="search"],
+input[type="text"] {
+  padding: 4px 8px;
+  min-height: 28px;
+  box-sizing: border-box;
+  border: 1px solid var(--ui-border);
+  border-radius: 5px;
+  background: var(--ui-bg);
+  color: var(--ui-fg);
+  font: inherit;
+}
+.tag:hover {
+  background: var(--ui-hover);
+}
+.tag:has(input:checked) {
+  background: var(--ui-active);
+}
+.tag-group-start {
+  border-top: 1px solid var(--ui-border);
+}
+
+.selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+#selection-count {
+  color: var(--ui-muted);
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.tag td {
+  padding: 6px 10px;
+  box-shadow: inset 0 -1px var(--ui-border);
+}
+.tag label {
+  cursor: default;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+thead {
+  position: sticky;
+  top: 0;
+  background: var(--ui-surface);
+}
+th {
+  text-align: left;
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+th button {
+  white-space: nowrap;
+  appearance: none;
+  min-height: 32px;
+  margin: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+}
+th[aria-sort="ascending"] button::after {
+  content: " ▴";
+}
+th[aria-sort="descending"] button::after {
+  content: " ▾";
+}
+.tag-count {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+td:last-child {
+  color: var(--ui-muted);
+}
+#target {
+  width: 100%;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  min-width: 14px;
+  margin: 0;
+  flex: none;
+}
+
+#collision {
+  margin: 0;
+}
+
+th:first-child {
+  width: 52%;
+}
+th:nth-child(2) {
+  width: 14%;
+}
+
+th button:hover {
+  background: var(--ui-hover);
+}
+th button:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: -2px;
+}
+input[type="search"]:focus-visible,
+input[type="text"]:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 1px;
+}
+.tag:has(input:checked) td {
+  color: var(--ui-fg);
+}

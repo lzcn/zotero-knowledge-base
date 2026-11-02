@@ -1,0 +1,31 @@
+Porter JavaScript stemmer
+
+Adapted from the implementation by Andargor (July 2004), substantially
+revised by Christopher McKenzie (August 2009).
+Source: https://tartarus.org/martin/PorterStemmer/js.txt
+Permission: https://tartarus.org/martin/PorterStemmer/
+The author's distribution page permits these implementations to be used
+free of charge for any purpose. This permission remains applicable to the
+upstream implementation; the project's AGPL license does not replace it.
+
+Build tools are development dependencies and are not bundled in the add-on.
+Their respective license notices are included in their npm packages.
+
+The add-on bundles Transformers.js (Apache-2.0), ONNX Runtime Web (MIT),
+and Hugging Face Jinja (MIT). License copies are included under runtime/.
+Source: https://huggingface.co/docs/transformers.js
+Source: https://onnxruntime.ai/
+The separately downloaded all-MiniLM-L6-v2 model is licensed Apache-2.0.
+Source: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+
+Tag model names (tag-terms.json)
+
+Derived from Hugging Face Transformers v4.57.1 MODEL_NAMES_MAPPING, with
+project-maintained research names and aliases. Copyright 2018 The HuggingFace
+Inc. team. Licensed under Apache-2.0; a copy is bundled as
+runtime/transformers-LICENSE.
+Source: https://github.com/huggingface/transformers/blob/v4.57.1/src/transformers/models/auto/configuration_auto.py
+
+The macOS native helper uses separately downloaded ONNX Runtime 1.22.0 (MIT).
+Its license and third-party notices are included under runtime/. Model weights
+are also downloaded separately; the MiniLM model uses Apache-2.0.

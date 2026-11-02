@@ -64,16 +64,26 @@
 .plugin-preferences details h3 {
   margin-top: 12px;
 }
-.plugin-preferences .preference-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-block: 4px 8px;
-}
 .plugin-preferences #knowledge-base-template-body {
   width: 100%;
   font-family: monospace;
 }
-.plugin-preferences #knowledge-base-ai-status {
-  flex: 1;
+
+.plugin-preferences .preference-help {
+  margin-inline-start: calc(10em + 8px);
+}
+.plugin-preferences .preference-status {
+  display: grid;
+  grid-template-columns: 10em minmax(0, 1fr);
+  gap: 6px 8px;
+  margin: 0;
+}
+.plugin-preferences .preference-status dd {
+  margin: 0;
+}
+.plugin-preferences progress:not([hidden]) {
+  display: block;
+  width: 100%;
+  max-width: 28em;
+  margin-top: 4px;
 }

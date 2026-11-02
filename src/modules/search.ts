@@ -2,6 +2,7 @@ import { getTaggedNoteIDs } from "./note-tags";
 import { noteSortOrder, type NoteSort } from "./note-sort";
 import { getNoteReferences } from "./note-references";
 import { exec, getAll, transaction, type ZettelRow } from "./db";
+import { searchQueryTerms } from "./search-query";
 
 function terms(text: string): Set<string> {
   const chars = Array.from(text.toLowerCase());
@@ -74,6 +75,7 @@ export interface SearchOptions {
   availability?: "active" | "trash";
   sort?: NoteSort;
   tag?: string;
+  ownTagsOnly?: boolean;
   limit?: number;
   cursor?: string | null;
   summary?: boolean;
@@ -87,9 +89,10 @@ interface Cursor {
   id: string;
 }
 
-/** Literal substring search, ranked by title/key relevance, with keyset pagination. */
+/** Keyword and quoted-phrase search with title/key ranking and keyset pagination. */
 export async function searchRows(query = "", options: SearchOptions = {}) {
   const q = query.trim();
+  const keywords = searchQueryTerms(q);
   const sort = options.sort ?? "updated-desc";
   const [sortField, sortDirection] = noteSortOrder(sort);
   const defaults =
@@ -109,6 +112,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
   const scope = JSON.stringify([
     q,
     options.tag ?? null,
+    options.ownTagsOnly ?? false,
     options.availability ?? "active",
     options.cardIDs ?? null,
     sort,
@@ -127,7 +131,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     )
       throw new Error("Invalid search cursor");
   }
-  const indexed = Array.from(q).length >= 2;
+  const indexed = keywords.some((term) => Array.from(term).length >= 2);
   if (indexed) await flushSearchIndex();
   const rank = q
     ? `CASE WHEN z.id = ? OR z.custom_key = ? ${defaults.size ? "OR i.reference = ?" : ""} THEN 0 WHEN INSTR(z.title_folded, ?) > 0 THEN 1 ELSE 2 END`
@@ -137,36 +141,35 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     ? [JSON.stringify(Object.fromEntries(defaults))]
     : [];
   if (q) params.push(q, q, ...(defaults.size ? [q] : []), q.toLowerCase());
-  if (indexed) {
-    const grams = [...terms(q)].slice(0, 64);
+  for (const keyword of keywords) {
+    const parts: string[] = [];
+    if (Array.from(keyword).length >= 2) {
+      const grams = [...terms(keyword)].slice(0, keywords.length > 1 ? 24 : 64);
+      parts.push(
+        `z.id IN (SELECT card_id FROM search_terms WHERE term IN (${grams.map(() => "?").join(",")}) GROUP BY card_id HAVING COUNT(*) = ?)`,
+      );
+      params.push(...grams, grams.length);
+      parts.push(
+        "(INSTR(d.title, ?) > 0 OR INSTR(d.body, ?) > 0 OR INSTR(LOWER(z.id), ?) > 0 OR INSTR(d.custom_key, ?) > 0)",
+      );
+      params.push(keyword, keyword, keyword, keyword);
+    } else {
+      const like = `%${keyword.replace(/[\\%_]/g, "\\$&")}%`;
+      parts.push(
+        "(z.title LIKE ? ESCAPE '\\' OR z.body LIKE ? ESCAPE '\\' OR z.id LIKE ? ESCAPE '\\' OR z.custom_key LIKE ? ESCAPE '\\')",
+      );
+      params.push(like, like, like, like);
+    }
     filters.push(
-      `z.id IN (SELECT card_id FROM search_terms WHERE term IN (${grams.map(() => "?").join(",")}) GROUP BY card_id HAVING COUNT(*) = ?)`,
+      `((${parts.join(" AND ")})${defaults.size ? " OR INSTR(LOWER(i.reference), ?) > 0" : ""})`,
     );
-    params.push(...grams, grams.length);
-    filters.push(
-      "(INSTR(d.title, ?) > 0 OR INSTR(d.body, ?) > 0 OR INSTR(LOWER(z.id), ?) > 0 OR INSTR(d.custom_key, ?) > 0)",
-    );
-    params.push(
-      q.toLowerCase(),
-      q.toLowerCase(),
-      q.toLowerCase(),
-      q.toLowerCase(),
-    );
-  } else if (q) {
-    const like = `%${q.replace(/[\\%_]/g, "\\$&")}%`;
-    filters.push(
-      "(z.title LIKE ? ESCAPE '\\' OR z.body LIKE ? ESCAPE '\\' OR z.id LIKE ? ESCAPE '\\' OR z.custom_key LIKE ? ESCAPE '\\')",
-    );
-    params.push(like, like, like, like);
-  }
-  if (q && defaults.size) {
-    const stored = filters.splice(0).join(" AND ");
-    filters.push(`((${stored}) OR INSTR(LOWER(i.reference), ?) > 0)`);
-    params.push(q.toLowerCase());
+    if (defaults.size) params.push(keyword);
   }
   if (options.tag) {
     filters.push("z.id IN (SELECT value FROM json_each(?))");
-    params.push(JSON.stringify(await getTaggedNoteIDs(options.tag)));
+    params.push(
+      JSON.stringify(await getTaggedNoteIDs(options.tag, options.ownTagsOnly)),
+    );
   }
   if (options.cardIDs) {
     filters.push(
@@ -180,8 +183,12 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
   filters.push(
     `${availability === "active" ? "NOT " : ""}EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id${availability === "trash" ? " AND u.state = 'trashed'" : ""})`,
   );
+  const excerptStart = keywords.length
+    ? "MAX(1, COALESCE((SELECT MIN(NULLIF(INSTR(LOWER(body), value), 0)) FROM json_each(?)), 1) - 180)"
+    : "1";
+  if (options.summary && keywords.length) params.push(JSON.stringify(keywords));
   const projection = options.summary
-    ? "id, title, title_folded, SUBSTR(body, 1, 2048) AS body, item_key, library_id, annotation_key, source_note, custom_key, created_at, updated_at, search_rank"
+    ? `id, title, title_folded, SUBSTR(body, ${excerptStart}, 2048) AS body, item_key, library_id, annotation_key, source_note, custom_key, created_at, updated_at, search_rank`
     : "*";
   const continuation = cursor
     ? `WHERE (search_rank > ? OR (search_rank = ? AND (sort_value ${comparison} ? OR (sort_value = ? AND id ${comparison} ?))))`

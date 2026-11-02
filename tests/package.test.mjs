@@ -100,7 +100,7 @@ test("production package excludes personal library maintenance and test fixtures
   const main = strFromU8(files["content/scripts/knowledge-base.js"]);
   assert.doesNotMatch(
     main,
-    /registerExistingNote|seedMappedNote|kb-adopt-existing|reviewed-plan\.json|\/Users\/zhi\/|openPaperReading|generatePaperReading|testCodex/,
+    /registerExistingNote|seedMappedNote|knowledge-base-adopt-existing|reviewed-plan\.json|\/Users\/zhi\/|openPaperReading|generatePaperReading|testCodex/,
   );
   assert.equal(
     Object.keys(files).some((name) => /^(?:scripts|tests|src)\//.test(name)),
@@ -108,27 +108,60 @@ test("production package excludes personal library maintenance and test fixtures
   );
 });
 
-test("production package supports connection providers without restoring AI paper reading", async () => {
+test("production package excludes retired AI and lexical suggestions", async () => {
   const files = unzipSync(
     await readFile(
       new URL("../dist/zotero-knowledge-base.xpi", import.meta.url),
     ),
   );
   assert.equal(
-    Object.keys(files).some((name) => /paper-reading|codex/i.test(name)),
+    Object.keys(files).some((name) =>
+      /ai-preferences|ai-settings|paper-reading|codex|^content\/connections\.js$/i.test(
+        name,
+      ),
+    ),
     false,
   );
-  const ai = strFromU8(files["content/ai-preferences.xhtml"]);
-  for (const provider of ["deepseek", "opencode-go", "codex"])
-    assert.ok(ai.includes(`value="${provider}"`));
+  const main = strFromU8(files["content/scripts/knowledge-base.js"]);
   assert.doesNotMatch(
-    ai,
-    /value="opencode(?:-api)?"|codex-enabled|read-paper/i,
+    main,
+    /findRelatedNotes|cancelRelatedNotes|getAISettings|setAISettings|testAIConnection|isAIEnabled|ai-preferences|Subprocess\.sys\.mjs|api\.deepseek\.com|opencode\.ai\/inference/,
   );
+  assert.doesNotMatch(strFromU8(files["prefs.js"]), /knowledge-base\.ai\./);
   assert.doesNotMatch(
     strFromU8(files["content/preferences.xhtml"]),
-    /knowledge-base-ai-provider|knowledge-base-ai-key/,
+    /knowledge-base-ai-/,
   );
-  assert.match(strFromU8(files["prefs.js"]), /ai.enabled", false/);
-  assert.doesNotMatch(strFromU8(files["prefs.js"]), /codex/i);
+  assert.doesNotMatch(
+    strFromU8(files["content/editor.xhtml"]),
+    /knowledge-base-related-notes|knowledge-base-connections/,
+  );
+});
+
+test("library retrieval is owned by Knowledge Base and ships assets without model weights or developer files", async () => {
+  const files = unzipSync(
+    await readFile(
+      new URL("../dist/zotero-knowledge-base.xpi", import.meta.url),
+    ),
+  );
+  const manifest = JSON.parse(strFromU8(files["manifest.json"]));
+  assert.equal(manifest.applications.zotero.id, "knowledge-base@lzcn");
+  assert.equal(manifest.applications.zotero.strict_min_version, "10.0");
+  assert.ok(files["content/library/scripts/storage.js"]);
+  assert.ok(files["content/library/runtime/worker.js"]);
+  assert.ok(files["locale/zh-CN/similar-works.ftl"]);
+  assert.match(
+    strFromU8(files["prefs.js"]),
+    /extensions\.zotero\.similar-works\.maxRecommendations/,
+  );
+  assert.match(
+    strFromU8(files["content/scripts/knowledge-base.js"]),
+    /common-preferences\.js/,
+  );
+  for (const name of Object.keys(files)) {
+    assert.ok(!/^(tests|scripts|src)\//.test(name), name);
+    assert.ok(!/\.(onnx|mm|sqlite|dylib)$/.test(name), name);
+  }
+  assert.ok(!files["content/library/scripts/graph.js"]);
+  assert.ok(!files["content/library/graph.xhtml"]);
 });

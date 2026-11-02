@@ -97,7 +97,7 @@ export async function listNoteOperations(): Promise<NoteOperation[]> {
   ).map((row) => decode(row.data));
 }
 
-/** Call inside the same KB transaction that commits the card and note mapping. */
+/** Call inside the same Knowledge Base transaction that commits the card and note mapping. */
 export async function completeNoteOperation(
   operation: NoteOperation,
 ): Promise<void> {

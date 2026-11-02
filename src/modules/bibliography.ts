@@ -6,8 +6,6 @@ import { getDOMWindow } from "../utils/dom";
 
 const stylePreference = `${config.prefsPrefix}.sourceStyle`;
 const defaultStyle = "http://www.zotero.org/styles/apa";
-const paneIDs: string[] = [];
-let active = false;
 let bibliographyVersion = "";
 const bibliographies = new Map<string, Promise<string>>();
 
@@ -118,43 +116,7 @@ async function formatSourceBibliography(
   }
 }
 
-export async function registerPreferences(): Promise<void> {
-  if (active) return;
-  active = true;
-  const id = await Zotero.PreferencePanes.register({
-    pluginID: config.addonID,
-    id: `${config.addonRef}-preferences`,
-    label: config.addonName,
-    image: `chrome://${config.addonRef}/content/icons/icon-20.svg`,
-    src: `chrome://${config.addonRef}/content/preferences.xhtml`,
-    scripts: [
-      `chrome://${config.addonRef}/content/ui.js`,
-      `chrome://${config.addonRef}/content/preferences.js`,
-    ],
-    stylesheets: [`chrome://${config.addonRef}/content/preferences.css`],
-  });
-  if (!active) {
-    Zotero.PreferencePanes.unregister(id);
-    return;
-  }
-  paneIDs.push(id);
-  const aiID = await Zotero.PreferencePanes.register({
-    pluginID: config.addonID,
-    id: `${config.addonRef}-ai-preferences`,
-    parent: id,
-    label: getString("pref-ai-heading"),
-    src: `chrome://${config.addonRef}/content/ai-preferences.xhtml`,
-    scripts: [`chrome://${config.addonRef}/content/ai-settings.js`],
-    stylesheets: [`chrome://${config.addonRef}/content/preferences.css`],
-  });
-  if (active) paneIDs.push(aiID);
-  else Zotero.PreferencePanes.unregister(aiID);
-}
-
-export function unregisterPreferences(): void {
-  active = false;
+export function closeBibliographies(): void {
   bibliographies.clear();
   bibliographyVersion = "";
-  for (const id of paneIDs.splice(0).reverse())
-    Zotero.PreferencePanes.unregister(id);
 }

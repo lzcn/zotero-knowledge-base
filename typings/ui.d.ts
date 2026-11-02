@@ -12,25 +12,6 @@ declare global {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
   }
   interface Window {
-    KnowledgeBaseAISettings: { start(doc: Document): Promise<void> };
-    KnowledgeBaseConnections: {
-      create(options: {
-        button: HTMLButtonElement;
-        panel: HTMLElement;
-        api: KnowledgeBaseAPI;
-        available(): boolean;
-        prepare(): Promise<{ id: string; token: string }>;
-        isCurrent(token: string): boolean;
-        apply(
-          plan: import("../src/modules/connections").ConnectionPlan,
-          selection: {
-            parent: boolean;
-            links: { id: string }[];
-          },
-          token: string,
-        ): Promise<void>;
-      }): { refresh(): void; destroy(): void };
-    };
     KnowledgeBasePreferences: { start(doc: Document): Promise<void> };
     KnowledgeBaseMarkdownSource: {
       create(
@@ -166,7 +147,7 @@ export interface EditorElements {
   "knowledge-base-editor-footer": HTMLElementTagNameMap["footer"];
   "knowledge-base-editor-status": HTMLElementTagNameMap["span"];
   "knowledge-base-editor-cancel": HTMLElementTagNameMap["button"];
-  "knowledge-base-editor-save": HTMLElementTagNameMap["button"];
+  "knowledge-base-editor-apply-draft": HTMLElementTagNameMap["button"];
   "knowledge-base-anno-layer": HTMLElementTagNameMap["div"];
   "knowledge-base-anno-box": HTMLElementTagNameMap["div"];
   "knowledge-base-anno-head": HTMLElementTagNameMap["html"];
@@ -178,7 +159,7 @@ export interface EditorElements {
 
 export interface ManagerElements {
   "knowledge-base-sort": HTMLSelectElement;
-  "knowledge-base-view": HTMLSelectElement;
+  "knowledge-base-views": HTMLDivElement;
   "knowledge-base-family": HTMLDivElement;
   "knowledge-base-manager": Element;
   "knowledge-base-root": HTMLElementTagNameMap["div"];

@@ -20,16 +20,16 @@ type="text/css"?>
   <script src="chrome://knowledge-base/content/graph.js" />
   <html:div id="knowledge-base-graph-root">
     <html:header id="knowledge-base-graph-toolbar">
-      <toolbarbutton id="graph-global" class="kb-native-tool" />
-      <toolbarbutton id="graph-local" class="kb-native-tool" />
+      <toolbarbutton id="graph-global" class="knowledge-base-native-tool" />
+      <toolbarbutton id="graph-local" class="knowledge-base-native-tool" />
       <html:input id="graph-search" type="search" />
       <checkbox id="graph-outline" />
       <checkbox id="graph-references" />
       <checkbox id="graph-sources" />
       <checkbox id="graph-hide-isolated" />
       <html:div class="spacer" />
-      <toolbarbutton id="graph-fit" class="kb-native-tool" />
-      <toolbarbutton id="graph-refresh" class="kb-native-tool" />
+      <toolbarbutton id="graph-fit" class="knowledge-base-native-tool" />
+      <toolbarbutton id="graph-refresh" class="knowledge-base-native-tool" />
       <html:span id="graph-stats" class="muted" />
     </html:header>
     <html:main id="knowledge-base-graph-main">
@@ -44,7 +44,10 @@ type="text/css"?>
         <html:div id="graph-selection" hidden="hidden">
           <html:header class="graph-node-heading">
             <html:h2 id="graph-node-title" />
-            <toolbarbutton id="graph-node-open" class="kb-native-tool" />
+            <toolbarbutton
+              id="graph-node-open"
+              class="knowledge-base-native-tool"
+            />
           </html:header>
           <html:div id="graph-node-kind" class="muted" />
           <html:button

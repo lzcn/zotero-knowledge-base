@@ -325,24 +325,7 @@ window.KnowledgeBasePreferences = (() => {
       const popup = doc.getElementById("knowledge-base-source-styles");
       const error = doc.getElementById("knowledge-base-preferences-error");
       try {
-        const uiStyle = getMenu(doc, "knowledge-base-ui-style");
-        bindMenu(
-          uiStyle,
-          Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true
-            ? "bear"
-            : "minimal",
-          (value) => window.ZoteroPluginUI.select(value),
-        );
         bindTemplates(doc, api);
-        const aiSettings = doc.getElementById("knowledge-base-ai-open");
-        if (!menus.has(aiSettings)) {
-          menus.add(aiSettings);
-          aiSettings.addEventListener("command", () =>
-            Zotero.Utilities.Internal.openPreferences(
-              "knowledge-base-ai-preferences",
-            ),
-          );
-        }
         bindGraphControls(doc, api);
         const addGroup = doc.getElementById("knowledge-base-add-group");
         if (!menus.has(addGroup)) {

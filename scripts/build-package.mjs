@@ -14,6 +14,7 @@ import { build } from "esbuild";
 import { zipSync } from "fflate";
 import { buildOptions } from "./build-options.mjs";
 import { validatePackage } from "./validate-package.mjs";
+import { buildLibrary } from "./build-library.mjs";
 import { requiredFiles } from "./package-files.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -46,9 +47,10 @@ async function copyAssets(relative = "") {
       ["content/icons/icon.png", "content/icons/icon-256.png"].includes(source)
     )
       continue;
-    const target = source.startsWith("locale/")
-      ? join(dirname(source), `${pkg.config.addonRef}-${entry.name}`)
-      : source;
+    const target =
+      source.startsWith("locale/") && entry.name !== "similar-works.ftl"
+        ? join(dirname(source), `${pkg.config.addonRef}-${entry.name}`)
+        : source;
     let bytes = await readFile(join(root, "addon", source));
     if (/\.(js|json|xhtml|html|css|ftl)$/.test(source)) {
       bytes = Buffer.from(
@@ -61,7 +63,7 @@ async function copyAssets(relative = "") {
           ),
       );
     }
-    if (source.endsWith(".ftl")) {
+    if (source.endsWith(".ftl") && entry.name !== "similar-works.ftl") {
       bytes = Buffer.from(
         bytes
           .toString("utf8")
@@ -74,6 +76,7 @@ async function copyAssets(relative = "") {
   }
 }
 await copyAssets();
+await buildLibrary(addonDirectory, pkg.version);
 await Promise.all(
   buildOptions(pkg, "production", addonDirectory).map((options) =>
     build({ ...options, absWorkingDir: root }),

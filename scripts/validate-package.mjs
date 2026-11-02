@@ -41,7 +41,11 @@ export function validatePackage(bytes, pkg, required = []) {
     if (name.endsWith(".ftl")) {
       for (const match of text.matchAll(/^([a-zA-Z][\w-]*)\s*=/gm)) {
         assert.ok(
-          match[1].startsWith(`${pkg.config.addonRef}-`),
+          match[1].startsWith(
+            name.endsWith("/similar-works.ftl")
+              ? "similar-works-"
+              : `${pkg.config.addonRef}-`,
+          ),
           `${name}: missing locale namespace for ${match[1]}`,
         );
       }
@@ -51,8 +55,13 @@ export function validatePackage(bytes, pkg, required = []) {
       for (const match of text.matchAll(
         /(?:src|href)="([^"?#]+)(?:[?#][^"]*)?"/g,
       )) {
-        if (!match[1].startsWith(resourcePrefix)) continue;
-        const target = match[1].slice(resourcePrefix.length);
+        const target = match[1].startsWith(resourcePrefix)
+          ? match[1].slice(resourcePrefix.length)
+          : match[1].startsWith("chrome://similar-works/")
+            ? "content/library/" +
+              match[1].slice("chrome://similar-works/content/".length)
+            : null;
+        if (!target) continue;
         assert.ok(files[target]?.length, `${name}: missing asset ${target}`);
       }
     }

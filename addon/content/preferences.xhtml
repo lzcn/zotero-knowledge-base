@@ -2,10 +2,11 @@
   class="plugin-preferences"
   xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
   xmlns:html="http://www.w3.org/1999/xhtml"
-  onload="window.KnowledgeBasePreferences.start(document)"
-  onshowing="window.KnowledgeBasePreferences.start(document)"
+  onload="window.KnowledgeBaseCommonPreferences.start(document); window.KnowledgeBasePreferences.start(document)"
+  onshowing="window.KnowledgeBaseCommonPreferences.start(document); window.KnowledgeBasePreferences.start(document)"
 >
   <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-settings-common" />
     <hbox class="preference-row" align="center">
       <label
         control="knowledge-base-ui-style"
@@ -18,6 +19,9 @@
         </menupopup>
       </menulist>
     </hbox>
+  </vbox>
+  <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-settings-notes" />
     <hbox class="preference-row" align="center">
       <label
         control="knowledge-base-workbench-mode"
@@ -50,11 +54,6 @@
       native="true"
       data-l10n-id="knowledge-base-pref-inherit-tags"
     />
-    <hbox
-      ><button
-        id="knowledge-base-ai-open"
-        data-l10n-id="knowledge-base-pref-ai-open"
-    /></hbox>
   </vbox>
   <vbox class="main-section">
     <html:h3 data-l10n-id="knowledge-base-pref-literature-template" />
@@ -150,5 +149,100 @@
       hidden="true"
       role="alert"
     />
+  </vbox>
+  <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-settings-tags" />
+    <hbox class="preference-row" align="center">
+      <label
+        control="similar-works-tag-style"
+        data-l10n-id="similar-works-pref-tag-style"
+      />
+      <menulist
+        native="true"
+        id="similar-works-tag-style"
+        preference="extensions.zotero.similar-works.tagNameStyle"
+      >
+        <menupopup>
+          <menuitem
+            value="sentence"
+            data-l10n-id="similar-works-pref-tag-sentence"
+          />
+          <menuitem value="title" data-l10n-id="similar-works-pref-tag-title" />
+        </menupopup>
+      </menulist>
+    </hbox>
+    <checkbox
+      native="true"
+      id="similar-works-tag-hashtag"
+      data-l10n-id="similar-works-pref-tag-hashtag"
+      preference="extensions.zotero.similar-works.tagHashtag"
+    />
+    <checkbox
+      native="true"
+      id="similar-works-exclude-colored-tags"
+      data-l10n-id="similar-works-pref-exclude-colored-tags"
+      preference="extensions.zotero.similar-works.excludeColoredTags"
+    />
+    <hbox class="preference-row" align="start">
+      <label
+        control="similar-works-excluded-tags"
+        data-l10n-id="similar-works-pref-excluded-tags"
+      />
+      <html:textarea
+        id="similar-works-excluded-tags"
+        rows="2"
+        preference="extensions.zotero.similar-works.excludedTags"
+        aria-describedby="similar-works-excluded-tags-help"
+      />
+    </hbox>
+    <description
+      id="similar-works-excluded-tags-help"
+      class="preference-help"
+      data-l10n-id="similar-works-pref-excluded-tags-help"
+    />
+  </vbox>
+  <vbox class="main-section">
+    <html:h3 data-l10n-id="knowledge-base-settings-similar" />
+    <hbox class="preference-row" align="center">
+      <label
+        control="similar-works-limit"
+        data-l10n-id="similar-works-pref-limit"
+      />
+      <html:input
+        id="similar-works-limit"
+        type="number"
+        min="1"
+        max="100"
+        class="preference-number"
+        preference="extensions.zotero.similar-works.maxRecommendations"
+      />
+    </hbox>
+    <checkbox
+      native="true"
+      data-l10n-id="similar-works-pref-metadata"
+      preference="extensions.zotero.similar-works.allowMetadataOnlyRecommendations"
+    />
+  </vbox>
+  <vbox class="main-section" id="similar-works-diagnostics">
+    <html:h3 data-l10n-id="similar-works-pref-index-heading" />
+    <html:dl class="preference-status">
+      <html:dt data-l10n-id="similar-works-pref-index" /><html:dd
+        ><html:span id="similar-works-index" />
+        <html:progress
+          id="similar-works-index-progress"
+          hidden="hidden"
+          data-l10n-id="similar-works-pref-index-progress"
+        />
+      </html:dd>
+      <html:dt data-l10n-id="similar-works-pref-vectors" /><html:dd
+        ><html:span id="similar-works-vectors" />
+        <html:progress
+          id="similar-works-vector-progress"
+          hidden="hidden"
+          data-l10n-id="similar-works-pref-vector-progress"
+        />
+      </html:dd>
+    </html:dl>
+    <description id="similar-works-diagnostics-error" hidden="true" />
   </vbox>
 </vbox>

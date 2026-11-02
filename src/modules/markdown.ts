@@ -2,6 +2,7 @@ import { Marked } from "marked";
 import createDOMPurify from "dompurify";
 import katex from "katex";
 import { getDOMWindow } from "../utils/dom";
+import { searchQueryTerms } from "./search-query";
 
 export interface CardLink {
   ref: string;
@@ -172,72 +173,6 @@ export function parseCardLinks(body: string): CardLink[] {
   return [...links.values()];
 }
 
-/** A unique, unlinked text span; never place managed links inside protected syntax. */
-export function connectionAnchor(body: string, anchor: string): number {
-  if (
-    typeof anchor !== "string" ||
-    anchor.length < 2 ||
-    anchor.length > 300 ||
-    /[\n\r[\]|]/.test(anchor)
-  )
-    return -1;
-  const start = body.indexOf(anchor);
-  if (start < 0 || body.indexOf(anchor, start + 1) !== -1) return -1;
-  const contains = (tokens: import("marked").Token[]): boolean =>
-    tokens.some((token) => {
-      const nested = token as {
-        tokens?: import("marked").Token[];
-        items?: { tokens: import("marked").Token[] }[];
-      };
-      if (
-        [
-          "code",
-          "codespan",
-          "link",
-          "wikilink",
-          "citation",
-          "inlineMath",
-          "blockMath",
-          "html",
-          "image",
-        ].includes(token.type)
-      )
-        return false;
-      if (token.type === "text" && !nested.tokens)
-        return token.raw.includes(anchor);
-      if (Array.isArray(nested.tokens) && contains(nested.tokens)) return true;
-      return (
-        token.type === "list" &&
-        !!nested.items?.some((item) => contains(item.tokens))
-      );
-    });
-  return contains(markdown.lexer(body)) ? start : -1;
-}
-
-export function linkNotePassages(
-  body: string,
-  links: { anchor: string; reference: string }[],
-): string {
-  const ranges = links
-    .map((link) => ({ ...link, start: connectionAnchor(body, link.anchor) }))
-    .sort((a, b) => b.start - a.start);
-  let boundary = body.length;
-  for (const link of ranges) {
-    if (
-      link.start < 0 ||
-      link.start + link.anchor.length > boundary ||
-      /[[\]|\r\n]/.test(link.reference)
-    )
-      throw new Error("AI_PLAN_STALE");
-    body =
-      body.slice(0, link.start) +
-      `[[${link.reference}|${link.anchor}]]` +
-      body.slice(link.start + link.anchor.length);
-    boundary = link.start;
-  }
-  return body;
-}
-
 export function parseCitationKeys(body: string): string[] {
   const keys = new Set<string>();
   markdown.walkTokens(markdown.lexer(body), (token) => {
@@ -289,9 +224,10 @@ export function noteSnippet(
   ) as Element[])
     block.append(" ");
   const plain = (doc.body.textContent || "").replace(/\s+/g, " ").trim();
-  const match = query
-    ? plain.toLocaleLowerCase().indexOf(query.toLocaleLowerCase())
-    : 0;
+  const matches = searchQueryTerms(query)
+    .map((term) => plain.toLowerCase().indexOf(term))
+    .filter((position) => position >= 0);
+  const match = matches.length ? Math.min(...matches) : 0;
   const start = Math.max(0, match - 30);
   return (
     (start ? "…" : "") +
@@ -394,7 +330,7 @@ export function renderMarkdown(
     RETURN_DOM_FRAGMENT: true,
     USE_PROFILES: { html: true },
     ALLOWED_URI_REGEXP:
-      /^(?:(?:https?|mailto|zotero|knowledge-base|zkb):|resource:\/\/knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
+      /^(?:(?:https?|mailto|zotero|knowledge-base|knowledge-base-native):|resource:\/\/knowledge-base-assets\/|[#/]|[^a-z]+|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     FORBID_TAGS: ["style", "form", "iframe"],
     FORBID_ATTR: ["style"],
   });

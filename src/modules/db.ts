@@ -1,3 +1,4 @@
+import { SWStorage } from "../library/storage.js";
 /**
  * Independent SQLite storage layer for the zettel knowledge base.
  *
@@ -9,7 +10,6 @@
  * so schema statements must be executed one by one.
  */
 
-const DB_FILENAME = "knowledge-base.sqlite";
 const SCHEMA_VERSION = 12;
 
 export interface ZettelRow {
@@ -144,7 +144,7 @@ async function initializeDB(): Promise<void> {
 
   if (!_conn) {
     const { Sqlite } = getSqlite();
-    const path = PathUtils.join(Zotero.DataDirectory.dir, DB_FILENAME);
+    const path = SWStorage.notes();
     _conn = await Sqlite.openConnection({ path });
     generation++;
     revision++;

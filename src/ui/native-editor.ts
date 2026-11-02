@@ -3,7 +3,6 @@ import {
   attachMarkdownToggle,
   getNativeTypography,
 } from "./native-markdown-toolbar";
-import { attachReadingView } from "./native-reading-view";
 import type { NativeNoteChange } from "../modules/note-sessions";
 import { attachTextTools, type textToolLabels } from "./text-tools";
 import type { MarkdownSource } from "./markdown-source";
@@ -122,8 +121,6 @@ export interface NativeEditorOptions {
   onShortcut(key: string): void;
   markdownLabel: string;
   onMarkdown(): void;
-  readingLabel: string;
-  onReading(): void;
   noteLinkLabel: string;
   onNoteLink(): void;
   onNoteQuery(query: string | null): void;
@@ -137,14 +134,10 @@ export interface NativeEditorController {
   flush(): Promise<void>;
   setReadOnly(value: boolean): Promise<void>;
   setSourceMode(value: boolean): void;
-  setReadingMode(value: boolean, html?: string): void;
   getTypography(): Record<string, string>;
   reload(): Promise<void>;
   insertHTML(html: string): void;
   insertNoteLink(reference: string): Promise<boolean>;
-  linkConnections(
-    links: { anchor: string; href: string; reference: string }[],
-  ): void;
   focus(): void;
   destroy(): void;
 }
@@ -164,9 +157,7 @@ async function create(
   let removeNoteLink = () => {};
   let removeTextTools = () => {};
   let sourceMode = false;
-  let readingMode = false;
   let composing = false;
-  let readingView: ReturnType<typeof attachReadingView> | undefined;
   let appearance: HTMLStyleElement | undefined;
   let previousDisableSaving = element.getCurrentInstance()._disableSaving;
   type LinkRange = {
@@ -206,8 +197,7 @@ async function create(
     }
   };
   const linkSelection = (): LinkRange | null => {
-    if (destroyed || readOnly || sourceMode || readingMode || composing)
-      return null;
+    if (destroyed || readOnly || sourceMode || composing) return null;
     const view =
       frame?.wrappedJSObject._currentEditorInstance?._editorCore?.view;
     if (!view) return null;
@@ -412,7 +402,6 @@ async function create(
       linkQuery = null;
       options.onNoteQuery(null);
     }
-    readingView?.destroy();
     appearance?.remove();
     removeMarkdownToggle?.();
     removeNoteLink();
@@ -441,7 +430,7 @@ async function create(
     );
     appearance = frame.document.createElement("style");
     appearance.id = "knowledge-base-note-appearance";
-    // Apply display typography only to this KB editor, never the note HTML or preferences.
+    // Apply display typography only to this Knowledge Base editor, never the note HTML or preferences.
     appearance.textContent = `
       @import url("chrome://knowledge-base/content/ui.css");
       @import url("chrome://knowledge-base/content/note-headings.css");
@@ -477,7 +466,7 @@ async function create(
     if (!readOnly)
       removeTextTools = attachTextTools(frame, {
         ...options.textTools,
-        canEdit: () => !destroyed && !readOnly && !readingMode,
+        canEdit: () => !destroyed && !readOnly,
         report: (error) =>
           Zotero.logError(
             error instanceof Error ? error : new Error(String(error)),
@@ -513,13 +502,6 @@ async function create(
       };
     }
     removeMarkdownToggle?.setMode(sourceMode);
-    if (!readOnly)
-      readingView = attachReadingView(
-        frame,
-        options.readingLabel,
-        options.onReading,
-        options.onOpenLink,
-      );
     if (sourceMode) element.getCurrentInstance()._disableSaving = true;
     frame.document.addEventListener("input", input, true);
     frame.document.addEventListener("paste", paste, true);
@@ -563,12 +545,6 @@ async function create(
         `${height}px`,
       );
     },
-    setReadingMode(value, html) {
-      readingMode = value;
-      if (value) updateLinkQuery();
-      readingView?.show(value, html);
-      if (value) readingView?.focus();
-    },
     getTypography: () => ({
       ...getNativeTypography(frame),
       "font-family": "var(--ui-editor-font)",
@@ -602,72 +578,6 @@ async function create(
     async insertNoteLink(reference) {
       const range = linkQuery || linkSelection();
       return range ? replaceNoteLink(reference, range) : false;
-    },
-    linkConnections(links) {
-      if (destroyed || readOnly || sourceMode)
-        throw new Error("NOTE_SESSION_CLOSED");
-      const view =
-        frame.wrappedJSObject._currentEditorInstance?._editorCore?.view;
-      if (!view) throw new Error("NOTE_SESSION_CLOSED");
-      const ranges = links
-        .map((link) => {
-          const matches: { from: number; to: number }[] = [];
-          view.state.doc.descendants((node, position) => {
-            // Callback arguments cross back through Gecko's default Xray wrapper.
-            node = Components.utils.waiveXrays(node);
-            if (!node.isTextblock) return;
-            if (/code|math/i.test(node.type.name)) return false;
-            const text = node.textBetween(0, node.content.size, "\n", "\ufffc");
-            let start = text.indexOf(link.anchor);
-            while (start >= 0) {
-              let protectedText = false;
-              node.nodesBetween(start, start + link.anchor.length, (child) => {
-                child = Components.utils.waiveXrays(child);
-                if (
-                  (child.isLeaf && !child.isText) ||
-                  child.marks.some((mark) =>
-                    ["code", "link"].includes(mark.type.name),
-                  )
-                )
-                  protectedText = true;
-              });
-              if (!protectedText)
-                matches.push({
-                  from: position + 1 + start,
-                  to: position + 1 + start + link.anchor.length,
-                });
-              start = text.indexOf(link.anchor, start + 1);
-            }
-            return false;
-          });
-          if (matches.length !== 1) throw new Error("AI_PLAN_STALE");
-          return { ...link, ...matches[0] };
-        })
-        .sort((a, b) => a.from - b.from);
-      if (
-        ranges.some(
-          (range, index) => index > 0 && range.from < ranges[index - 1].to,
-        )
-      )
-        throw new Error("AI_PLAN_STALE");
-      let transaction = view.state.tr;
-      for (const range of ranges) {
-        const attributes = frame.wrappedJSObject.JSON.parse(
-          JSON.stringify({
-            href: range.href,
-            title: `[[${range.reference}|${range.anchor}]]`,
-          }),
-        );
-        transaction = transaction.addMark(
-          range.from,
-          range.to,
-          view.state.schema.marks.link.create(attributes),
-        );
-      }
-      if (links.length) {
-        view.dispatch(transaction);
-        changed();
-      }
     },
     focus: () => {
       void element.focus();

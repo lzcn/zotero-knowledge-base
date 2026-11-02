@@ -137,9 +137,9 @@ try {
   const result = JSON.parse(await readFile(marker, "utf8"));
   if (code !== 0 || result.error) throw new Error(JSON.stringify(result));
   console.log(JSON.stringify(result, null, 2));
-  if (process.env.KB_GRAPH_BENCHMARK_OUTPUT)
+  if (process.env.KNOWLEDGE_BASE_GRAPH_BENCHMARK_OUTPUT)
     await writeFile(
-      resolve(process.env.KB_GRAPH_BENCHMARK_OUTPUT),
+      resolve(process.env.KNOWLEDGE_BASE_GRAPH_BENCHMARK_OUTPUT),
       JSON.stringify(result, null, 2) + "\n",
     );
   passed = true;

@@ -41,17 +41,52 @@ const first = document();
 const second = document();
 const listeners = new Map();
 let opened = 0;
+const openedArgs = [],
+  lookups = [];
+const notes = new Map([
+  [
+    1,
+    [
+      { id: "zettel-a", source_note: 0 },
+      { id: "literature-a", source_note: 1 },
+    ],
+  ],
+  [2, [{ id: "literature-b", source_note: 1 }]],
+]);
+const items = new Map([
+  [11, { parentItemID: 101 }],
+  [12, { parentItemID: 102 }],
+  [13, { isRegularItem: () => false }],
+  [101, { key: "SAMEKEY", libraryID: 1, isRegularItem: () => true }],
+  [102, { key: "SAMEKEY", libraryID: 2, isRegularItem: () => true }],
+]);
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 globalThis.readerTest = { label: "Knowledge Base" };
-globalThis.addon = { api: { openManager: () => opened++ } };
+globalThis.addon = {
+  api: {
+    openManager: (args) => {
+      opened++;
+      openedArgs.push(args);
+    },
+    listByItem: async (key, libraryID) => {
+      lookups.push([key, libraryID]);
+      return notes.get(libraryID) || [];
+    },
+  },
+};
 globalThis.Zotero = {
+  Items: { getAsync: async (id) => items.get(id) },
+  logError: (error) => {
+    throw error;
+  },
   File: {
     getContentsFromURL: () =>
       '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"><rect width="20" height="20" /></svg>',
   },
   Reader: {
     _readers: [
-      { _iframeWindow: first.defaultView },
-      { _iframeWindow: second.defaultView },
+      { itemID: 11, _iframeWindow: first.defaultView },
+      { itemID: 12, _iframeWindow: second.defaultView },
       {},
     ],
     registerEventListener(type, handler, pluginID) {
@@ -76,6 +111,9 @@ function render(doc, clear = true) {
   const target = doc.querySelector(".custom-sections");
   if (clear) target.replaceChildren();
   listeners.get("renderToolbar")({
+    reader: globalThis.Zotero.Reader._readers.find(
+      (reader) => reader._iframeWindow?.document === doc,
+    ) || { itemID: 13 },
     doc,
     append(node) {
       const section = doc.createElement("div");
@@ -100,7 +138,10 @@ try {
     );
   }
   button(first).click();
+  await tick();
   assert.equal(opened, 1);
+  assert.deepEqual(openedArgs.at(-1), { selectId: "literature-a" });
+  assert.deepEqual(lookups.at(-1), ["SAMEKEY", 1]);
   const old = button(first);
   render(first);
   old.click();
@@ -116,13 +157,75 @@ try {
   render(third);
   assert.equal(button(third).title, "知识库");
   button(third).click();
+  await tick();
   assert.equal(opened, 2);
+  assert.deepEqual(
+    openedArgs.at(-1),
+    {},
+    "A standalone attachment did not open the default workbench",
+  );
+  button(second).click();
+  await tick();
+  assert.deepEqual(openedArgs.at(-1), { selectId: "literature-b" });
+  assert.deepEqual(lookups.at(-1), ["SAMEKEY", 2]);
+  notes.set(1, [{ id: "zettel-a", source_note: 0 }]);
+  button(first).click();
+  await tick();
+  assert.deepEqual(
+    openedArgs.at(-1),
+    {},
+    "A Zettel was treated as its source Literature Note",
+  );
   const closing = button(third);
   third.defaultView.dispatchEvent(new third.defaultView.Event("unload"));
   assert.equal(closing.isConnected, false);
   assert.equal(third.querySelector(".custom-sections").childElementCount, 0);
   const late = listeners.get("renderToolbar");
+  let releaseFirst;
+  globalThis.addon.api.listByItem = (_key, libraryID) =>
+    libraryID === 1
+      ? new Promise((resolve) => {
+          releaseFirst = resolve;
+        })
+      : Promise.resolve([{ id: "latest-reader", source_note: 1 }]);
+  button(first).click();
+  await tick();
+  button(second).click();
+  await tick();
+  const afterLatestReader = opened;
+  assert.deepEqual(openedArgs.at(-1), { selectId: "latest-reader" });
+  releaseFirst([{ id: "stale-reader", source_note: 1 }]);
+  await tick();
+  assert.equal(
+    opened,
+    afterLatestReader,
+    "An older PDF lookup replaced the latest reader target",
+  );
+  let releaseLookup,
+    pendingLookups = 0;
+  globalThis.addon.api.listByItem = () => {
+    pendingLookups++;
+    return new Promise((resolve) => {
+      releaseLookup = resolve;
+    });
+  };
+  button(first).click();
+  button(first).click();
+  await tick();
+  assert.equal(
+    pendingLookups,
+    1,
+    "Repeated clicks duplicated an in-progress lookup",
+  );
+  const beforeShutdown = opened;
   unregisterReaderToolbar();
+  releaseLookup([{ id: "late-note", source_note: 1 }]);
+  await tick();
+  assert.equal(
+    opened,
+    beforeShutdown,
+    "A completed lookup opened Knowledge Base after shutdown",
+  );
   unregisterReaderToolbar();
   assert.equal(listeners.size, 0);
   assert.equal(button(first), null);
@@ -142,7 +245,7 @@ try {
   assert.equal(listeners.size, 1);
   unregisterReaderToolbar();
   console.log(
-    "PASS Existing and new reader toolbars, duplicate registration, native labels and icons, replaced handlers, close cleanup, late events and re-enabling.",
+    "PASS Contextual Literature Note navigation, library scoping, default fallback, latest-click selection, reader toolbars, replaced handlers, cleanup and re-enabling.",
   );
 } finally {
   unregisterReaderToolbar();

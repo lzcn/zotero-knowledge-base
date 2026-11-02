@@ -1,9 +1,6 @@
 /* global pref */
-pref("extensions.zotero.knowledge-base.ai.enabled", false);
-pref("extensions.zotero.knowledge-base.ai.provider", "deepseek");
-pref("extensions.zotero.knowledge-base.ai.deepseek.model", "deepseek-flash");
-pref("extensions.zotero.knowledge-base.ai.opencode-go.model", "glm-5.3-flash");
 pref("extensions.zotero.knowledge-base.workbenchMode", "tab");
+pref("extensions.zotero.knowledge-base.editorMode", "visual");
 pref(
   "extensions.zotero.knowledge-base.literatureTemplates",
   '{"selected":null,"templates":[]}',
@@ -23,3 +20,19 @@ pref(
 );
 
 pref("extensions.zotero.knowledge-base.noteSort", "updated-desc");
+
+// User settings and internal indexing defaults.
+pref("extensions.zotero.similar-works.maxRecommendations", 20);
+pref("extensions.zotero.similar-works.minimumSimilarity", "0.05");
+pref("extensions.zotero.similar-works.minTokenLength", 2);
+pref("extensions.zotero.similar-works.maxTextChars", 1200000);
+pref("extensions.zotero.similar-works.backgroundIndexing", true);
+pref("extensions.zotero.similar-works.indexDelayMs", 2000);
+pref("extensions.zotero.similar-works.allowMetadataOnlyRecommendations", true);
+pref("extensions.zotero.similar-works.minFulltextTerms", 25);
+pref("extensions.zotero.similar-works.backgroundStartupDelayMs", 30000);
+pref("extensions.zotero.similar-works.requestMissingFulltext", false);
+pref("extensions.zotero.similar-works.tagNameStyle", "sentence");
+pref("extensions.zotero.similar-works.tagHashtag", false);
+pref("extensions.zotero.similar-works.excludeColoredTags", true);
+pref("extensions.zotero.similar-works.excludedTags", "");

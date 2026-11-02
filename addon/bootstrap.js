@@ -31,6 +31,30 @@ async function startup({ id, version, rootURI }, reason) {
   const ctx = {
     rootURI,
   };
+  const relatedScope = {
+    Zotero,
+    Services,
+    ChromeUtils,
+    IOUtils,
+    PathUtils,
+    Components,
+    TextDecoder,
+    TextEncoder,
+    Ci,
+    setTimeout,
+    clearTimeout,
+    SWHost: {
+      id,
+      version,
+      rootURI: rootURI + "content/library/",
+      manifestURI: rootURI + "manifest.json",
+    },
+  };
+  Services.scriptloader.loadSubScript(
+    rootURI + "content/library/scripts/runtime.js",
+    relatedScope,
+  );
+  ctx.libraryRuntime = relatedScope.libraryRuntime;
   ctx._globalThis = ctx;
 
   Services.scriptloader.loadSubScript(

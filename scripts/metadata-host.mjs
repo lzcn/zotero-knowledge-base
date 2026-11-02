@@ -10,7 +10,7 @@ export default async function metadataHost({
   restartMarker,
   screenshots,
 }) {
-  const kb = Zotero.ZoteroKnowledgeBase;
+  const knowledgeBase = Zotero.ZoteroKnowledgeBase;
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const assert = (value, message) => {
     if (!value) throw new Error(message);
@@ -27,7 +27,7 @@ export default async function metadataHost({
     Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
   const main = Zotero.getMainWindow();
   const open = async (id) => {
-    kb.api.openEditor({ zettelId: id });
+    knowledgeBase.api.openEditor({ zettelId: id });
     const editor = await wait(() => {
       const view = main.document.querySelector(
         ".knowledge-base-workbench",
@@ -46,19 +46,19 @@ export default async function metadataHost({
   };
   if (await IOUtils.exists(marker)) {
     const saved = JSON.parse(await IOUtils.readUTF8(marker));
-    const card = await kb.api.getZettel(saved.id);
+    const card = await knowledgeBase.api.getZettel(saved.id);
     assert(
       card.reference === saved.reference && card.body === saved.body,
       "ID or content changed after restart",
     );
     assert(
-      (await kb.api.getZettel(saved.independentID)).body ===
+      (await knowledgeBase.api.getZettel(saved.independentID)).body ===
         saved.independentBody,
       "Independent-window edit changed after restart",
     );
     assert(
       (
-        await kb.api.resolveCardLink(
+        await knowledgeBase.api.resolveCardLink(
           "knowledge-base://card/BetterDynamicGraphYu23",
         )
       )?.targetId === saved.id,
@@ -71,7 +71,7 @@ export default async function metadataHost({
         editor.document.getElementById("knowledge-base-editor-key").hidden,
       "Restart reopened the ID input",
     );
-    await kb.hooks.onShutdown();
+    await knowledgeBase.hooks.onShutdown();
     await IOUtils.writeUTF8(
       restartMarker,
       JSON.stringify({ connectionsOnly: true }),
@@ -79,7 +79,7 @@ export default async function metadataHost({
     quit();
     return;
   }
-  await kb.api.getSourceStyles();
+  await knowledgeBase.api.getSourceStyles();
   const source = new Zotero.Item("journalArticle");
   source.setField(
     "title",
@@ -94,7 +94,7 @@ export default async function metadataHost({
     { firstName: "Le", lastName: "Yu", creatorType: "author" },
   ]);
   await source.saveTx();
-  const id = await kb.api.saveZettel({
+  const id = await knowledgeBase.api.saveZettel({
     sourceNote: true,
     customKey: "BetterDynamicGraphYu23",
     title: source.getField("title"),
@@ -102,7 +102,7 @@ export default async function metadataHost({
     itemKey: source.key,
     libraryID: source.libraryID,
   });
-  await kb.api.saveZettel({
+  await knowledgeBase.api.saveZettel({
     customKey: "OccupiedID",
     title: "Other note",
     body: "Do not change this note.",
@@ -203,10 +203,10 @@ export default async function metadataHost({
     "Clicking the ID did not copy its reference",
   );
   assert(key.hidden, "Copy entered edit mode");
-  const originalSelect = kb.api.selectItem;
+  const originalSelect = knowledgeBase.api.selectItem;
   let selected;
   try {
-    kb.api.selectItem = async (...args) => {
+    knowledgeBase.api.selectItem = async (...args) => {
       selected = args;
     };
     pointer(display);
@@ -216,7 +216,7 @@ export default async function metadataHost({
       "Source opened the wrong item",
     );
   } finally {
-    kb.api.selectItem = originalSelect;
+    knowledgeBase.api.selectItem = originalSelect;
   }
   assert(await editor.save(false), "Initial native editor did not settle");
   const originalHTML = (
@@ -258,7 +258,7 @@ export default async function metadataHost({
   );
   assert(
     (
-      await kb.api.resolveCardLink(
+      await knowledgeBase.api.resolveCardLink(
         "knowledge-base://card/BetterDynamicGraphYu23",
       )
     )?.targetId === id,
@@ -324,7 +324,7 @@ export default async function metadataHost({
     }
   }
   for (const style of ["ieee", "apa"]) {
-    kb.api.setSourceStyle("http://www.zotero.org/styles/" + style);
+    knowledgeBase.api.setSourceStyle("http://www.zotero.org/styles/" + style);
     await wait(
       () =>
         style === "ieee"
@@ -339,8 +339,8 @@ export default async function metadataHost({
     () => display.textContent.includes("Updated source title"),
     "Source metadata did not refresh",
   );
-  // Keep a standalone KB window alive after the library window closes.
-  kb.api.openWorkbenchWindow({ selectId: id });
+  // Keep a standalone Knowledge Base window alive after the library window closes.
+  knowledgeBase.api.openWorkbenchWindow({ selectId: id });
   const floating = await wait(
     () => Services.wm.getMostRecentWindow("knowledge-base:workbench"),
     "Standalone workbench did not open",
@@ -370,7 +370,7 @@ export default async function metadataHost({
   await current(id);
   main.close();
   await wait(() => !Zotero.getMainWindow(), "Library window did not close");
-  const secondID = await kb.api.saveZettel({
+  const secondID = await knowledgeBase.api.saveZettel({
     title: "No library window",
     body: "A note created after the library window closed. $x^2$",
   });
@@ -381,14 +381,14 @@ export default async function metadataHost({
   body.value += "\n\nSaved from an independent window.";
   body.dispatchEvent(new active.Event("input", { bubbles: true }));
   assert(await active.save(false), "Saving without a library window failed");
-  const savedBody = (await kb.api.getZettel(secondID)).body;
+  const savedBody = (await knowledgeBase.api.getZettel(secondID)).body;
   assert(
     savedBody.includes("Saved from an independent window."),
     "Independent edit was lost",
   );
   manager.ZoteroKnowledgeBase_selectZettel(id);
   active = await current(id);
-  kb.api.setSourceStyle("http://www.zotero.org/styles/ieee");
+  knowledgeBase.api.setSourceStyle("http://www.zotero.org/styles/ieee");
   await wait(
     () =>
       active.document
@@ -405,7 +405,7 @@ export default async function metadataHost({
     "Native save without a library window failed",
   );
   assert(
-    (await kb.api.getZettel(secondID)).body === savedBody,
+    (await knowledgeBase.api.getZettel(secondID)).body === savedBody,
     "Switching notes changed the saved body",
   );
   await IOUtils.writeUTF8(
@@ -414,11 +414,11 @@ export default async function metadataHost({
       connectionsOnly: true,
       id,
       reference: longID,
-      body: (await kb.api.getZettel(id)).body,
+      body: (await knowledgeBase.api.getZettel(id)).body,
       independentID: secondID,
       independentBody: savedBody,
     }),
   );
-  await kb.hooks.onShutdown();
+  await knowledgeBase.hooks.onShutdown();
   quit();
 }
