@@ -1,3 +1,4 @@
+import { requireNoteType } from "./note-types";
 import { exec, getAll, getOne, transaction } from "./db";
 import type { NativeCardInput } from "./native-notes";
 
@@ -18,6 +19,7 @@ function decode(data: string): EditorDraft {
   ) {
     throw new Error("Invalid Knowledge Base editor draft");
   }
+  if (value.noteType !== undefined) requireNoteType(value.noteType);
   return value;
 }
 

@@ -1,6 +1,23 @@
 /* global Zotero */
 "use strict";
 
+// A navigation can replace the document beneath the second click of a double-click.
+document.addEventListener(
+  "click",
+  (event) => {
+    if (
+      event.detail > 1 &&
+      /** @type {Element} */ (event.target).closest(
+        "a[href], .relation-link, .bibliography-reference, #knowledge-base-parent-display",
+      )
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  },
+  true,
+);
+
 // Chrome windows are XML documents. Markdown emits HTML (including <br>,
 // <input> and <hr>), so inserting it through XML innerHTML would throw.
 window.ZoteroKnowledgeBaseMarkdown = {
@@ -59,39 +76,30 @@ window.ZoteroKnowledgeBaseMarkdown = {
     );
     name.className = "relation-title";
     name.textContent = title || id;
-    const index = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "span",
-    );
-    index.className = "relation-id";
-    index.textContent = reference;
-    index.hidden =
+    if (
       !title ||
       title === id ||
       title === reference ||
       title === `[[${id}]]` ||
-      title === `[[${reference}]]`;
-    if (index.hidden) name.textContent = reference || id;
+      title === `[[${reference}]]`
+    )
+      name.textContent = reference || title || id;
     const text = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
       "span",
     );
     text.className = "note-reference-text";
     text.append(name);
-    if (!index.hidden && reference) {
-      text.append(
-        document.createTextNode(" ("),
-        index,
-        document.createTextNode(")"),
-      );
-    } else text.append(index);
     container.append(text);
     container.setAttribute(
       "title",
-      index.hidden ? reference || id : `${title} (${reference})`,
+      reference && reference !== name.textContent
+        ? `${name.textContent}\n${reference}`
+        : name.textContent,
     );
-    container.setAttribute("aria-label", container.getAttribute("title"));
+    container.setAttribute("aria-label", name.textContent);
   },
+
   /** @param {HTMLButtonElement} button @param {string} reference @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
   reference(button, reference, api) {
     button.hidden = !reference;
@@ -134,7 +142,9 @@ window.ZoteroKnowledgeBaseMarkdown = {
         family.parent.reference,
       );
       button.addEventListener("click", () =>
-        api.openManager({ selectId: family.parent.id }),
+        window.ZoteroKnowledgeBase_selectZettel
+          ? window.ZoteroKnowledgeBase_selectZettel(family.parent.id)
+          : api.openManager({ selectId: family.parent.id }),
       );
       parent.appendChild(button);
     } else {
@@ -159,7 +169,9 @@ window.ZoteroKnowledgeBaseMarkdown = {
       button.className = "family-link relation-link";
       this.identity(button, card.id, card.title, card.reference);
       button.addEventListener("click", () =>
-        api.openManager({ selectId: card.id }),
+        window.ZoteroKnowledgeBase_selectZettel
+          ? window.ZoteroKnowledgeBase_selectZettel(card.id)
+          : api.openManager({ selectId: card.id }),
       );
       list.appendChild(button);
     }

@@ -36,7 +36,7 @@ export function createGraphCanvas(
     bg: style.getPropertyValue("--bg").trim(),
     fg: style.getPropertyValue("--fg").trim(),
     accent: style.getPropertyValue("--accent").trim(),
-    source: style.getPropertyValue("--source").trim(),
+    item: style.getPropertyValue("--graph-item").trim(),
     muted: style.getPropertyValue("--muted").trim(),
     link: style.getPropertyValue("--graph-link").trim(),
   };
@@ -102,14 +102,14 @@ export function createGraphCanvas(
         const active = key.includes(":"),
           kind = batch[0].kind;
         ctx.strokeStyle = active
-          ? kind === "source"
-            ? colors.source
+          ? kind === "similarity"
+            ? colors.item
             : colors.accent
           : colors.link;
         ctx.fillStyle = ctx.strokeStyle;
         ctx.globalAlpha = active ? 1 : 0.65;
         ctx.lineWidth = (active ? 2.4 : kind === "parent" ? 1.2 : 1.1) / k;
-        ctx.setLineDash(kind === "source" ? [5 / k, 4 / k] : []);
+        ctx.setLineDash([]);
         const arrows: number[] = [];
         ctx.beginPath();
         for (const edge of batch) {
@@ -128,7 +128,7 @@ export function createGraphCanvas(
               a.x - 10,
               a.y - 6,
             );
-            if (kind !== "source")
+            if (kind !== "similarity")
               arrows.push(a.x - 10, a.y - 6, Math.atan2(54, 44));
             continue;
           }
@@ -151,7 +151,7 @@ export function createGraphCanvas(
             ctx.quadraticCurveTo(cx, cy, tx, ty);
             angle = Math.atan2(ty - cy, tx - cx);
           }
-          if (kind !== "source") arrows.push(tx, ty, angle);
+          if (kind !== "similarity") arrows.push(tx, ty, angle);
         }
         ctx.stroke();
         ctx.setLineDash([]);
@@ -188,8 +188,8 @@ export function createGraphCanvas(
         )
           continue;
         const fill =
-          node.kind === "source"
-            ? colors.source
+          node.kind === "item"
+            ? colors.item
             : node.kind === "unresolved"
               ? colors.bg
               : node.color || colors.accent;

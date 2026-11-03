@@ -52,6 +52,7 @@ var libraryRuntime = (() => {
         "sources",
         "indexer",
         "semantic",
+        "tag-policy",
         "tags",
         "tag-suggestions",
         "retrieval-evidence",
@@ -67,7 +68,6 @@ var libraryRuntime = (() => {
       chrome = service.registerChrome(Services.io.newURI(SWHost.manifestURI), [
         ["content", "similar-works", SWHost.rootURI],
       ]);
-      await scope.SWTags.loadTerms(SWHost.rootURI);
       if (stopped) return;
       await scope.SWIndexer.start();
       if (stopped) return;
@@ -109,6 +109,59 @@ var libraryRuntime = (() => {
     close,
     openTagManager(win, libraryID) {
       return scope.SWTags.open(win, libraryID);
+    },
+    async getItemGraphSnapshot(keys, active) {
+      const corpus = scope.SWIndexer.corpus;
+      await corpus.ready;
+      if (stopped || !active()) return null;
+      if (corpus.progress.phase !== "ready")
+        throw new Error("graph-cache-unavailable");
+      if (Zotero.isMac) await scope.SWSemantic.start(corpus);
+      if (stopped || !active()) return null;
+      return corpus.runTask(() => {
+        if (stopped || !active()) return null;
+        const documents = [];
+        const states = [];
+        const vector = (value) => ({
+          ids: new Uint32Array(value.ids),
+          weights: new Float64Array(value.weights),
+          length: value.length,
+        });
+        for (const key of [...new Set(keys)].sort()) {
+          const source = corpus.docs.get(key);
+          if (!source) continue;
+          const doc = corpus.search.docs.get(key);
+          const embedding = scope.SWSemantic.vectors.get(key);
+          states.push([
+            key,
+            source.hash,
+            !!doc,
+            embedding?.hash === source.hash ? embedding.hash : null,
+          ]);
+          documents.push({
+            key,
+            ...(doc
+              ? {
+                  vector: vector(doc.vector),
+                  fieldVectors: doc.fieldVectors.map(vector),
+                }
+              : {}),
+            ...(embedding?.hash === source.hash
+              ? { semantic: new Float32Array(embedding.vector) }
+              : {}),
+          });
+        }
+        return {
+          stamp: JSON.stringify([
+            1,
+            corpus.search.epoch,
+            scope.SWSemantic.version,
+            states,
+            keys,
+          ]),
+          documents,
+        };
+      }, 1);
     },
     async suggestTags(item, active) {
       const target = await scope.SWIndexer.resolveDocItem(item);

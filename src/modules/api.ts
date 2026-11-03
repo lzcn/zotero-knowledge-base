@@ -1,7 +1,7 @@
 import { getNewNoteBody } from "./preferences";
 import { compareNoteSummaries } from "./note-sort";
 import { getDOMWindow } from "../utils/dom";
-import { getGraphTags, getOwnNoteTags } from "./note-tags";
+import { getGraphTags, getOwnNoteTags, visibleNoteTags } from "./note-tags";
 import { isAccelKey } from "../ui/platform";
 /**
  * Window-facing API. Chrome pages (manager.xhtml / editor.xhtml) call these
@@ -30,6 +30,7 @@ import {
   nativePreviewHTML,
   isExternalNote,
   ensureLiteratureNote,
+  ensureManagedNote,
   setNoteTag,
   getNoteHealth,
   getNoteTags,
@@ -76,7 +77,7 @@ import {
   releaseImageDraft,
 } from "./assets";
 import { getFamily, getParentCandidates, getZettelOutline } from "./hierarchy";
-import { getGraphData } from "./graph";
+import { getGraphData, getParentItemNodes } from "./graph";
 import {
   getGraphOptions,
   setGraphOption,
@@ -146,6 +147,7 @@ const ANNOTATIONS_URL = `chrome://${config.addonRef}/content/annotations.xhtml`;
 export type HighlightWithCards = HighlightInfo & { cards: number };
 
 export interface EditorArgs {
+  noteType?: import("./note-types").NoteType;
   window?: boolean;
   embedded?: boolean;
   onClose?: () => void;
@@ -194,6 +196,7 @@ export const api = {
   getNoteHealth,
   getNoteTags,
   getOwnNoteTags,
+  visibleNoteTags,
   setNoteTag,
   getNewNoteBody,
   restoreNote,
@@ -261,6 +264,7 @@ export const api = {
   saveEditorCard: saveNativeCard,
   getMarkdownDocument,
   acquireNativeNote,
+  ensureManagedNote,
   duplicateNativeNote,
   projectNativeNote,
   nativeNoteHTML,
@@ -279,6 +283,10 @@ export const api = {
       node.reference = refs.get(node.id);
     });
     return graph;
+  },
+  getParentItems: getParentItemNodes,
+  getItemGraphSnapshot(keys: string[], active: () => boolean) {
+    return libraryRuntime.getItemGraphSnapshot(keys, active);
   },
   async getFamily(id: string) {
     const family = await getFamily(id);

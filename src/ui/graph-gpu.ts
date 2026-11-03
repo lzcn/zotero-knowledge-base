@@ -17,8 +17,6 @@ layout(location=2) in vec3 meta;
 layout(location=3) in vec4 color;
 out vec4 ink;
 out float side;
-out float distanceAlong;
-flat out float dashed;
 vec2 curve(float t, vec2 a, vec2 b, vec2 c, vec2 d) {
   float u = 1.0 - t;
   return u*u*u*a + 3.0*u*u*t*b + 3.0*u*t*t*c + t*t*t*d;
@@ -49,14 +47,13 @@ void main() {
   int vertex = gl_VertexID;
   vec2 p;
   side = 0.0;
-  distanceAlong = 0.0;
-  dashed = meta.y > 1.5 ? 1.0 : 0.0;
+  bool undirected = meta.y > 1.5;
   if (vertex >= 120) {
     vec2 end = d * view.z + view.xy;
     vec2 tangent = normalize(d - curve(0.99, a, b, c, d) + vec2(0.00001));
     vec2 normal = vec2(-tangent.y, tangent.x);
     p = vertex == 120 ? end : end - tangent * 5.0 + normal * (vertex == 121 ? 2.5 : -2.5);
-    if (dashed > 0.5) p = end;
+    if (undirected) p = end;
   } else {
     int corner = vertex % 6;
     float t = (float(vertex / 6) + (corner == 1 || corner == 2 || corner == 4 ? 1.0 : 0.0)) / 20.0;
@@ -64,7 +61,6 @@ void main() {
     vec2 normal = vec2(-tangent.y, tangent.x);
     side = corner == 0 || corner == 1 || corner == 3 ? -1.0 : 1.0;
     p = curve(t, a, b, c, d) * view.z + view.xy + normal * side * (meta.x * 0.5 + 0.75);
-    distanceAlong = t * max(len, 120.0) * view.z;
   }
   ink = color;
   gl_Position = vec4(clip(p), 0.0, 1.0);
@@ -74,11 +70,8 @@ const EDGE_FRAGMENT = `#version 300 es
 precision highp float;
 in vec4 ink;
 in float side;
-in float distanceAlong;
-flat in float dashed;
 out vec4 outputColor;
 void main() {
-  if (dashed > 0.5 && mod(distanceAlong, 9.0) > 5.0) discard;
   float coverage = 1.0 - smoothstep(0.5, 1.0, abs(side));
   outputColor = vec4(ink.rgb, ink.a * coverage);
 }
@@ -159,7 +152,7 @@ export function createGraphGPU(
   const background = color("--bg"),
     accent = color("--accent"),
     muted = color("--muted"),
-    sourceColor = color("--source"),
+    itemColor = color("--graph-item"),
     linkColor = color("--graph-link");
   function program(
     vertex: string,
@@ -331,8 +324,8 @@ export function createGraphGPU(
             : matched.has(edge.source.id) || matched.has(edge.target.id);
           if (highlighted !== active) continue;
           const kind =
-            edge.kind === "parent" ? 0 : edge.kind === "source" ? 2 : 1;
-          const ink = active ? (kind === 2 ? sourceColor : accent) : linkColor;
+            edge.kind === "parent" ? 0 : edge.kind === "similarity" ? 2 : 1;
+          const ink = active ? (kind === 2 ? itemColor : accent) : linkColor;
           edgeValues.set(
             [
               edge.source.x,
@@ -352,8 +345,8 @@ export function createGraphGPU(
         }
       nodes.forEach((node, i) => {
         const ink =
-          node.kind === "source"
-            ? sourceColor
+          node.kind === "item"
+            ? itemColor
             : node.kind === "unresolved"
               ? background
               : rgb(node.color || style.getPropertyValue("--accent"));

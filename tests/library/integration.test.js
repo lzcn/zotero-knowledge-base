@@ -154,6 +154,7 @@ function harness() {
     "search",
     "corpus",
     "indexer",
+    "tag-policy",
     "tags",
     "tag-suggestions",
     "section",
@@ -705,13 +706,6 @@ test("embedded module loads Zotero globals and closes SQLite on shutdown", async
   h.prefs.set("similar-works.backgroundIndexing", false);
   let closed = false;
   const blockers = new Set();
-  h.Zotero.File = {
-    getResourceAsync: async () =>
-      fs.readFileSync(
-        path.join(__dirname, "../../addon/content/library/data/tag-terms.json"),
-        "utf8",
-      ),
-  };
   h.Zotero.DataDirectory = { dir: "/data" };
   h.Zotero.DB.queryAsync = async () => [];
   h.Zotero.initializationPromise = Promise.resolve();

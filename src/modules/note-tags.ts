@@ -6,10 +6,47 @@ import {
   transaction,
 } from "./db";
 import { getTagRevision, notifyDataChange } from "./events";
+import { SWTagPolicy } from "../library/tag-policy.js";
+
+const EXCLUDED_TAGS = "extensions.zotero.similar-works.excludedTags";
+let excludedValue: string | undefined;
+let excludedKeys = new Set<string>();
+let exclusionsObserver:
+  | ReturnType<typeof Zotero.Prefs.registerObserver>
+  | undefined;
+
+/** Hide excluded labels without removing native tags or inherited associations. */
+export function visibleNoteTags(tags: string[]): string[] {
+  const value = String(Zotero.Prefs.get(EXCLUDED_TAGS, true) || "");
+  if (value !== excludedValue) {
+    excludedValue = value;
+    excludedKeys = SWTagPolicy.excludedKeys(value);
+  }
+  return SWTagPolicy.visible(tags, excludedKeys);
+}
+
+export function initTagExclusions(): void {
+  if (exclusionsObserver !== undefined) return;
+  exclusionsObserver = Zotero.Prefs.registerObserver(
+    EXCLUDED_TAGS,
+    () => {
+      notifyDataChange({ fields: ["tag-visibility"] });
+    },
+    true,
+  );
+}
+
+export function stopTagExclusions(): void {
+  if (exclusionsObserver === undefined) return;
+  Zotero.Prefs.unregisterObserver(exclusionsObserver);
+  exclusionsObserver = undefined;
+}
 
 /** Settings needs the tag vocabulary, without building graph edges or reading note bodies. */
 export async function getGraphTags(): Promise<string[]> {
-  return [...(await getTagIndex()).keys()].sort((a, b) => a.localeCompare(b));
+  return visibleNoteTags([...(await getTagIndex()).keys()]).sort((a, b) =>
+    a.localeCompare(b),
+  );
 }
 
 const tagIndexes = new Map<
@@ -82,7 +119,7 @@ export async function getTaggedNoteIDs(
   return (await getTagIndex(!ownOnly)).get(tag) || [];
 }
 
-/** The tags table holds tags awaiting a native note, including one-time type conversion. */
+/** The tags table holds existing user tags awaiting a native note. */
 export async function applyPendingNoteTags(
   note: Zotero.Item,
   cardID?: string,
@@ -252,7 +289,8 @@ export async function getEffectiveNoteTags(
   noteID: number | null,
   cardID?: string,
 ): Promise<string[]> {
-  if (!noteID) return cardID ? getOwnNoteTags(null, cardID) : [];
+  if (!noteID)
+    return cardID ? visibleNoteTags(await getOwnNoteTags(null, cardID)) : [];
   const note = await Zotero.Items.getAsync(noteID);
   if (!note || !note.isNote() || note.isInTrash()) return [];
   const inherit = true;
@@ -281,10 +319,10 @@ export async function getEffectiveNoteTags(
     );
   }
   const tags = await loadNativeTags(notes, inherit);
-  return [
+  return visibleNoteTags([
     ...new Set([
       ...notes.flatMap((item) => tags.get(item) || []),
       ...(await getOwnNoteTags(noteID, cardID)),
     ]),
-  ];
+  ]);
 }

@@ -171,11 +171,12 @@ function mount(
             fontVariantLigatures: "none",
           },
           ".cm-content": {
-            maxWidth: "var(--knowledge-base-max-width, calc(70ch + 60px))",
+            maxWidth:
+              "var(--knowledge-base-max-width, var(--knowledge-base-note-width))",
             width: "100%",
             margin: "0 auto",
             padding:
-              "var(--knowledge-base-padding-block, 20px) var(--knowledge-base-padding-inline, 30px) max(var(--knowledge-base-padding-block, 20px), 50vh)",
+              "var(--knowledge-base-padding-block, var(--knowledge-base-note-top)) var(--knowledge-base-padding-inline, var(--knowledge-base-note-gutter)) var(--knowledge-base-note-bottom)",
             boxSizing: "border-box",
           },
           "&.cm-focused": { outline: "none" },

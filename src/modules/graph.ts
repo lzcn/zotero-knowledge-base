@@ -1,7 +1,8 @@
 import { getAll, type ZettelRow, type LinkRow } from "./db";
 import { getItemSummary } from "./zotero";
+import type { NoteType } from "./note-types";
 import { getGraphGroups } from "./preferences";
-import { inheritCardTags, loadNativeTags } from "./note-tags";
+import { inheritCardTags, loadNativeTags, visibleNoteTags } from "./note-tags";
 
 export interface GraphNode {
   id: string;
@@ -10,7 +11,8 @@ export interface GraphNode {
   tags?: string[];
   color?: string;
   group?: string;
-  kind: "card" | "source" | "unresolved";
+  kind: "card" | "item" | "unresolved";
+  noteType?: NoteType;
   snippet: string;
   citation?: string;
   parentId?: string | null;
@@ -20,7 +22,8 @@ export interface GraphNode {
 export interface GraphEdge {
   source: string;
   target: string;
-  kind: "link" | "source" | "parent";
+  kind: "link" | "similarity" | "parent";
+  score?: number;
   ref: string;
   context: string;
 }
@@ -28,17 +31,23 @@ export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
+export interface ItemGraphDocument {
+  key: string;
+  vector?: { ids: Uint32Array; weights: Float64Array; length: number };
+  fieldVectors?: { ids: Uint32Array; weights: Float64Array; length: number }[];
+  semantic?: Float32Array;
+}
 export interface GraphOptions {
   centerId?: string;
   depth?: number;
   query?: string;
-  includeSources?: boolean;
+  noteType?: NoteType;
   includeUnresolved?: boolean;
   relationMode?: "hierarchy" | "references" | "both";
 }
 
 /** No list-view LIMIT: isolated cards and cards beyond the first 500 belong
- * to the knowledge graph too. Sources are separate provenance nodes. */
+ * to the knowledge graph too. Parent items use their own similarity view. */
 export async function getGraphData(): Promise<GraphData> {
   const rows = await getAll<ZettelRow>(
     "SELECT * FROM zettels z WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY id",
@@ -115,13 +124,16 @@ export async function getGraphData(): Promise<GraphData> {
   const bodies = new Map<string, string>();
   const edges: GraphEdge[] = [];
   for (const row of rows) {
-    const tags = nativeTags.get(row.id) || [];
+    const tags = visibleNoteTags(nativeTags.get(row.id) || []);
     const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
     const group = groups.find((group) => group.tag && tags.includes(group.tag));
     nodes.set(row.id, {
       id: row.id,
       title: row.title || row.id,
       kind: "card",
+      noteType: row.note_type,
+      itemKey: row.item_key ?? undefined,
+      libraryID: row.library_id,
       tags,
       color:
         group?.color || (tags.length ? colorFor(tags, libraryID) : undefined),
@@ -170,40 +182,38 @@ export async function getGraphData(): Promise<GraphData> {
       context: context.slice(0, 400),
     });
   }
+  return { nodes: [...nodes.values()], edges };
+}
+
+/** Only parents of available managed notes belong in the paper view. */
+export async function getParentItemNodes(
+  active = () => true,
+): Promise<GraphNode[]> {
+  const rows = await getAll<{ library_id: number; item_key: string }>(
+    "SELECT DISTINCT library_id, item_key FROM zettels z WHERE item_key IS NOT NULL AND library_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY library_id, item_key",
+  );
+  const nodes: GraphNode[] = [];
   for (const row of rows) {
-    if (!row.item_key) continue;
-    const id = `source:${row.library_id ?? "unknown"}/${row.item_key}`;
-    if (!nodes.has(id)) {
-      let title = row.item_key;
-      let citation = "";
-      try {
-        const summary = await getItemSummary(row.item_key, row.library_id);
-        title = summary?.title || title;
-        citation = [summary?.creatorYear, summary?.publication]
-          .filter(Boolean)
-          .join(" · ");
-      } catch {
-        /* detached source is still provenance */
-      }
-      nodes.set(id, {
-        id,
-        title,
-        kind: "source",
-        snippet: citation,
-        citation,
-        itemKey: row.item_key,
-        libraryID: row.library_id,
-      });
-    }
-    edges.push({
-      source: row.id,
-      target: id,
-      kind: "source",
-      ref: row.item_key,
-      context: "",
+    if (!active()) return [];
+    const item = await Zotero.Items.getByLibraryAndKeyAsync(
+      row.library_id,
+      row.item_key,
+    );
+    if (!item || !item.isRegularItem() || item.isInTrash()) continue;
+    const summary = await getItemSummary(row.item_key, row.library_id);
+    if (!summary) continue;
+    nodes.push({
+      id: `item:${row.library_id}/${row.item_key}`,
+      title: summary.title,
+      kind: "item",
+      itemKey: row.item_key,
+      libraryID: row.library_id,
+      snippet: [summary.creatorYear, summary.publication]
+        .filter(Boolean)
+        .join(" · "),
     });
   }
-  return { nodes: [...nodes.values()], edges };
+  return nodes;
 }
 
 export function filterGraph(
@@ -212,12 +222,11 @@ export function filterGraph(
 ): GraphData {
   let nodes = graph.nodes.filter(
     (node) =>
-      node.kind === "card" ||
-      (options.relationMode !== "hierarchy" &&
-        node.kind === "source" &&
-        options.includeSources) ||
-      (options.relationMode !== "hierarchy" &&
-        node.kind === "unresolved" &&
+      (node.kind === "item" && !options.noteType) ||
+      (node.kind === "card" &&
+        (!options.noteType || node.noteType === options.noteType)) ||
+      (node.kind === "unresolved" &&
+        options.relationMode !== "hierarchy" &&
         options.includeUnresolved !== false),
   );
   let ids = new Set(nodes.map((node) => node.id));
@@ -231,6 +240,15 @@ export function filterGraph(
           ? edge.kind !== "parent"
           : true),
   );
+  if (options.noteType) {
+    const connected = new Set(
+      edges.flatMap((edge) => [edge.source, edge.target]),
+    );
+    nodes = nodes.filter(
+      (node) => node.kind !== "unresolved" || connected.has(node.id),
+    );
+    ids = new Set(nodes.map((node) => node.id));
+  }
   if (options.centerId) {
     const visited = new Set<string>(
       ids.has(options.centerId) ? [options.centerId] : [],

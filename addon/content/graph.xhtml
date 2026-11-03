@@ -22,10 +22,17 @@ type="text/css"?>
     <html:header id="knowledge-base-graph-toolbar">
       <toolbarbutton id="graph-global" class="knowledge-base-native-tool" />
       <toolbarbutton id="graph-local" class="knowledge-base-native-tool" />
+      <html:select id="graph-view">
+        <html:option value="all" />
+        <html:option value="literature" />
+        <html:option value="zettel" />
+        <html:option value="thinking" />
+        <html:option value="entity" />
+        <html:option value="items" />
+      </html:select>
       <html:input id="graph-search" type="search" />
       <checkbox id="graph-outline" />
       <checkbox id="graph-references" />
-      <checkbox id="graph-sources" />
       <checkbox id="graph-hide-isolated" />
       <html:div class="spacer" />
       <toolbarbutton id="graph-fit" class="knowledge-base-native-tool" />
@@ -69,7 +76,7 @@ type="text/css"?>
     </html:main>
     <html:footer id="graph-legend">
       <html:span id="graph-legend-cards" /><html:span
-        id="graph-legend-sources"
+        id="graph-legend-items"
       /><html:span id="graph-legend-unresolved" />
       <html:span id="graph-groups-legend" />
       <html:span id="graph-error" class="error" role="status" />

@@ -198,15 +198,9 @@ export function setGraphGroups(groups: GraphGroup[]): void {
 export interface GraphOptions {
   outline: boolean;
   references: boolean;
-  sources: boolean;
   hideIsolated: boolean;
 }
-const optionNames = [
-  "outline",
-  "references",
-  "sources",
-  "hideIsolated",
-] as const;
+const optionNames = ["outline", "references", "hideIsolated"] as const;
 const preferenceKey = (name: string) => `${config.prefsPrefix}.graph.${name}`;
 export function getGraphLabelLength(): number {
   const value = Zotero.Prefs.get(preferenceKey("labelLength"), true);
@@ -279,7 +273,6 @@ export function getGraphOptions(): GraphOptions {
   return {
     outline: enabled("outline"),
     references: enabled("references"),
-    sources: enabled("sources"),
     hideIsolated:
       Zotero.Prefs.get(preferenceKey("hideIsolated"), true) === true,
   };

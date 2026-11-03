@@ -9,6 +9,7 @@ import { notifyDataChange, type DataField } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
 import { getNoteReferences, invalidateNoteReferences } from "./note-references";
 import { searchRows, type SearchOptions } from "./search";
+import { requireNoteType, type NoteType } from "./note-types";
 
 export interface Zettel extends ZettelRow {
   searchRank?: number;
@@ -215,6 +216,7 @@ export async function resolveRefs(
  */
 function rowToZettel(row: ZettelRow, outgoing = 0, incoming = 0): Zettel {
   return {
+    note_type: row.note_type,
     source_note: row.source_note,
     custom_key: row.custom_key,
     id: row.id,
@@ -412,6 +414,7 @@ export async function refreshAnnotationCount(
  * On update, omitting it preserves the stored value.
  */
 export interface SaveCardInput {
+  noteType?: NoteType;
   sourceNote?: boolean;
   initialTags?: string[];
   customKey?: string | null;
@@ -433,7 +436,7 @@ export async function saveZettel(input: SaveCardInput): Promise<string> {
 
 export async function saveEditorCard(
   input: SaveCardInput,
-  beforeCommit?: () => Promise<void>,
+  beforeCommit?: (id: string) => Promise<void>,
 ): Promise<{ id: string; updatedAt: number }> {
   let now = Date.now();
   const title = input.title.trim();
@@ -459,6 +462,12 @@ export async function saveEditorCard(
       throw new Error("CARD_CONFLICT");
     }
     const sourceNote = input.sourceNote ?? !!previous?.source_note;
+    const noteType = requireNoteType(
+      input.noteType === undefined
+        ? (previous?.note_type ?? "entity")
+        : input.noteType,
+    );
+    if (!previous || noteType !== previous.note_type) fields.add("type");
     let customKey =
       (input.customKey === undefined
         ? previous?.custom_key
@@ -535,7 +544,7 @@ export async function saveEditorCard(
         await exec(
           `UPDATE zettels
          SET title = ?, title_folded = ?, body = ?, item_key = ?, library_id = ?,
-             annotation_key = ?, source_note = ?, custom_key = ?, updated_at = ?
+             annotation_key = ?, source_note = ?, note_type = ?, custom_key = ?, updated_at = ?
          WHERE id = ?`,
           [
             title,
@@ -545,6 +554,7 @@ export async function saveEditorCard(
             input.libraryID ?? null,
             effectiveAnnotationKey,
             Number(sourceNote),
+            noteType,
             customKey,
             now,
             id,
@@ -559,8 +569,8 @@ export async function saveEditorCard(
           ? input.id
           : newZettelID(new Set(allIds.map((r) => r.id)));
       await exec(
-        `INSERT INTO zettels (id, title, title_folded, body, item_key, library_id, annotation_key, source_note, custom_key, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO zettels (id, title, title_folded, body, item_key, library_id, annotation_key, source_note, note_type, custom_key, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           title,
@@ -570,6 +580,7 @@ export async function saveEditorCard(
           input.libraryID ?? null,
           effectiveAnnotationKey,
           Number(sourceNote),
+          noteType,
           customKey,
           now,
           now,
@@ -633,7 +644,7 @@ export async function saveEditorCard(
       ))
         affected.add(row.source_id);
     }
-    await beforeCommit?.();
+    await beforeCommit?.(id);
     if (input.draftId && input.draftRevision !== undefined)
       await exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
         input.draftId,

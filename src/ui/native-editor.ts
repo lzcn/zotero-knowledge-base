@@ -392,6 +392,7 @@ async function create(
     // Resolve the actual anchor; native coordinate lookup can miss short labels.
     event.preventDefault();
     event.stopImmediatePropagation();
+    if (event.detail > 1) return;
     options.onOpenLink(href);
   };
   const stopEscape = (event: KeyboardEvent) => {
@@ -434,15 +435,17 @@ async function create(
     appearance.textContent = `
       @import url("chrome://knowledge-base/content/ui.css");
       @import url("chrome://knowledge-base/content/note-headings.css");
+      @import url("chrome://knowledge-base/content/note-layout.css");
       .primary-editor {
-        --editor-padding-block: 24px;
-        --editor-padding-inline: 36px;
+        --editor-padding-block: var(--knowledge-base-note-top);
+        --editor-padding-inline: var(--knowledge-base-note-gutter);
         font-family: var(--ui-editor-font) !important;
-        max-width: 760px !important;
+        width: 100% !important;
+        max-width: var(--knowledge-base-note-width) !important;
         box-sizing: border-box;
         margin-inline: auto !important;
         padding-inline: var(--editor-padding-inline) !important;
-        padding-block: var(--editor-padding-block) 50vh !important;
+        padding-block: var(--editor-padding-block) var(--knowledge-base-note-bottom) !important;
       }
       .primary-editor p, .primary-editor li { line-height: 1.7; }
       .primary-editor p { margin-block: 0 .85em; }
@@ -452,9 +455,6 @@ async function create(
       .primary-editor h1 { font-size: 1.8em; letter-spacing: -.02em; }
       .primary-editor h2 { font-size: 1.4em; }
       .primary-editor h3 { font-size: 1.15em; }
-      @media (max-width: 640px) {
-        .primary-editor { --editor-padding-inline: 20px; }
-      }
     `;
     frame.document.head.append(appearance);
     if (!readOnly)
@@ -548,6 +548,9 @@ async function create(
     getTypography: () => ({
       ...getNativeTypography(frame),
       "font-family": "var(--ui-editor-font)",
+      "max-width": "var(--knowledge-base-note-width)",
+      "padding-inline": "var(--knowledge-base-note-gutter)",
+      "padding-block": "var(--knowledge-base-note-top)",
     }),
     async setReadOnly(value) {
       if (readOnly === value) return;

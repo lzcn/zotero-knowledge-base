@@ -4,7 +4,7 @@ const vm = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
 
-function fixture({ terms, failStop = false, failClose = false } = {}) {
+function fixture({ indexStart, failStop = false, failClose = false } = {}) {
   const calls = [];
   let scope;
   const context = {
@@ -24,7 +24,6 @@ function fixture({ terms, failStop = false, failClose = false } = {}) {
           scope = target;
           calls.push("load:" + uri.split("/").pop());
           target.SWTags = {
-            loadTerms: () => terms || Promise.resolve(),
             stop() {
               calls.push("tags.stop");
               if (failStop) throw new Error("stop failure");
@@ -42,7 +41,10 @@ function fixture({ terms, failStop = false, failClose = false } = {}) {
           };
           target.SWSemantic = { stop: () => calls.push("semantic.stop") };
           target.SWIndexer = {
-            start: async () => calls.push("index.start"),
+            start: async () => {
+              calls.push("index.start");
+              await indexStart;
+            },
             requestStop: () => calls.push("index.stop"),
             shutdown: async () => calls.push("index.drain"),
             corpus: {
@@ -105,10 +107,62 @@ test("one owner starts the item index once; settings belong to Knowledge Base", 
   assert.ok(f.calls.includes("window.unload"));
 });
 
-test("quit during preparation cannot start indexing or register late resources", async () => {
+test("paper graph snapshots reuse completed vectors, omit stale embeddings, and detach all buffers", async () => {
+  const f = fixture();
+  await f.runtime.start();
+  const { SWSearch } = require("../../src/library/search.js");
+  const vector = new SWSearch.Vector([[1, 1]]);
+  const corpus = f.scope.SWIndexer.corpus;
+  Object.assign(corpus, {
+    progress: { phase: "ready" },
+    revision: 7,
+    search: {
+      epoch: 3,
+      docs: new Map([
+        ["1/A", { vector, fieldVectors: [vector, vector] }],
+        ["1/B", { vector, fieldVectors: [vector, vector] }],
+      ]),
+    },
+    docs: new Map([
+      ["1/A", { hash: "current" }],
+      ["1/B", { hash: "new" }],
+    ]),
+    runTask: async (work) => work(),
+  });
+  Object.assign(f.scope.SWSemantic, {
+    _vectorRevision: 2,
+    vectors: new Map([
+      ["1/A", { hash: "current", vector: Float32Array.of(1, 0) }],
+      ["1/B", { hash: "old", vector: Float32Array.of(0, 1) }],
+    ]),
+  });
+  const data = await f.runtime.getItemGraphSnapshot(
+    ["1/A", "1/B", "1/MISSING"],
+    () => true,
+  );
+  assert.equal(data.documents.length, 2);
+  assert.deepEqual([...data.documents[0].semantic], [1, 0]);
+  assert.equal(data.documents[1].semantic, undefined);
+  corpus.revision++;
+  f.scope.SWSemantic._vectorRevision++;
+  const unchanged = await f.runtime.getItemGraphSnapshot(
+    ["1/A", "1/B", "1/MISSING"],
+    () => true,
+  );
+  assert.equal(unchanged.stamp, data.stamp);
+  data.documents[0].vector.weights[0] = 99;
+  assert.equal(vector.weights[0], 1);
+  assert.equal(
+    await f.runtime.getItemGraphSnapshot(["1/A"], () => false),
+    null,
+  );
+  await f.runtime.close();
+});
+
+test("quit during index preparation cannot register late resources", async () => {
   let resolve;
   const f = fixture({
-    terms: new Promise((done) => {
+    indexStart: new Promise((done) => {
       resolve = done;
     }),
   });
@@ -116,7 +170,7 @@ test("quit during preparation cannot start indexing or register late resources",
   await f.runtime.close(true);
   resolve();
   await starting;
-  assert.ok(!f.calls.includes("index.start"));
+  assert.equal(f.calls.filter((call) => call === "index.start").length, 1);
   assert.ok(!f.calls.includes("register"));
   assert.equal(f.runtime.state, "stopped");
 });

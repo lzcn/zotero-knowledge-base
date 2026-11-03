@@ -25,6 +25,13 @@ declare namespace Zotero {
 declare const libraryRuntime: {
   readonly state: "idle" | "ready" | "stopped";
   start(): Promise<void>;
+  getItemGraphSnapshot(
+    keys: string[],
+    active: () => boolean,
+  ): Promise<{
+    stamp: string;
+    documents: import("../src/modules/graph").ItemGraphDocument[];
+  } | null>;
   openTagManager(win: Window, libraryID: number): Window;
   suggestTags(
     item: Zotero.Item,

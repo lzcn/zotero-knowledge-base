@@ -48,17 +48,9 @@ similar-works-tags-refresh =
     .label = Refresh
 similar-works-tags-invalid-name = Enter a valid name (up to 255 characters).
 
-similar-works-pref-tags-heading = Tag names
-similar-works-pref-tag-style =
-    .value = Name format
-similar-works-pref-tag-hashtag =
-    .label = Add a leading #
-
-similar-works-pref-exclude-colored-tags =
-    .label = Exclude colored tags
 similar-works-pref-excluded-tags =
     .value = Excluded tags
-similar-works-pref-excluded-tags-help = One per line; also excludes name variants.
+similar-works-pref-excluded-tags-help = Comma-separated; shared with notes and tag suggestions.
 similar-works-tags-protected = Tag excluded. Check Settings.
 
 similar-works-tags-select-all = Select all
@@ -68,13 +60,11 @@ similar-works-tags-selection-count = { $visible } / { $total } · Selected { $se
        *[other] · { $hidden } hidden
     }
 similar-works-tags-action = Action
-similar-works-tags-format =
+similar-works-tags-rename-action =
     .label = Rename
 similar-works-tags-merge-action =
     .label = Merge
 similar-works-tags-preparing = Preparing preview…
-similar-works-tags-format-preview = { $count } renames · { $items } items · { $merges } merges
-similar-works-tags-formatted = Formatted { $count } tags.
 similar-works-tags-no-matches = No matching tags.
 
 similar-works-tags-delete-action =
@@ -97,11 +87,6 @@ similar-works-tags-deleted = Deleted { $count } tags.
 
 similar-works-tags-renamed = Renamed to “{ $name }”.
 
-similar-works-pref-tag-sentence =
-    .label = Sentence case
-similar-works-pref-tag-title =
-    .label = Title Case
-
 similar-works-tags-clear-selection =
     .label = Clear selection
 
@@ -117,17 +102,12 @@ similar-works-tags-window =
 similar-works-tags-name-column = Name
 similar-works-tags-count-column = Items
 similar-works-tags-group-column = Match
-similar-works-tags-format-action =
-    .label = Format names
 similar-works-tags-match-name = Name
 similar-works-tags-match-plural = Plural
 similar-works-tags-match-abbreviation = Abbreviation
 similar-works-tags-match-spelling = Spelling
 
 similar-works-tags-collision = This name exists. The tags will be merged.
-similar-works-tags-format-button =
-    .label = Format names
-
 similar-works-tags-match-alias = Terminology
 
 similar-works-more = More

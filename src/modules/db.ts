@@ -1,4 +1,5 @@
 import { SWStorage } from "../library/storage.js";
+import { requireNoteType, type NoteType } from "./note-types";
 /**
  * Independent SQLite storage layer for the zettel knowledge base.
  *
@@ -10,9 +11,10 @@ import { SWStorage } from "../library/storage.js";
  * so schema statements must be executed one by one.
  */
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 14;
 
 export interface ZettelRow {
+  note_type: NoteType;
   source_note: number;
   custom_key: string | null;
   id: string;
@@ -52,6 +54,7 @@ const SCHEMA_TABLES: string[] = [
     library_id INTEGER,
     annotation_key TEXT,
     custom_key TEXT,
+    note_type TEXT NOT NULL DEFAULT 'entity' CHECK(note_type IN ('literature', 'zettel', 'thinking', 'entity')),
     source_note INTEGER NOT NULL DEFAULT 0 CHECK(source_note IN (0, 1) AND (source_note = 0 OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -186,7 +189,8 @@ async function ensureSchema(): Promise<void> {
           "SELECT value FROM meta WHERE key = 'schemaVersion'",
         )
       : undefined;
-    if (row?.value === "11") await convertNoteTypesToTags();
+    if (row?.value === "12") await restoreNoteTypes();
+    else if (row?.value === "13") await replaceOrdinaryNoteType();
     else if (row?.value !== String(SCHEMA_VERSION))
       throw new Error(
         `Knowledge Base: unsupported schema ${row?.value ?? "missing"}; expected ${SCHEMA_VERSION}`,
@@ -210,16 +214,60 @@ async function ensureSchema(): Promise<void> {
   await assertSchema();
 }
 
-/** Convert the previously supported schema once; classification becomes editable tags. */
-async function convertNoteTypesToTags(): Promise<void> {
-  await exec(`INSERT OR IGNORE INTO tags(zettel_id, tag)
-    SELECT id, CASE kind WHEN 'literature' THEN 'Literature Note' WHEN 'thinking' THEN 'Thinking Note' ELSE 'Zettel' END FROM zettels`);
-  await exec("DROP INDEX IF EXISTS idx_literature_source");
+/** Adopt the installed format once without rewriting native notes or their tags. */
+async function restoreNoteTypes(): Promise<void> {
   await exec(
-    "ALTER TABLE zettels ADD COLUMN source_note INTEGER NOT NULL DEFAULT 0 CHECK(source_note IN (0, 1) AND (source_note = 0 OR (item_key IS NOT NULL AND library_id IS NOT NULL)))",
+    "ALTER TABLE zettels ADD COLUMN note_type TEXT NOT NULL DEFAULT 'entity' CHECK(note_type IN ('literature', 'zettel', 'thinking', 'entity'))",
   );
-  await exec("UPDATE zettels SET source_note = (kind = 'literature')");
-  await exec("ALTER TABLE zettels DROP COLUMN kind");
+  const labels = new Map<string, NoteType>([
+    ["Literature Note", "literature"],
+    ["Zettel", "zettel"],
+    ["Thinking Note", "thinking"],
+    ["Entity", "entity"],
+  ]);
+  const infer = (tags: string[], source = false): NoteType => {
+    const matches = [
+      ...new Set(tags.map((tag) => labels.get(tag)).filter(Boolean)),
+    ];
+    return matches.length === 1
+      ? matches[0]!
+      : source
+        ? "literature"
+        : "entity";
+  };
+  const pending = new Map<string, string[]>();
+  for (const row of await getAll<{ zettel_id: string; tag: string }>(
+    "SELECT zettel_id, tag FROM tags",
+  ))
+    pending.set(row.zettel_id, [
+      ...(pending.get(row.zettel_id) ?? []),
+      row.tag,
+    ]);
+  const types = new Map<string, NoteType>();
+  const rows = await getAll<{
+    id: string;
+    source_note: number;
+    note_key: string | null;
+    library_id: number | null;
+  }>(
+    "SELECT z.id, z.source_note, n.note_key, n.library_id FROM zettels z LEFT JOIN card_notes n ON n.card_id = z.id",
+  );
+  for (const row of rows) {
+    const tags = pending.get(row.id) ?? [];
+    if (row.note_key && row.library_id) {
+      const note = await Zotero.Items.getByLibraryAndKeyAsync(
+        row.library_id,
+        row.note_key,
+      );
+      if (note && note.isNote()) {
+        await Zotero.Items.loadDataTypes([note], ["tags"]);
+        tags.push(...note.getTags().map(({ tag }) => tag));
+      }
+    }
+    const type = infer(tags, !!row.source_note);
+    types.set(row.id, type);
+    await exec("UPDATE zettels SET note_type = ? WHERE id = ?", [type, row.id]);
+  }
   for (const table of ["editor_drafts", "note_save_operations"]) {
     const rows = await getAll<{ id: string; data: string }>(
       `SELECT id, data FROM ${table}`,
@@ -227,24 +275,47 @@ async function convertNoteTypesToTags(): Promise<void> {
     for (const row of rows) {
       const data = JSON.parse(row.data);
       const input = table === "note_save_operations" ? data.input : data;
-      if (input.kind) {
-        input.sourceNote = input.kind === "literature";
-        input.initialTags = [
-          ...new Set([
-            ...(input.initialTags ?? []),
-            input.kind === "literature"
-              ? "Literature Note"
-              : input.kind === "thinking"
-                ? "Thinking Note"
-                : "Zettel",
-          ]),
-        ];
-        delete input.kind;
-        await exec(`UPDATE ${table} SET data = ? WHERE id = ?`, [
-          JSON.stringify(data),
-          row.id,
-        ]);
-      }
+      input.noteType =
+        types.get(input.id) ?? infer(input.initialTags ?? [], input.sourceNote);
+      await exec(`UPDATE ${table} SET data = ? WHERE id = ?`, [
+        JSON.stringify(data),
+        row.id,
+      ]);
+    }
+  }
+}
+
+/** Replace the previous default in metadata and pending saves, atomically. */
+async function replaceOrdinaryNoteType(): Promise<void> {
+  const rows = await getAll<{ id: string; note_type: string }>(
+    "SELECT id, note_type FROM zettels",
+  );
+  const types = rows.map((row) => ({
+    id: row.id,
+    type: requireNoteType(row.note_type === "note" ? "entity" : row.note_type),
+  }));
+  await exec("ALTER TABLE zettels DROP COLUMN note_type");
+  await exec(
+    "ALTER TABLE zettels ADD COLUMN note_type TEXT NOT NULL DEFAULT 'entity' CHECK(note_type IN ('literature', 'zettel', 'thinking', 'entity'))",
+  );
+  for (const { id, type } of types)
+    if (type !== "entity")
+      await exec("UPDATE zettels SET note_type = ? WHERE id = ?", [type, id]);
+  for (const table of ["editor_drafts", "note_save_operations"]) {
+    for (const row of await getAll<{ id: string; data: string }>(
+      `SELECT id, data FROM ${table}`,
+    )) {
+      const data = JSON.parse(row.data);
+      const input = table === "note_save_operations" ? data.input : data;
+      input.noteType = requireNoteType(
+        input.noteType === "note" || input.noteType === undefined
+          ? "entity"
+          : input.noteType,
+      );
+      await exec(`UPDATE ${table} SET data = ? WHERE id = ?`, [
+        JSON.stringify(data),
+        row.id,
+      ]);
     }
   }
 }
@@ -291,6 +362,7 @@ const REQUIRED_COLUMNS = [
   "library_id",
   "annotation_key",
   "source_note",
+  "note_type",
   "custom_key",
   "created_at",
   "updated_at",

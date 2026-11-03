@@ -31,7 +31,6 @@ const prefs = {
   "extensions.autoDisableScopes": 0,
   "extensions.enabledScopes": 15,
   "extensions.zotero.automaticScraperUpdates": false,
-  "extensions.zotero.similar-works.tagNameStyle": "sentence",
   "extensions.zotero.similar-works.maxRecommendations": 15,
   "extensions.zotero.similar-works.allowMetadataOnlyRecommendations": false,
   "app.update.auto": false,
@@ -458,7 +457,8 @@ startup = async function(data) {
         await Zotero.Tags.setColor(item.libraryID, "Deep Learning", "#336699", 0);
         await Zotero.Tags.setColor(item.libraryID, "deep-learning", "#993333", 1);
       });
-      if ((await tagAPI.catalog(item.libraryID,true)).some(name=>tagAPI.words(name).join(" ").toLowerCase() === "deep learning")) throw new Error("Colored tags appeared in management");
+      if (!(await tagAPI.catalog(item.libraryID,true)).includes("Deep Learning")) throw new Error("Color alone excluded a tag");
+      Zotero.Prefs.set("extensions.zotero.similar-works.excludedTags","Deep Learning",true);
       for (const [sources,destination] of [[["deep-learning"],"Topic"],[["Graph Neural Networks"],"Deep Learning"]]) {
         try {
           await tagAPI.merge(item.libraryID,sources,destination);
@@ -466,7 +466,7 @@ startup = async function(data) {
         } catch (error) { if (error.message !== "similar-works-tags-protected") throw error; }
       }
       if (!peers[1].hasTag("deep-learning") || Zotero.Tags.getColor(item.libraryID,"Deep Learning").color !== "#336699") throw new Error("Protected tag data changed");
-      Zotero.Prefs.set("extensions.zotero.similar-works.excludeColoredTags",false,true);
+      Zotero.Prefs.set("extensions.zotero.similar-works.excludedTags","",true);
       for (let index = 0; index < 125; index++) {
         peers[0].addTag("Fixture Tag " + index);
         peers[1].addTag("Fixture Tag " + index);
@@ -555,7 +555,7 @@ startup = async function(data) {
       await waitFor(() => !td.getElementById('refresh').disabled, 'merge result');
       await waitFor(() => td.querySelector('.tag-count')?.textContent.trim() === "4", 'refresh merged usage count');
       if (tagDialog.closed || !taggedNote.hasTag("Deep Learning") || taggedNote.getNote() !== noteBeforeMerge || Zotero.Tags.getColor(item.libraryID, "Deep Learning").color !== "#336699") throw new Error("Merge changed note content, target color or closed results");
-      Zotero.Prefs.set("extensions.zotero.similar-works.excludeColoredTags",true,true);
+      Zotero.Prefs.set("extensions.zotero.similar-works.excludedTags","Deep Learning",true);
       peers[1].addTag("Representation learning");
       peers[1].addTag("representation-learning");
       await peers[1].saveTx({skipSelect:true});
@@ -658,14 +658,15 @@ startup = async function(data) {
       const normalize = td.querySelector('#tags input');
       normalize.checked = true;
       normalize.dispatchEvent(new tagDialog.Event("change", {bubbles:true}));
-      await waitFor(() => !td.getElementById('merge').disabled, 'preview normalization');
-      if (td.getElementById('target').value !== "Odd tag") throw new Error("Normalization did not suggest a clean name");
+      await waitFor(() => td.getElementById('target').value === "odd   tag", 'prefill original tag name');
+      if (!td.getElementById('merge').disabled) throw new Error("Unchanged tag name enabled rename");
       td.getElementById('target').value = "Fixture Tag 0";
       td.getElementById('target').dispatchEvent(new tagDialog.Event("input",{bubbles:true}));
       if (td.getElementById('collision').hidden) throw new Error("Rename collision was not shown");
       td.getElementById('target').value = "Odd tag";
       td.getElementById('target').dispatchEvent(new tagDialog.Event("input",{bubbles:true}));
       if (!td.getElementById('collision').hidden) throw new Error("Stale rename collision");
+      await waitFor(() => !td.getElementById('merge').disabled, 'preview manual rename');
       td.getElementById('merge').click();
       await waitFor(() => peers[0].hasTag("Odd tag") && !peers[0].hasTag("odd   tag"), 'apply normalization');
       await waitFor(() => !td.getElementById('refresh').disabled, 'normalization result');
@@ -679,8 +680,8 @@ startup = async function(data) {
       const menu = settings.document.getElementById("knowledge-base-ui-style");
       if (menu.getBoundingClientRect().width < 280) throw new Error("Native appearance menu was forcibly shortened");
       const groups=[...settings.document.querySelectorAll('.plugin-preferences .main-section')];
-      const groupColors=new Set(groups.map(group=>settings.getComputedStyle(group).borderInlineStartColor));
-      if(groups.length!==4 || groupColors.size!==4 || groups.some(group=>parseFloat(settings.getComputedStyle(group).borderInlineStartWidth)<3 || settings.getComputedStyle(group).backgroundColor==='rgba(0, 0, 0, 0)') || !settings.document.querySelector('.settings-notes #knowledge-base-graph-appearance') || !settings.document.querySelector('.settings-similar #similar-works-diagnostics')) throw new Error('Settings sections lack distinct visual boundaries or grouped subsettings');
+      const groupColors=new Set(groups.map(group=>settings.getComputedStyle(group.querySelector(':scope > h3')).color));
+      if(groups.length!==4 || groupColors.size!==4 || groups.some(group=>parseFloat(settings.getComputedStyle(group).borderInlineStartWidth)!==0 || settings.getComputedStyle(group).backgroundColor!=='rgba(0, 0, 0, 0)' || parseFloat(settings.getComputedStyle(group.querySelector(':scope > h3')).borderInlineStartWidth)<3)) throw new Error('Settings accents must be confined to section headings');
       const matchingLabel = settings.document.getElementById("similar-works-cache-status");
       for (let n = 0; n < 100 && !matchingLabel?.textContent.trim(); n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!matchingLabel?.textContent.trim() || settings.document.getElementById("similar-works-model") || settings.document.getElementById("similar-works-build")) throw new Error("Settings did not show simple preparation status without model internals");
@@ -711,52 +712,39 @@ startup = async function(data) {
       limit.value = "20";
       limit.dispatchEvent(new settings.Event("change", { bubbles: true }));
       await capture('settings-similar',settings);
-      const style = await waitFor(() => settings.document.getElementById("similar-works-tag-style"), "Tag Manager controls did not load");
-      const hashtag = settings.document.getElementById("similar-works-tag-hashtag");
-      if (!style || style.querySelectorAll("menuitem").length !== 2 || settings.document.getElementById("similar-works-tag-case") || settings.document.getElementById("similar-works-tag-hyphens")) throw new Error("Naming options were not simplified");
-      for(const value of ["title","sentence"]) {
-        style.value=value;style.dispatchEvent(new settings.Event("command",{bubbles:true}));
-        if (Zotero.Prefs.get(style.getAttribute("preference"),true)!==value) throw new Error("Case preset did not auto-save");
-      }
-      if(tagAPI.formatName("gan yolo co-attention PyTorch")!=="GAN YOLO co-attention PyTorch") throw new Error("Scientific dictionary did not load");
-      hashtag.checked=true;hashtag.dispatchEvent(new settings.Event("command",{bubbles:true}));
-      if(tagAPI.formatName("deep learning")!=="#Deep learning") throw new Error("Hashtag setting did not save");
+      if (["similar-works-tag-style","similar-works-tag-hashtag","similar-works-exclude-colored-tags"].some(id=>settings.document.getElementById(id)) || tagAPI.planFormat || tagAPI.applyFormat || tagAPI.formatName) throw new Error("Bulk naming controls or APIs are still exposed");
       const excludedTags = settings.document.getElementById("similar-works-excluded-tags");
-      const excludeColored = settings.document.getElementById("similar-works-exclude-colored-tags");
-      if (!excludedTags || !excludeColored.checked || !excludeColored.label) throw new Error("Tag protection controls did not load");
-      excludedTags.value = ["Graph Neural Networks", "Special Status"].join(String.fromCharCode(10));
+      if (!excludedTags || excludedTags.localName !== "textarea") throw new Error("Comma-separated exclusion input did not load");
+      excludedTags.value = ["Deep Learning", "Graph Neural Networks", "Special Status"].join(", ");
       excludedTags.dispatchEvent(new settings.Event("input", {bubbles:true}));
       excludedTags.dispatchEvent(new settings.Event("change", {bubbles:true}));
       await waitFor(() => Zotero.Prefs.get(excludedTags.getAttribute("preference"),true) === excludedTags.value, 'save excluded tags');
       if ((await tagAPI.catalog(item.libraryID,true)).includes("Graph Neural Networks")) throw new Error("Manual exclusion did not hide a tag");
       try { await tagAPI.merge(item.libraryID,["Odd tag"],"#SpecialStatus"); throw new Error("Excluded destination accepted"); }
       catch (error) { if (error.message !== "similar-works-tags-protected") throw error; }
+      const noteAPI = Zotero.ZoteroKnowledgeBase.api;
+      const exclusionNoteID = await noteAPI.saveZettel({title:"Shared tag visibility",body:"Original content stays intact.",initialTags:["#DeepLearning","Visible Label"]});
+      noteAPI.openEditor({zettelId:exclusionNoteID,window:true});
+      const exclusionEditor = await waitFor(()=>{
+        const win=Services.wm.getMostRecentWindow("knowledge-base:editor");
+        return win?.knowledgeBaseCardId===exclusionNoteID && win.knowledgeBaseReady && win;
+      },"excluded note editor");
+      await exclusionEditor.knowledgeBaseReady();
+      await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===1,'hide excluded note tag');
+      const nativeID=exclusionEditor.eval('nativeNoteID');
+      if(!(await noteAPI.getOwnNoteTags(nativeID,exclusionNoteID)).includes('#DeepLearning') || (await noteAPI.getGraph()).nodes.find(node=>node.id===exclusionNoteID).tags.includes('#DeepLearning'))throw new Error('Exclusion deleted an original or leaked into the graph');
+      excludedTags.value="";excludedTags.dispatchEvent(new settings.Event("input",{bubbles:true}));excludedTags.dispatchEvent(new settings.Event("change",{bubbles:true}));
+      await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===2,'restore unexcluded note tag without reopening');
+      excludedTags.value="Deep Learning, Graph Neural Networks, Special Status";excludedTags.dispatchEvent(new settings.Event("input",{bubbles:true}));excludedTags.dispatchEvent(new settings.Event("change",{bubbles:true}));
+      await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===1,'reapply note exclusions');
+      if(!(await exclusionEditor.save(false)))throw new Error('Exclusion note did not settle');
+      exclusionEditor.close();
       await capture("settings-tags",settings);
       await waitFor(() => settings.document.getElementById("knowledge-base-source-style")?.value, "Note System controls did not load");
       await capture("settings-notes",settings);
       settings.document.getElementById("similar-works-diagnostics").scrollIntoView({block:"center"});
       await capture("settings-cache",settings);
       settings.close();
-      peers[0].addTag("format HTTP parser");
-      peers[1].addTag("#format_HTTP_parser");
-      await peers[0].saveTx({skipSelect:true});
-      await peers[1].saveTx({skipSelect:true});
-      const formatDialog = tagAPI.open(doc.defaultView,item.libraryID);
-      await waitFor(() => ["format HTTP parser","#format_HTTP_parser"].every(name => [...(formatDialog.document?.querySelectorAll('#tags input') || [])].some(input => input.value === name)), 'load naming variants');
-      const fd = formatDialog.document;
-      await chooseAction(formatDialog,"format");
-      await waitFor(() => ["format HTTP parser","#format_HTTP_parser"].every(name => [...fd.querySelectorAll('#tags input')].some(input => input.value === name)), 'render format rows');
-      for (const checkbox of [...fd.querySelectorAll('#tags input')].filter(input=>["format HTTP parser","#format_HTTP_parser"].includes(input.value))) {
-        checkbox.checked = true;
-        checkbox.dispatchEvent(new formatDialog.Event("change", {bubbles:true}));
-      }
-      await waitFor(() => !fd.getElementById('merge').disabled, 'preview configured format');
-      if (!fd.getElementById('target').hidden) throw new Error("Bulk format unexpectedly asks for a shared name");
-      fd.getElementById('merge').click();
-      await waitFor(() => peers.every(peer=>peer.hasTag("#Format HTTP parser")), 'apply configured format');
-      await waitFor(() => !fd.getElementById('refresh').disabled, 'configured format result');
-      if (peers[0].hasTag("format HTTP parser") || peers[1].hasTag("#format_HTTP_parser") || taggedNote.getNote() !== noteBeforeMerge) throw new Error("Naming merge did not preserve unrelated data");
-      formatDialog.close();
       for (let index = 0; index < 230; index++) peers[0].addTag("BulkTag"+index);
       await peers[0].saveTx({skipSelect:true});
       const bulkDialog = tagAPI.open(doc.defaultView,item.libraryID);
@@ -772,7 +760,8 @@ startup = async function(data) {
         if (bd.activeElement !== bd.getElementById("search")) throw new Error("Command-F did not focus tag search");
       }
       if (bd.getElementById("mode").value !== "merge") throw new Error("Wrong default tag action");
-      await chooseAction(bulkDialog,"format");
+      if(bd.getElementById('mode').querySelector('menuitem[value="format"]'))throw new Error('Bulk format remains in Tag Manager');
+      await chooseAction(bulkDialog,"delete");
       if ([...bd.querySelectorAll('#tags input')].some(input=>['Deep Learning','Graph Neural Networks'].includes(input.value))) throw new Error('Protected tags were visible');
       bd.getElementById('search').value = "BulkTag";
       bd.getElementById('search').dispatchEvent(new bulkDialog.Event("input",{bubbles:true}));
@@ -783,8 +772,8 @@ startup = async function(data) {
       await waitFor(() => [...bd.querySelectorAll('#tags input')].filter(input=>input.checked).length === 5, 'shift range selection');
       bd.getElementById('select-all').click();
       await waitFor(() => [...bd.querySelectorAll('#tags input')].every(input=>input.checked), 'select all filtered tags');
-      await waitFor(() => !bd.getElementById('merge').disabled, 'preview bulk formatting');
-      if (bd.getElementById('mode').value !== "format") throw new Error("Wrong format action");
+      await waitFor(() => !bd.getElementById('merge').disabled, 'preview selected tag deletion');
+      if (bd.getElementById('mode').value !== "delete") throw new Error("Wrong deletion action");
       if (${JSON.stringify(process.env.SW_TAGS_HOST_SCREENSHOT || "")}) {
         const image = await bulkDialog.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
         const canvas = bd.createElement("canvas");
@@ -793,13 +782,9 @@ startup = async function(data) {
         const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
         await IOUtils.write(${JSON.stringify(process.env.SW_TAGS_HOST_SCREENSHOT || "")}, new Uint8Array(await blob.arrayBuffer()));
       }
-      bd.getElementById('merge').click();
-      await waitFor(() => !bd.getElementById('refresh').disabled, 'finish bulk formatting', 500);
-      if (!peers[0].hasTag("#BulkTag0") || !peers[0].hasTag("#BulkTag229") || peers[0].getTags().filter(tag=>tag.tag.startsWith("#BulkTag")).length !== 230) throw new Error("Bulk formatting lost distinct tags");
-      if (!peers[0].hasTag("Deep Learning") || taggedNote.getNote() !== noteBeforeMerge) throw new Error("Bulk formatting changed protected or unrelated data");
-      bd.getElementById("search").value = "#BulkTag";
-      bd.getElementById("search").dispatchEvent(new bulkDialog.Event("input",{bubbles:true}));
-      await waitFor(() => bd.querySelectorAll("#tags input").length === 230, "render formatted tags for deletion");
+      bd.getElementById('clear-selection').click();
+      await waitFor(()=>[...bd.querySelectorAll('#tags input')].every(input=>!input.checked),'clear bulk selection without changing labels');
+      if (!peers[0].hasTag("BulkTag0") || !peers[0].hasTag("BulkTag229"))throw new Error('Selection silently reformatted tags');
       await chooseAction(bulkDialog,"delete");
       await waitFor(() => bd.querySelectorAll("#tags input").length === 230, "render deletion action");
       const deletionInputs = [...bd.querySelectorAll("#tags input")];
@@ -808,7 +793,7 @@ startup = async function(data) {
       await waitFor(() => !bd.getElementById("merge").disabled && bd.getElementById("target").hidden, "preview delete selection");
       bd.getElementById("merge").click();
       await waitFor(() => !bd.getElementById("refresh").disabled, "finish delete");
-      if (removedNames.some(name=>peers[0].hasTag(name)) || peers[0].getTags().filter(tag=>tag.tag.startsWith("#BulkTag")).length !== 228) throw new Error("Bulk deletion did not preserve unselected tags");
+      if (removedNames.some(name=>peers[0].hasTag(name)) || peers[0].getTags().filter(tag=>tag.tag.startsWith("BulkTag")).length !== 228) throw new Error("Bulk deletion did not preserve unselected tags");
       if (!peers[0].hasTag("Deep Learning") || taggedNote.getNote() !== noteBeforeMerge || peers[0].deleted) throw new Error("Deletion changed protected tags or items");
       const deletedText=await bd.l10n.formatValue('similar-works-tags-deleted',{count:2});
       await waitFor(()=>!bd.getElementById('mode').disabled && bd.getElementById('preview').textContent===deletedText,'restore action picker after deletion');

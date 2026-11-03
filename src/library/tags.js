@@ -1,19 +1,4 @@
-function swTagWords(name, preserveHyphens = false) {
-  return String(name)
-    .normalize("NFKC")
-    .trim()
-    .replace(/^#+\s*/u, "")
-    .replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2")
-    .replace(/(\p{Nd})(\p{Lu}\p{Ll})/gu, "$1 $2")
-    .replace(/([\p{Lu}])([\p{Lu}][\p{Ll}])/gu, "$1 $2")
-    .split(preserveHyphens ? /[\s_]+/u : /[\s_\p{Pd}−]+/u)
-    .filter(Boolean);
-}
-
-function swTagKey(name) {
-  return swTagWords(name).join(" ").toLowerCase();
-}
-
+/* global SWTagPolicy */
 function swTagAliasKey(key) {
   const expansions = {
     cnn: "convolutional neural network",
@@ -100,7 +85,7 @@ var SWTags = {
 
   recommend(target, rows, limit = 6, excluded = new Set()) {
     const existing = new Set(
-      (target.getTags?.() || []).map((tag) => swTagKey(tag.tag)),
+      (target.getTags?.() || []).map((tag) => SWTagPolicy.key(tag.tag)),
     );
     const candidates = new Map();
     const seenItems = new Set();
@@ -117,7 +102,7 @@ var SWTags = {
       seenItems.add(row.item.id);
       const seen = new Set();
       for (const { tag } of row.item.getTags?.() || []) {
-        const key = swTagKey(tag);
+        const key = SWTagPolicy.key(tag);
         if (!key || seen.has(key) || existing.has(key) || excluded.has(key))
           continue;
         seen.add(key);
@@ -146,96 +131,17 @@ var SWTags = {
   },
 
   // Split naming boundaries without stemming or guessing unbroken words.
-  words: swTagWords,
+  words: SWTagPolicy.words,
 
-  _terms: new Map(),
-  _termLength: 1,
-
-  async loadTerms(rootURI) {
-    const catalog = JSON.parse(
-      await Zotero.File.getResourceAsync(rootURI + "data/tag-terms.json"),
-    );
-    if (
-      !catalog.terms ||
-      Object.entries(catalog.terms).some(
-        ([key, name]) => !key || typeof name !== "string" || !name,
-      )
-    )
-      throw new Error("Invalid tag term dictionary");
-    if (this._stopped) return;
-    this._terms = new Map(Object.entries(catalog.terms));
-    this._termLength = Math.max(
-      1,
-      ...[...this._terms.keys()].map((key) => key.split(" ").length),
+  protectedKeys() {
+    return SWTagPolicy.excludedKeys(
+      typeof SWPref === "undefined" ? "" : SWPref("excludedTags", ""),
     );
   },
 
-  formatName(name, options = this.namingOptions()) {
-    const words = this.normalizeName(name)
-      .replace(/^#+\s*/u, "")
-      .split(/\s+/u)
-      .flatMap((word) =>
-        this._terms.has(word.toLowerCase()) ? [word] : word.split("_"),
-      )
-      .filter(Boolean);
-    const output = [];
-    for (let i = 0; i < words.length; ) {
-      let canonical;
-      let length = Math.min(this._termLength, words.length - i);
-      for (; length > 0; length--) {
-        canonical = this._terms.get(
-          words
-            .slice(i, i + length)
-            .join(" ")
-            .toLowerCase(),
-        );
-        if (canonical) break;
-      }
-      if (canonical) {
-        output.push(canonical);
-        i += length;
-        continue;
-      }
-      const word = words[i++];
-      // Preserve unknown acronyms, mixed-case names and language symbols.
-      const preserve =
-        /^[\p{Lu}\p{Nd}-]+$/u.test(word) ||
-        /\p{Ll}.*\p{Lu}/u.test(word) ||
-        /[+#.]/u.test(word);
-      let text = preserve ? word : word.toLowerCase();
-      if (!preserve && (options.style === "title" || !output.length))
-        text = text.replace(/^\p{L}/u, (c) => c.toUpperCase());
-      output.push(text);
-    }
-    return output.length ? (options.hashtag ? "#" : "") + output.join(" ") : "";
-  },
-
-  namingOptions() {
-    return {
-      style:
-        typeof SWPref === "undefined"
-          ? "sentence"
-          : SWPref("tagNameStyle", "sentence"),
-      hashtag:
-        typeof SWPref === "undefined" ? false : SWPref("tagHashtag", false),
-    };
-  },
-
-  protectedKeys(libraryID) {
-    const excluded =
-      typeof SWPref === "undefined" ? "" : SWPref("excludedTags", "");
-    const keys = new Set(
-      String(excluded).split(/\r?\n/u).map(swTagKey).filter(Boolean),
-    );
-    if (typeof SWPref === "undefined" || SWPref("excludeColoredTags", true))
-      for (const name of Zotero.Tags.getColors(libraryID).keys())
-        keys.add(swTagKey(name));
-    return keys;
-  },
-
-  _assertAllowed(libraryID, names) {
-    const protectedKeys = this.protectedKeys(libraryID);
-    if (names.some((name) => protectedKeys.has(swTagKey(name))))
+  _assertAllowed(names) {
+    const protectedKeys = this.protectedKeys();
+    if (names.some((name) => protectedKeys.has(SWTagPolicy.key(name))))
       throw new Error("similar-works-tags-protected");
   },
 
@@ -244,14 +150,14 @@ var SWTags = {
   },
 
   duplicateReason(a, b) {
-    return swTagDuplicateReason(swTagKey(a), swTagKey(b));
+    return swTagDuplicateReason(SWTagPolicy.key(a), SWTagPolicy.key(b));
   },
 
   duplicateGroups(names) {
     const groups = [],
       index = new Map();
     const keys = new Map(
-      [...new Set(names)].map((name) => [name, swTagKey(name)]),
+      [...new Set(names)].map((name) => [name, SWTagPolicy.key(name)]),
     );
     for (const [name, key] of keys) {
       if (!key) continue;
@@ -351,7 +257,7 @@ var SWTags = {
     )
       throw new Error("similar-works-tags-invalid-name");
     this._check(libraryID, active);
-    this._assertAllowed(libraryID, names);
+    this._assertAllowed(names);
     const item = await Zotero.Items.getAsync(itemID);
     this._check(libraryID, active);
     if (
@@ -372,14 +278,14 @@ var SWTags = {
       await this._write(() =>
         Zotero.DB.executeTransaction(async () => {
           this._check(libraryID, active);
-          this._assertAllowed(libraryID, names);
+          this._assertAllowed(names);
           if (item.deleted || !item.isEditable())
             throw new Error("similar-works-tags-readonly");
           for (const name of new Set(names))
             if (!item.hasTag(name) && item.addTag(name, 0)) added++;
           if (added) await item.save();
           this._check(libraryID, active);
-          this._assertAllowed(libraryID, names);
+          this._assertAllowed(names);
         }),
       );
     } catch (error) {
@@ -391,9 +297,9 @@ var SWTags = {
 
   async catalog(libraryID, managed = false) {
     const tags = await Zotero.Tags.getAll(libraryID);
-    const protectedKeys = managed ? this.protectedKeys(libraryID) : new Set();
+    const protectedKeys = managed ? this.protectedKeys() : new Set();
     return [...new Set(tags.map((tag) => tag.tag))]
-      .filter((name) => !protectedKeys.has(swTagKey(name)))
+      .filter((name) => !protectedKeys.has(SWTagPolicy.key(name)))
       .sort((a, b) => a.localeCompare(b));
   },
 
@@ -411,7 +317,7 @@ var SWTags = {
 
   async preview(libraryID, names, active = () => true) {
     this._check(libraryID, active);
-    this._assertAllowed(libraryID, names);
+    this._assertAllowed(names);
     const existing = new Set(await this.catalog(libraryID));
     if (new Set(names).size < 1 || names.some((name) => !existing.has(name)))
       throw new Error("similar-works-tags-changed");
@@ -437,7 +343,7 @@ var SWTags = {
       )
     )
       throw new Error("similar-works-tags-invalid-name");
-    this._assertAllowed(libraryID, [...names, target]);
+    this._assertAllowed([...names, target]);
     await this.preview(libraryID, names, active);
     let merged = 0;
     for (const name of new Set(names)) {
@@ -460,7 +366,7 @@ var SWTags = {
     for (let offset = 0; offset < sources.length; offset += 50) {
       const chunk = sources.slice(offset, offset + 50);
       this._check(libraryID, active);
-      this._assertAllowed(libraryID, chunk);
+      this._assertAllowed(chunk);
       const ids = chunk.map((name) => {
         const id = Zotero.Tags.getID(name);
         if (!id) throw new Error("similar-works-tags-changed");
@@ -478,7 +384,7 @@ var SWTags = {
 
   async _rename(libraryID, name, target, active) {
     this._check(libraryID, active);
-    this._assertAllowed(libraryID, [name, target]);
+    this._assertAllowed([name, target]);
     // The host returns color/position; zotero-types declares a tag object.
     const color = /** @type {{color: string, position: number} | false} */ (
       /** @type {unknown} */ (
@@ -502,74 +408,6 @@ var SWTags = {
           );
       }
     });
-  },
-
-  async planFormat(libraryID, names, active = () => true) {
-    this._check(libraryID, active);
-    const sources = [...new Set(names)];
-    this._assertAllowed(libraryID, sources);
-    const existing = new Set(await this.catalog(libraryID));
-    if (!sources.length || sources.some((name) => !existing.has(name)))
-      throw new Error("similar-works-tags-changed");
-    const options = this.namingOptions();
-    const changes = sources
-      .map((from) => ({ from, to: this.formatName(from, options) }))
-      .filter((change) => change.from !== change.to);
-    this._assertAllowed(
-      libraryID,
-      changes.map((change) => change.to),
-    );
-    if (changes.some((change) => !change.to || change.to.length > 255))
-      throw new Error("similar-works-tags-invalid-name");
-    const destinations = new Set();
-    const items = new Set();
-    const counted = new Set();
-    let collisions = 0;
-    for (const [i, change] of changes.entries()) {
-      this._check(libraryID, active);
-      if (existing.has(change.to) || destinations.has(change.to)) collisions++;
-      destinations.add(change.to);
-      for (const name of [
-        change.from,
-        ...(existing.has(change.to) ? [change.to] : []),
-      ]) {
-        if (counted.has(name)) continue;
-        counted.add(name);
-        const id = Zotero.Tags.getID(name);
-        if (!id) throw new Error("similar-works-tags-changed");
-        for (const itemID of await Zotero.Tags.getTagItems(libraryID, id))
-          items.add(itemID);
-      }
-      if (i % 50 === 49) await Zotero.Promise.delay(0);
-    }
-    this._check(libraryID, active);
-    this._assertAllowed(libraryID, [...sources, ...destinations]);
-    return { sources, options, changes, itemCount: items.size, collisions };
-  },
-
-  async applyFormat(
-    libraryID,
-    plan,
-    active = () => true,
-    progress = (_done, _total) => {},
-  ) {
-    const current = await this.planFormat(libraryID, plan.sources, active);
-    if (
-      JSON.stringify(current.changes) !== JSON.stringify(plan.changes) ||
-      JSON.stringify(current.options) !== JSON.stringify(plan.options) ||
-      current.collisions !== plan.collisions
-    )
-      throw new Error("similar-works-tags-changed");
-    // Formatting produces fixed-point destinations, so later sources cannot
-    // be overwritten by an earlier rename. Native rename handles collisions.
-    let done = 0;
-    for (const change of current.changes) {
-      await this._rename(libraryID, change.from, change.to, active);
-      done++;
-      progress(done, current.changes.length);
-      if (done % 25 === 0) await Zotero.Promise.delay(0);
-    }
-    return done;
   },
 
   open(win, libraryID) {
@@ -621,5 +459,4 @@ var SWTags = {
   },
 };
 
-if (typeof module !== "undefined")
-  module.exports = { SWTags, swTagKey, swTagAliasKey };
+if (typeof module !== "undefined") module.exports = { SWTags, swTagAliasKey };

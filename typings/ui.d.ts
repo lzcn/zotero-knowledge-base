@@ -88,6 +88,7 @@ declare global {
 }
 
 export interface EditorElements {
+  "knowledge-base-note-type": HTMLSelectElement;
   "knowledge-base-editor-restore": HTMLButtonElement;
   "knowledge-base-editor-format": HTMLButtonElement;
   "knowledge-base-rich-frame": import("../src/ui/native-editor").NativeNoteElement;
@@ -95,25 +96,23 @@ export interface EditorElements {
   "knowledge-base-command-menu": HTMLDivElement;
   "knowledge-base-command-search": HTMLInputElement;
   "knowledge-base-command-list": HTMLDivElement;
-  "knowledge-base-parent-label": HTMLLabelElement;
   "knowledge-base-parent-display": HTMLButtonElement;
+  "knowledge-base-parent-edit": HTMLButtonElement;
+  "knowledge-base-parent-label": HTMLLabelElement;
   "knowledge-base-parent-search": HTMLInputElement;
   "knowledge-base-parent-results": HTMLUListElement;
   "knowledge-base-key-label": HTMLLabelElement;
-  "knowledge-base-editor-key": HTMLTextAreaElement;
+  "knowledge-base-editor-key": HTMLInputElement;
   "knowledge-base-key-copy": HTMLButtonElement;
-  "knowledge-base-key-edit": HTMLButtonElement;
   "knowledge-base-key-feedback": HTMLDivElement;
   "knowledge-base-key-status": HTMLSpanElement;
   "knowledge-base-key-resolve": HTMLButtonElement;
-  "knowledge-base-parent-change": HTMLButtonElement;
   "knowledge-base-parent-picker": HTMLDivElement;
   "knowledge-base-editor-children-label": HTMLElement;
   "knowledge-base-editor-family": HTMLDivElement;
   "knowledge-base-editor": Element;
   "knowledge-base-editor-root": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-toolbar": HTMLElementTagNameMap["div"];
-  "knowledge-base-src-label": HTMLElementTagNameMap["span"];
   "knowledge-base-src-display": HTMLElementTagNameMap["div"];
   "knowledge-base-src-pick": HTMLElementTagNameMap["button"];
   "knowledge-base-src-jump": HTMLElementTagNameMap["button"];
@@ -139,7 +138,6 @@ export interface EditorElements {
   "knowledge-base-editor-body": import("../src/ui/markdown-source").MarkdownSource;
   "knowledge-base-editor-preview": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-relations": HTMLElement;
-  "knowledge-base-editor-graph": HTMLElementTagNameMap["button"];
   "knowledge-base-editor-outgoing-label": HTMLElementTagNameMap["html"];
   "knowledge-base-editor-outgoing": HTMLElementTagNameMap["ul"];
   "knowledge-base-editor-backlinks-label": HTMLElementTagNameMap["html"];
@@ -166,7 +164,6 @@ export interface ManagerElements {
   "knowledge-base-toolbar": HTMLElementTagNameMap["header"];
   "knowledge-base-btn-new": HTMLElementTagNameMap["button"];
   "knowledge-base-btn-graph": HTMLElementTagNameMap["button"];
-  "knowledge-base-open-window": HTMLElementTagNameMap["button"];
   "knowledge-base-search": HTMLElementTagNameMap["input"];
   "knowledge-base-stats": HTMLElementTagNameMap["span"];
   "knowledge-base-main": HTMLElementTagNameMap["main"];
@@ -214,6 +211,7 @@ export interface AnnotationsElements {
 }
 
 export interface GraphElements {
+  "graph-view": HTMLSelectElement;
   "graph-global": HTMLButtonElement;
   "graph-local": HTMLButtonElement;
   "graph-node-tags": HTMLDivElement;
@@ -242,7 +240,7 @@ export interface GraphElements {
   "graph-connections": HTMLElementTagNameMap["div"];
   "graph-legend": HTMLElementTagNameMap["footer"];
   "graph-legend-cards": HTMLElementTagNameMap["span"];
-  "graph-legend-sources": HTMLElementTagNameMap["span"];
+  "graph-legend-items": HTMLElementTagNameMap["span"];
   "graph-legend-unresolved": HTMLElementTagNameMap["span"];
   "graph-groups-legend": HTMLElementTagNameMap["span"];
   "graph-error": HTMLElementTagNameMap["span"];

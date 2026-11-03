@@ -14,8 +14,6 @@ pref-source-style = Bibliography style
     .tooltiptext = Manage styles in Settings → Cite.
 source-style-missing = Choose an available citation style.
 editor-source-format-failed = Could not format Source:
-editor-more = More
-editor-open-window = Open in Separate Window
 personal-knowledge-title = Personal Knowledge
 
 menu-new-zettel = New Card
@@ -32,8 +30,8 @@ section-count =
 section-no-item = Select an item to see its notes
 section-loading = Loading…
 section-new = New note
-section-new-zettel = New Zettel
-section-zettels = Zettels · { $count }
+section-new-zettel = New Note
+section-zettels = Notes · { $count }
 
 manager-title = Knowledge Base
 manager-new = New Note
@@ -66,7 +64,7 @@ manager-confirm-delete = Move “{ $title }” to Trash?
 
 editor-title-new = New Note
 editor-title-edit = Edit Note
-editor-source-label = Source:
+editor-source-label = Source
 editor-src-none = No source
 editor-src-pick = Choose source
 editor-src-change = Change
@@ -174,10 +172,8 @@ graph-hint = Click to select; double-click to open.
 graph-empty = No matching notes
 graph-stats = { $cards } notes · { $links } connections
 graph-kind-card = Note
-graph-kind-source = Source item
 graph-kind-unresolved = Missing card
 graph-legend-cards = ● Notes · solid: parent–child · dashed: card links
-graph-legend-sources = ◈ Sources
 graph-legend-unresolved = ○ Missing cards
 
 section-load-error = Could not load notes. Select the item again.
@@ -221,7 +217,6 @@ graph-backlinks = Backlinks
 
 graph-open-card = Edit note
 
-graph-open-source = Open source item
 
 column-card-count = Notes
 
@@ -264,7 +259,6 @@ editor-format-native = Rich text
 editor-format-markdown = Markdown
 graph-outline = Hierarchy
 graph-references = References
-graph-sources = Sources
 graph-hide-isolated = Hide isolated nodes
 
 preview-image-missing = Image unavailable
@@ -288,8 +282,7 @@ markdown-node-annotation = Annotation
 markdown-node-note-link = Note link
 markdown-node-image = Image
 
-editor-key = Note ID
-editor-key-edit = Edit Note ID
+editor-key = ID
 
 editor-key-auto = Automatic
 
@@ -347,6 +340,7 @@ pref-template-delete =
 
 note-tags = Tags
 note-tags-edit = Edit tags…
+note-tags-done = Done
 note-tag-add = Add tag, press Enter
 note-tag-remove = Remove tag { $tag }
 section-source-note = Literature note
@@ -403,7 +397,7 @@ text-search-replaced-count = replaced $ matches
 
 
 settings-common = General
-settings-tags = Tag Manager
+settings-tags = Tags
 settings-similar = Similar Items
 settings-notes = Note System
 
@@ -423,3 +417,24 @@ pref-template-manage =
     .label = Manage Templates…
 
 template-empty = No templates yet
+
+note-type-change = Change note type
+note-type-literature = Literature
+note-type-zettel = Zettel
+note-type-thinking = Thinking
+note-type-entity = Entity
+manager-view-entity = Entity
+
+menu-open-native-note = Open in Knowledge Base
+
+graph-view = Graph view
+graph-parent-items = Parent Items
+graph-kind-item = Parent item
+graph-open-item = Open item
+graph-legend-items = ● Parent items · similarity links
+graph-similar-items = Similar items
+graph-search-items = Search parent items…
+graph-items-empty = No strongly related parent items
+graph-cache-loading = Loading cached similarities…
+graph-item-stats = { $cards } items · { $links } connections
+graph-cache-unavailable = Cached similarities are unavailable

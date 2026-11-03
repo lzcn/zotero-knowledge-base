@@ -48,17 +48,9 @@ similar-works-tags-refresh =
     .label = 刷新
 similar-works-tags-invalid-name = 请输入有效名称（最多 255 字符）。
 
-similar-works-pref-tags-heading = 标签名称
-similar-works-pref-tag-style =
-    .value = 名称格式
-similar-works-pref-tag-hashtag =
-    .label = 在开头加 #
-
-similar-works-pref-exclude-colored-tags =
-    .label = 排除有颜色的标签
 similar-works-pref-excluded-tags =
     .value = 排除标签
-similar-works-pref-excluded-tags-help = 每行一个，同名变体也排除。
+similar-works-pref-excluded-tags-help = 以逗号分隔，同时用于笔记和推荐标签。
 similar-works-tags-protected = 标签已被排除，请检查设置。
 
 similar-works-tags-select-all = 全选
@@ -68,13 +60,11 @@ similar-works-tags-selection-count = { $visible } / { $total } · 已选 { $sele
        *[other] · { $hidden } 项隐藏
     }
 similar-works-tags-action = 操作
-similar-works-tags-format =
+similar-works-tags-rename-action =
     .label = 重命名
 similar-works-tags-merge-action =
     .label = 合并
 similar-works-tags-preparing = 正在准备预览…
-similar-works-tags-format-preview = 改名 { $count } · 条目 { $items } · 合并 { $merges }
-similar-works-tags-formatted = 已转换 { $count } 个标签的格式。
 similar-works-tags-no-matches = 没有匹配的标签。
 
 similar-works-tags-delete-action =
@@ -97,11 +87,6 @@ similar-works-tags-deleted = 已删除 { $count } 个标签。
 
 similar-works-tags-renamed = 已改名为“{ $name }”。
 
-similar-works-pref-tag-sentence =
-    .label = 句首大写
-similar-works-pref-tag-title =
-    .label = 每词首字母大写
-
 similar-works-tags-clear-selection =
     .label = 清除选择
 
@@ -117,17 +102,12 @@ similar-works-tags-window =
 similar-works-tags-name-column = 名称
 similar-works-tags-count-column = 条目数
 similar-works-tags-group-column = 匹配
-similar-works-tags-format-action =
-    .label = 统一格式
 similar-works-tags-match-name = 名称变体
 similar-works-tags-match-plural = 单复数
 similar-works-tags-match-abbreviation = 缩写
 similar-works-tags-match-spelling = 拼写相近
 
 similar-works-tags-collision = 该名称已存在，标签将合并。
-similar-works-tags-format-button =
-    .label = 统一格式
-
 similar-works-tags-match-alias = 术语别名
 
 similar-works-more = 更多

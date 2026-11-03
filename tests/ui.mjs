@@ -1267,6 +1267,7 @@ async function editor(args = {}, overrides = {}) {
     getPanelWidth: () => 28,
     setPanelWidth: () => {},
     getNoteTags: async () => [],
+    visibleNoteTags: (tags) => tags,
     getOwnNoteTags: async () => [],
     getNewNoteBody: () => "",
     getNoteEditorMode: () => "visual",
@@ -1632,18 +1633,15 @@ check("Empty connection categories leave the writing surface clear", () => {
     ),
   );
 });
-check(
-  "Minimal metadata stays available in More while empty source and parent rows stay hidden",
-  () => {
-    assert.equal(ed.$("knowledge-base-editor-toolbar").hidden, true);
-    assert.equal(
-      ed.$("knowledge-base-parent-display").parentElement.hidden,
-      true,
-    );
-    assert.ok(ed.$("knowledge-base-src-pick"));
-    assert.ok(ed.$("knowledge-base-parent-change"));
-  },
-);
+check("Source and Parent remain directly editable without More actions", () => {
+  assert.equal(ed.$("knowledge-base-editor-toolbar").hidden, false);
+  assert.equal(
+    ed.$("knowledge-base-parent-display").parentElement.hidden,
+    false,
+  );
+  assert.ok(ed.$("knowledge-base-src-pick"));
+  assert.ok(ed.$("knowledge-base-parent-display"));
+});
 const relationEditor = await editor(
   { zettelId: "RELATION" },
   {
@@ -1652,6 +1650,7 @@ const relationEditor = await editor(
       title: id === "TARGET" ? "Linked idea" : "Relationship fixture",
       body: "",
       source_note: 0,
+      note_type: "entity",
       updated_at: "2026-10-05",
     }),
     getFamily: async () => ({
@@ -1701,20 +1700,10 @@ await wait();
 check("Connection navigation waits for target availability", () =>
   assert.equal(relationEditor.calls.open.at(-1).zettelId, "INCOMING"),
 );
-check(
-  "More uses one consistent button style and closes after an action",
-  () => {
-    const more = relationEditor.win.document.getElementById(
-      "knowledge-base-editor-more",
-    );
-    more.open = true;
-    const graphButton = relationEditor.$("knowledge-base-editor-graph");
-    assert.equal(graphButton.namespaceURI, "http://www.w3.org/1999/xhtml");
-    graphButton.click();
-    assert.equal(more.open, false);
-    assert.equal(relationEditor.calls.graphs.at(-1).centerId, "RELATION");
-  },
-);
+check("The editor has no duplicate window or graph menu", () => {
+  for (const id of ["editor-more", "open-window", "editor-graph"])
+    assert.equal(relationEditor.$("knowledge-base-" + id), null);
+});
 check(
   "Native tags render as complete names, including spaces, without added hashes",
   () => {
@@ -1961,6 +1950,7 @@ for (const pendingEdit of [false, true]) {
         title: "Original note",
         body: "Native content",
         source_note: 0,
+        note_type: "entity",
         updated_at: 3,
       }),
       getNoteHealth: async () => ({
@@ -2178,6 +2168,7 @@ const unchanged = await editor(
     getZettel: async () => ({
       id: "UNCHANGED",
       source_note: 0,
+      note_type: "entity",
       title: "Untouched",
       body: "Original content",
       updated_at: 1,
@@ -2206,6 +2197,7 @@ unchanged.win.close();
 let acknowledgedCard = {
   id: "ACKNOWLEDGED",
   source_note: 0,
+  note_type: "entity",
   title: "Original",
   body: "Original body",
   updated_at: 1,
@@ -2272,6 +2264,7 @@ const synchronized = await editor(
     getZettel: async () => ({
       id: "SYNC_NOTE",
       source_note: 0,
+      note_type: "entity",
       title: "Original",
       body: "Original body",
       updated_at: 1,
@@ -2357,6 +2350,7 @@ const mergedEditor = await editor(
     getZettel: async () => ({
       id: "MERGE_NOTE",
       source_note: 0,
+      note_type: "entity",
       title: "Merge",
       body: "First paragraph\n\nSecond paragraph",
       updated_at: 1,
@@ -2397,6 +2391,7 @@ const deferredEditor = await editor(
     getZettel: async () => ({
       id: "DEFERRED_NOTE",
       source_note: 0,
+      note_type: "entity",
       title: "Deferred",
       body: "First paragraph\n\nSecond paragraph",
       updated_at: 1,
@@ -2459,6 +2454,7 @@ const compositionEditor = await editor(
     getZettel: async () => ({
       id: "IME_NOTE",
       source_note: 0,
+      note_type: "entity",
       title: "Input",
       body: "Initial paragraph",
       updated_at: 1,
@@ -2535,6 +2531,7 @@ const failedNative = await editor(
     getZettel: async () => ({
       id: "NATIVE_FAILURE",
       source_note: 0,
+      note_type: "entity",
       title: "Native failure",
       body: "Keep this draft",
       updated_at: 1,
@@ -2671,7 +2668,7 @@ const genericTemplate = await editor(
   { getNewNoteBody: () => "## Custom template\n\nMy own structure." },
 );
 check(
-  "Generic New Note uses the optional named template without assigning a type or tag",
+  "Generic New Note uses its template and defaults to Entity without adding tags",
   () => {
     assert.match(
       genericTemplate.$("knowledge-base-editor-body").value,
@@ -2681,8 +2678,43 @@ check(
       Array.from(genericTemplate.win.__editorEval("snapshot().initialTags")),
       [],
     );
-    assert.equal(genericTemplate.$("knowledge-base-note-kind"), null);
+    assert.equal(genericTemplate.$("knowledge-base-note-type").value, "entity");
+    assert.equal(
+      genericTemplate.win.__editorEval("snapshot().noteType"),
+      "entity",
+    );
   },
+);
+genericTemplate.$("knowledge-base-note-type").value = "entity";
+genericTemplate
+  .$("knowledge-base-note-type")
+  .dispatchEvent(new genericTemplate.win.Event("change"));
+check(
+  "Choosing Entity changes only draft metadata and does not add a topic tag",
+  () => {
+    assert.equal(
+      genericTemplate.win.__editorEval("snapshot().noteType"),
+      "entity",
+    );
+    assert.deepEqual(
+      Array.from(genericTemplate.win.__editorEval("snapshot().initialTags")),
+      [],
+    );
+    assert.match(
+      genericTemplate.$("knowledge-base-editor-body").value,
+      /My own structure/,
+    );
+  },
+);
+genericTemplate.$("knowledge-base-note-type").value = "entity";
+genericTemplate
+  .$("knowledge-base-note-type")
+  .dispatchEvent(new genericTemplate.win.Event("change"));
+check("A note can return to the default Entity type", () =>
+  assert.equal(
+    genericTemplate.win.__editorEval("snapshot().noteType"),
+    "entity",
+  ),
 );
 genericTemplate.win.close();
 const tagSet = new Set(["Thinking Note"]);
@@ -2699,6 +2731,7 @@ const editableTags = await editor(
       title: "A note",
       body: "Original content",
       source_note: 0,
+      note_type: "entity",
       updated_at: 1,
     }),
     getNoteTags: async () => [...tagSet],
@@ -2764,6 +2797,7 @@ let flushedCard = {
   title: "A note",
   body: "Original content",
   source_note: 0,
+  note_type: "entity",
   updated_at: 1,
 };
 const flushSaved = [];
@@ -2824,6 +2858,7 @@ let sourceBaseCard = {
   title: "A note",
   body: "Original content",
   source_note: 0,
+  note_type: "entity",
   updated_at: 1,
 };
 const sourceBaseWrites = [];
@@ -2861,22 +2896,41 @@ check(
   },
 );
 sourceBaseFixture.win.close();
-check("Editor has one note model without type controls", () => {
-  assert.equal(ed.$("knowledge-base-note-kind"), null);
-  assert.equal(ed.$("knowledge-base-note-kind-text"), null);
-  assert.equal(ed.$("knowledge-base-tag-convert"), null);
-  assert.ok(ed.$("knowledge-base-tags-edit"));
-});
+check(
+  "Source and tags stay above the document, with type and ID in the footer",
+  () => {
+    assert.deepEqual(
+      [...ed.$("knowledge-base-note-type").options].map(
+        (option) => option.value,
+      ),
+      ["literature", "zettel", "thinking", "entity"],
+    );
+    assert.equal(ed.$("knowledge-base-note-kind"), null);
+    assert.equal(ed.$("knowledge-base-note-kind-text"), null);
+    assert.equal(ed.$("knowledge-base-tag-convert"), null);
+    assert.ok(ed.$("knowledge-base-tags-edit"));
+    const metadata = ed.win.document.getElementById(
+      "knowledge-base-editor-metadata",
+    );
+    const footer = ed.win.document.getElementById(
+      "knowledge-base-editor-footer",
+    );
+    assert.ok(metadata.contains(ed.$("knowledge-base-src-display")));
+    assert.ok(metadata.contains(ed.$("knowledge-base-note-tags")));
+    assert.ok(metadata.contains(ed.$("knowledge-base-parent-display")));
+    assert.ok(metadata.contains(ed.$("knowledge-base-tags-edit")));
+    assert.ok(footer.contains(ed.$("knowledge-base-note-type")));
+    assert.ok(footer.contains(ed.$("knowledge-base-key-copy")));
+    assert.equal(metadata.querySelector(".note-identity-row"), null);
+  },
+);
 const typeDraft = await editor();
-check("New notes have editable IDs without type switching", () => {
-  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, true);
-  typeDraft.$("knowledge-base-key-edit").click();
+check("New notes retain editable IDs and allow type changes", () => {
   assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
-  assert.equal(typeDraft.$("knowledge-base-editor-key").localName, "textarea");
-  assert.equal(
-    typeDraft.$("knowledge-base-editor-key").getAttribute("wrap"),
-    "soft",
-  );
+  typeDraft.$("knowledge-base-editor-key").focus();
+  assert.equal(typeDraft.$("knowledge-base-editor-key").hidden, false);
+  assert.equal(typeDraft.$("knowledge-base-editor-key").localName, "input");
+  assert.equal(typeDraft.$("knowledge-base-editor-key").type, "text");
   assert.equal(typeDraft.$("knowledge-base-editor-reference"), null);
   typeDraft.$("knowledge-base-editor-key").value = "MyProject";
   typeDraft
@@ -2886,7 +2940,7 @@ check("New notes have editable IDs without type switching", () => {
   typeDraft.win.__editorEval("libraryReadOnly = true; updateNoteIdentity()");
   const key = typeDraft.$("knowledge-base-editor-key");
   assert.equal(key.readOnly, true);
-  assert.equal(typeDraft.$("knowledge-base-key-edit").disabled, true);
+  assert.equal(typeDraft.$("knowledge-base-editor-key").readOnly, true);
   assert.equal(key.disabled, false);
   key.select();
   assert.equal(key.selectionEnd - key.selectionStart, key.value.length);
@@ -2897,7 +2951,7 @@ check("New notes have editable IDs without type switching", () => {
     "editor-change-source",
   );
   assert.equal(
-    ed.$("knowledge-base-parent-change").getAttribute("aria-label"),
+    ed.$("knowledge-base-parent-edit").getAttribute("aria-label"),
     "editor-change-parent",
   );
   assert.equal(
@@ -2912,7 +2966,7 @@ const keyConflict = await editor(
   },
 );
 const conflictInput = keyConflict.$("knowledge-base-editor-key");
-keyConflict.$("knowledge-base-key-edit").click();
+keyConflict.$("knowledge-base-editor-key").focus();
 conflictInput.value = "occupied";
 conflictInput.dispatchEvent(new keyConflict.win.Event("input"));
 await keyConflict.win.__editorEval("checkKey()");
@@ -2958,11 +3012,14 @@ const keyActions = await editor(
 );
 keyActions.$("knowledge-base-key-copy").click();
 await wait();
-check("The plain ID copies a wiki reference without entering edit mode", () => {
-  assert.deepEqual(keyActions.calls.open, ["[[CopyID]]"]);
-  assert.equal(keyActions.$("knowledge-base-editor-key").hidden, true);
-});
-keyActions.$("knowledge-base-key-edit").click();
+check(
+  "The inline copy action copies a wiki reference beside the editable ID",
+  () => {
+    assert.deepEqual(keyActions.calls.open, ["[[CopyID]]"]);
+    assert.equal(keyActions.$("knowledge-base-editor-key").hidden, false);
+  },
+);
+keyActions.$("knowledge-base-editor-key").focus();
 const actionKey = keyActions.$("knowledge-base-editor-key");
 actionKey.value = "CancelledID";
 actionKey.dispatchEvent(new keyActions.win.Event("input"));
@@ -2977,11 +3034,11 @@ check(
   "Escape cancels only the ID edit and restores the displayed reference",
   () => {
     assert.equal(keyActions.win.__editorEval("snapshot().customKey"), null);
-    assert.equal(actionKey.hidden, true);
-    assert.equal(keyActions.$("knowledge-base-key-copy").textContent, "CopyID");
+    assert.equal(actionKey.hidden, false);
+    assert.equal(keyActions.$("knowledge-base-editor-key").value, "CopyID");
   },
 );
-keyActions.$("knowledge-base-key-edit").click();
+keyActions.$("knowledge-base-editor-key").focus();
 actionKey.value = "RenamedID";
 actionKey.dispatchEvent(new keyActions.win.Event("input"));
 actionKey.dispatchEvent(
@@ -2992,15 +3049,26 @@ actionKey.dispatchEvent(
   }),
 );
 await wait();
-check("Enter returns a valid ID to the copyable display", () => {
-  assert.equal(actionKey.hidden, true);
+check("Enter commits an inline ID without hiding the field", () => {
+  assert.equal(actionKey.hidden, false);
+  assert.equal(keyActions.$("knowledge-base-editor-key").value, "RenamedID");
+});
+actionKey.dispatchEvent(
+  new keyActions.win.KeyboardEvent("keydown", {
+    key: "Escape",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check("Escape after a committed ID retains the latest reference", () => {
+  assert.equal(actionKey.value, "RenamedID");
   assert.equal(
-    keyActions.$("knowledge-base-key-copy").textContent,
+    keyActions.win.__editorEval("snapshot().customKey"),
     "RenamedID",
   );
 });
 keyActions.win.close();
-ed.$("knowledge-base-parent-change").click();
+ed.$("knowledge-base-parent-edit").click();
 await ed.win.__editorEval("refreshRelations()");
 await new Promise((resolve) => setTimeout(resolve, 230));
 check("The Parent picker uses references and a single No parent action", () => {
@@ -3021,7 +3089,7 @@ check("The Parent picker uses references and a single No parent action", () => {
   assert.equal(ed.$("knowledge-base-parent-picker").hidden, true);
   assert.equal(
     ed.$("knowledge-base-parent-display").parentElement.hidden,
-    true,
+    false,
   );
   assert.equal(ed.win.__editorEval("snapshot()").parentId, null);
 });
@@ -3033,7 +3101,7 @@ const parentEditor = await editor(
     getZettel: async (id) => (id === parentTarget.id ? parentTarget : null),
   },
 );
-parentEditor.$("knowledge-base-parent-change").click();
+parentEditor.$("knowledge-base-parent-edit").click();
 await new Promise((resolve) => setTimeout(resolve, 230));
 parentEditor
   .$("knowledge-base-parent-results")
@@ -3052,20 +3120,42 @@ check(
     );
   },
 );
-parentEditor.$("knowledge-base-parent-change").click();
+const beforeParentOpen = parentEditor.calls.open.length;
+parentEditor.$("knowledge-base-parent-display").click();
+parentEditor
+  .$("knowledge-base-parent-display")
+  .dispatchEvent(
+    new parentEditor.win.MouseEvent("click", { bubbles: true, detail: 2 }),
+  );
+await wait();
+check(
+  "The Parent title navigates once while its pencil independently edits the hierarchy",
+  () => {
+    assert.equal(parentEditor.calls.open.length, beforeParentOpen + 1);
+    assert.equal(parentEditor.calls.open.at(-1).zettelId, parentTarget.id);
+    assert.equal(parentEditor.$("knowledge-base-parent-picker").hidden, true);
+    assert.ok(
+      parentEditor.$("knowledge-base-parent-edit").querySelector("svg"),
+    );
+  },
+);
+parentEditor.$("knowledge-base-parent-edit").click();
 await new Promise((resolve) => setTimeout(resolve, 230));
 parentEditor
   .$("knowledge-base-parent-results")
   .querySelector(".metadata-clear")
   .click();
 await parentEditor.win.__editorEval("save(false)");
-check("No parent saves the detached hierarchy and hides the empty row", () => {
-  assert.equal(parentEditor.saved().parentId, null);
-  assert.equal(
-    parentEditor.$("knowledge-base-parent-display").parentElement.hidden,
-    true,
-  );
-});
+check(
+  "No parent saves the detached hierarchy and keeps its selector available",
+  () => {
+    assert.equal(parentEditor.saved().parentId, null);
+    assert.equal(
+      parentEditor.$("knowledge-base-parent-display").parentElement.hidden,
+      false,
+    );
+  },
+);
 parentEditor.win.close();
 let finishParentSearch;
 const pendingParentEditor = await editor(
@@ -3077,7 +3167,7 @@ const pendingParentEditor = await editor(
       }),
   },
 );
-pendingParentEditor.$("knowledge-base-parent-change").click();
+pendingParentEditor.$("knowledge-base-parent-edit").click();
 await new Promise((resolve) => setTimeout(resolve, 230));
 pendingParentEditor.$("knowledge-base-parent-search").dispatchEvent(
   new pendingParentEditor.win.KeyboardEvent("keydown", {
@@ -3101,7 +3191,7 @@ check(
     assert.equal(
       pendingParentEditor.$("knowledge-base-parent-display").parentElement
         .hidden,
-      true,
+      false,
     );
     assert.equal(
       pendingParentEditor.win.__editorEval("snapshot()").parentId,
@@ -3622,8 +3712,8 @@ check(
   "Literature picker displays and inserts the current editable note ID",
   () => {
     assert.equal(
-      literaturePickerRow.querySelector(".relation-id").textContent,
-      "ReadingCustomID",
+      literaturePickerRow.querySelector(".relation-title").textContent,
+      "My literature synthesis",
     );
     literaturePickerRow.click();
     assert.equal(
@@ -3674,16 +3764,13 @@ check(
     assert.equal(ed.win.document.activeElement, row);
     assert.equal(
       row.querySelector(".note-reference-text").textContent,
-      "Target card (20261001000000)",
+      "Target card",
     );
     assert.equal(
       row.querySelector(".relation-title").textContent,
       "Target card",
     );
-    assert.equal(
-      row.querySelector(".relation-id").textContent,
-      "20261001000000",
-    );
+    assert.equal(row.querySelector(".relation-id"), null);
   },
 );
 ed.$("knowledge-base-link-drop").hidden = true;
@@ -3712,11 +3799,11 @@ ed.win.ZoteroKnowledgeBaseMarkdown.renderFamily(
 );
 check("Relationship IDs and tooltips display without wiki brackets", () => {
   const child = familyBox.querySelector(".family-link");
-  assert.equal(child.querySelector(".relation-id").textContent, "0");
-  assert.equal(child.title, "Child 0 (0)");
+  assert.equal(child.querySelector(".relation-id"), null);
+  assert.equal(child.title, "Child 0\n0");
   assert.equal(
     child.querySelector(".note-reference-text").textContent,
-    "Child 0 (0)",
+    "Child 0",
   );
 });
 check("Relationship refresh preserves an explicitly expanded child group", () =>
@@ -3927,7 +4014,7 @@ check(
     const renderer = graph_canvas.createGraphCanvas(canvas, style);
     const nodes = [
       { id: "a", x: 0, y: 0, radius: 6, kind: "card", color: "#30a46c" },
-      { id: "b", x: 100, y: 80, radius: 8, kind: "source" },
+      { id: "b", x: 100, y: 80, radius: 8, kind: "item" },
     ];
     const edges = [
       { source: nodes[0], target: nodes[1], kind: "link" },
@@ -4015,18 +4102,10 @@ const graphData = {
     { id: "B", title: "B", kind: "card", snippet: "" },
     { id: "C", title: "C", kind: "card", snippet: "" },
     { id: "I", title: "Isolated", kind: "card", snippet: "" },
-    {
-      id: "S",
-      title: "Paper",
-      kind: "source",
-      snippet: "Author 2024 · Journal",
-      citation: "Author 2024 · Journal",
-    },
   ],
   edges: [
     { source: "A", target: "B", kind: "link" },
     { source: "B", target: "C", kind: "link" },
-    { source: "A", target: "S", kind: "source" },
   ],
 };
 check(
@@ -4045,11 +4124,6 @@ check(
         .nodes.map((node) => node.id),
       ["A", "B", "C"],
     );
-    assert.ok(
-      graphModule
-        .filterGraph(graphData, { includeSources: true })
-        .nodes.some((node) => node.id === "S"),
-    );
   },
 );
 const graphDom = new JSDOM(
@@ -4065,10 +4139,11 @@ let graphLocalDepth = 1;
 const graphOptions = {
   outline: true,
   references: true,
-  sources: true,
   hideIsolated: false,
 };
 let optionsChanged;
+let graphReads = 0;
+const graphOpened = [];
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
@@ -4091,7 +4166,10 @@ graphDom.window.Zotero = {
       }),
       prepareMarkdown: async () => {},
       loc: (key) => key,
-      getGraph: async () => graphData,
+      getGraph: async () => {
+        graphReads++;
+        return graphData;
+      },
       getGraphOptions: () => graphOptions,
       getGraphLabelLength: () => graphLabelLength,
       getGraphLocalDepth: () => graphLocalDepth,
@@ -4107,7 +4185,9 @@ graphDom.window.Zotero = {
       },
       renderMarkdown: (body) => markdown.renderMarkdown(body, htmlWindow),
       onDataChange: () => () => {},
-      openEditor() {},
+      openEditor(args) {
+        graphOpened.push(args);
+      },
     },
   },
 };
@@ -4138,7 +4218,6 @@ check(
     assert.deepEqual(graphOptions, {
       outline: true,
       references: true,
-      sources: true,
       hideIsolated: false,
     });
     assert.equal(
@@ -4194,6 +4273,31 @@ check("Selecting a node shows connected nodes in the graph inspector", () =>
     graphDom.window.document.querySelectorAll("#graph-connections li").length,
     2,
   ),
+);
+const originalGraphNode = pointerNode;
+const firstConnection = graphDom.window.document.querySelector(
+  "#graph-connections li",
+);
+const firstConnectionId = firstConnection.dataset.nodeId;
+firstConnection.dispatchEvent(
+  new graphDom.window.MouseEvent("click", { bubbles: true, detail: 1 }),
+);
+const shiftedConnection = graphDom.window.document.querySelector(
+  "#graph-connections li",
+);
+shiftedConnection.dispatchEvent(
+  new graphDom.window.MouseEvent("click", { bubbles: true, detail: 2 }),
+);
+shiftedConnection.dispatchEvent(
+  new graphDom.window.MouseEvent("dblclick", { bubbles: true, detail: 2 }),
+);
+await wait();
+check(
+  "Double-clicking graph connections opens the first target after the inspector changes",
+  () => assert.equal(graphOpened.at(-1).zettelId, firstConnectionId),
+);
+originalGraphNode.dispatchEvent(
+  new graphDom.window.MouseEvent("click", { bubbles: true }),
 );
 const graphPositions = () =>
   Array.from(
@@ -4268,39 +4372,50 @@ check("Showing references restores edges without filtering cards", () =>
     2,
   ),
 );
-graphOptions.sources = false;
-optionsChanged();
-await wait();
 check(
-  "Hiding source items removes their nodes, edges and legend, retaining every card",
+  "Sources are removed; the graph view offers note types and Parent Items",
   () => {
     assert.equal(
-      graphDom.window.document.querySelectorAll(
-        ".graph-node.source,.graph-edge.source",
-      ).length,
-      0,
+      graphDom.window.document.getElementById("graph-sources"),
+      null,
     );
-    assert.equal(
-      graphDom.window.document.querySelectorAll(".graph-node.card").length,
-      4,
-    );
-    assert.equal(
-      graphDom.window.document.getElementById("graph-legend-sources").hidden,
-      true,
+    assert.deepEqual(
+      [...graphDom.window.document.getElementById("graph-view").options].map(
+        (option) => option.value,
+      ),
+      ["all", "literature", "zettel", "thinking", "entity", "items"],
     );
   },
 );
-graphDom.window.document.getElementById("graph-sources").checked = true;
-graphDom.window.document
-  .getElementById("graph-sources")
-  .dispatchEvent(new graphDom.window.Event("command", { bubbles: true }));
+const typeView = graphDom.window.document.getElementById("graph-view");
+const readsBeforeTypeSwitch = graphReads;
+graphData.nodes[0].noteType = "zettel";
+graphData.nodes[1].noteType = "entity";
+graphData.nodes[2].noteType = "zettel";
+graphData.nodes[3].noteType = "thinking";
+typeView.value = "zettel";
+typeView.dispatchEvent(new graphDom.window.Event("change"));
 await wait();
-check("Source nodes return when enabled in the graph", () => {
-  assert.ok(graphDom.window.document.querySelector(".graph-node.source"));
-  assert.ok(
-    graphDom.window.document.getElementById("graph-search").placeholder,
-  );
-});
+await wait();
+check(
+  "A note type view excludes other note types and their connecting edges",
+  () => {
+    assert.deepEqual(
+      [...graphDom.window.document.querySelectorAll(".graph-node.card")]
+        .map((node) => node.getAttribute("data-node-id"))
+        .sort(),
+      ["A", "C"],
+    );
+    assert.equal(
+      graphDom.window.document.querySelectorAll(".graph-edge").length,
+      0,
+    );
+  },
+);
+typeView.value = "all";
+typeView.dispatchEvent(new graphDom.window.Event("change"));
+await wait();
+await wait();
 const searchGraph = graphDom.window.document.getElementById("graph-search");
 searchGraph.value = "isolated";
 searchGraph.dispatchEvent(new graphDom.window.Event("input"));
@@ -4410,7 +4525,7 @@ check(
     assert.equal(graphOptions.hideIsolated, true);
     assert.deepEqual(
       graphPositions().map(([id]) => id),
-      ["A", "B", "C", "S"],
+      ["A", "B", "C"],
     );
     assert.deepEqual(
       graphPositions(),
@@ -4454,7 +4569,7 @@ check("Self references do not keep isolated notes visible", () => {
   );
   assert.equal(
     graphDom.window.document.querySelectorAll(".graph-edge").length,
-    3,
+    2,
   );
 });
 graphOptions.references = false;
@@ -4465,11 +4580,10 @@ check(
   () => {
     assert.deepEqual(
       graphPositions().map(([id]) => id),
-      ["A", "S"],
+      [],
     );
   },
 );
-graphOptions.sources = false;
 optionsChanged();
 await wait();
 check("A graph without visible connections has a valid empty state", () => {
@@ -4481,6 +4595,7 @@ check("A graph without visible connections has a valid empty state", () => {
     graphDom.window.document.querySelectorAll(".graph-edge").length,
     0,
   );
+  assert.equal(graphReads, readsBeforeTypeSwitch);
   assert.equal(
     graphDom.window.document.getElementById("graph-empty").hidden,
     false,
@@ -4492,13 +4607,12 @@ check("A graph without visible connections has a valid empty state", () => {
 });
 graphData.edges.pop();
 graphOptions.references = true;
-graphOptions.sources = true;
 toggleIsolated(false);
 await wait();
 check("Disabling isolation restores all nodes and the untouched graph", () => {
   assert.equal(
     graphDom.window.document.querySelectorAll(".graph-node").length,
-    5,
+    4,
   );
   assert.deepEqual(graphData, originalGraphData);
 });
@@ -4510,7 +4624,7 @@ await wait();
 check(
   "Local graph uses the configured one-hop neighborhood without another toolbar control",
   () => {
-    assert.deepEqual(graphIDs(), ["A", "B", "S"]);
+    assert.deepEqual(graphIDs(), ["A", "B"]);
     assert.equal(
       graphDom.window.document.getElementById("graph-depth-control"),
       null,
@@ -4535,7 +4649,7 @@ setHop(2);
 await wait();
 check(
   "Two hops includes a neighbor's neighbor but excludes an unrelated note",
-  () => assert.deepEqual(graphIDs(), ["A", "B", "C", "S"]),
+  () => assert.deepEqual(graphIDs(), ["A", "B", "C"]),
 );
 toggleIsolated(true);
 await wait();
@@ -4543,18 +4657,11 @@ graphOptions.references = false;
 optionsChanged();
 await wait();
 check("Hidden relationships do not count toward local hops", () =>
-  assert.deepEqual(graphIDs(), ["A", "S"]),
+  assert.deepEqual(graphIDs(), ["A"]),
 );
 graphOptions.references = true;
 optionsChanged();
 await wait();
-graphDom.window.ZoteroKnowledgeBase_showGraph("S");
-setHop(1);
-await wait();
-await wait();
-check("A paper can be the center of a local graph", () =>
-  assert.deepEqual(graphIDs(), ["A", "S"]),
-);
 graphDom.window.ZoteroKnowledgeBase_showGraph("missing");
 await wait();
 await wait();
@@ -4567,7 +4674,7 @@ graphDom.window.ZoteroKnowledgeBase_showGraph();
 await wait();
 await wait();
 check("Global entry restores the full graph without a hop selector", () => {
-  assert.deepEqual(graphIDs(), ["A", "B", "C", "I", "S"]);
+  assert.deepEqual(graphIDs(), ["A", "B", "C", "I"]);
   assert.equal(
     graphDom.window.document.getElementById("graph-depth-control"),
     null,
@@ -4598,7 +4705,7 @@ await wait();
 check(
   "Global retains the selected note and its strengthened connections",
   () => {
-    assert.deepEqual(graphIDs(), ["A", "B", "C", "I", "S"]);
+    assert.deepEqual(graphIDs(), ["A", "B", "C", "I"]);
     assert.ok(
       graphDom.window.document.querySelector('[data-node-id="B"].selected'),
     );
@@ -4747,6 +4854,7 @@ for (const button of managerWin.document.querySelectorAll("toolbarbutton")) {
 let managerCards = [
   {
     id: "20261002011320",
+    note_type: "zettel",
     title: "这是2017的Zettel",
     item_key: "SRC00001",
     library_id: 1,
@@ -4757,6 +4865,7 @@ let managerCards = [
   },
   {
     id: "20261002005552",
+    note_type: "entity",
     title: "是直接点",
     body: "Child idea",
     updated_at: 1790874821032,
@@ -5081,7 +5190,11 @@ contextRow(contextTarget).dispatchEvent(
 );
 await wait();
 const beforeNavigationMenu = popupOpens;
-nativeClick(contextRow(originalSelection), managerWin);
+const clickedRow = contextRow(originalSelection);
+const scrollBeforeClick = managerDoc.getElementById(
+  "knowledge-base-list-pane",
+).scrollTop;
+nativeClick(clickedRow, managerWin);
 resolveNavigationMenu({ note: "available", source: "none", editable: true });
 await wait();
 await wait();
@@ -5092,6 +5205,112 @@ check(
 managerAPI.getNoteHealth = originalContextHealth;
 managerCalls.edits.length = 0;
 managerCalls.graphs.length = 0;
+
+nativeClick(contextRow(originalSelection), managerWin);
+await wait();
+check("Single-clicking the note list stays in the current view", () => {
+  assert.equal(managerCalls.edits.length, 0);
+  assert.equal(contextRow(originalSelection), clickedRow);
+  assert.equal(
+    managerDoc.getElementById("knowledge-base-list-pane").scrollTop,
+    scrollBeforeClick,
+  );
+  assert.equal(
+    managerDoc.querySelector(".zettel-row.active").dataset.id,
+    originalSelection,
+  );
+});
+contextRow(contextTarget).dispatchEvent(
+  new managerWin.MouseEvent("dblclick", { bubbles: true }),
+);
+await wait();
+check(
+  "Double-clicking the note list opens the clicked note in a separate window",
+  () => {
+    assert.deepEqual(
+      { ...managerCalls.edits.pop() },
+      { zettelId: contextTarget, window: true },
+    );
+  },
+);
+contextRow(contextTarget).dispatchEvent(
+  new managerWin.MouseEvent("click", { bubbles: true, detail: 1 }),
+);
+await wait();
+contextRow(originalSelection).dispatchEvent(
+  new managerWin.MouseEvent("click", { bubbles: true, detail: 2 }),
+);
+contextRow(originalSelection).dispatchEvent(
+  new managerWin.MouseEvent("dblclick", { bubbles: true, detail: 2 }),
+);
+await wait();
+check(
+  "A second click on a shifted row still opens the first clicked note",
+  () => {
+    assert.equal(
+      managerDoc.querySelector(".zettel-row.active").dataset.id,
+      contextTarget,
+    );
+    assert.deepEqual(
+      { ...managerCalls.edits.pop() },
+      { zettelId: contextTarget, window: true },
+    );
+  },
+);
+const searchBeforeNavigation = managerAPI.searchZettelSummaries;
+let navigationSearches = 0;
+managerAPI.searchZettelSummaries = (...args) => {
+  navigationSearches++;
+  return searchBeforeNavigation(...args);
+};
+managerWin.ZoteroKnowledgeBase_selectZettel(originalSelection);
+await wait();
+check(
+  "Navigating to an already listed note reuses the list without querying it again",
+  () => assert.equal(navigationSearches, 0),
+);
+managerAPI.searchZettelSummaries = searchBeforeNavigation;
+const inlineFrame = managerDoc.getElementById(
+  "knowledge-base-workbench-editor",
+);
+const inlineWindow = (inlineFrame.contentWindow = {});
+managerWin.arguments[0].embedded = true;
+inlineWindow.knowledgeBaseCardId = originalSelection;
+let finishWindowSave;
+inlineWindow.save = () =>
+  new Promise((resolve) => {
+    finishWindowSave = resolve;
+  });
+contextRow(originalSelection).dispatchEvent(
+  new managerWin.MouseEvent("dblclick", { bubbles: true }),
+);
+await wait();
+check("Opening the current embedded note waits for its pending edits", () =>
+  assert.equal(managerCalls.edits.length, 0),
+);
+finishWindowSave(false);
+await wait();
+check("A failed save keeps the separate window closed", () =>
+  assert.equal(managerCalls.edits.length, 0),
+);
+inlineWindow.save = async () => true;
+contextRow(originalSelection).dispatchEvent(
+  new managerWin.MouseEvent("dblclick", { bubbles: true }),
+);
+await wait();
+check(
+  "An embedded note double-click requests a separate window after saving",
+  () => {
+    assert.deepEqual(
+      { ...managerCalls.edits.pop() },
+      { zettelId: originalSelection, window: true },
+    );
+  },
+);
+managerWin.arguments[0].embedded = false;
+delete inlineWindow.knowledgeBaseCardId;
+delete inlineWindow.save;
+delete inlineFrame.contentWindow;
 
 let finishCopy;
 let copies = 0;
@@ -5205,9 +5424,12 @@ check(
   },
 );
 check(
-  "Card browser shows references without types and uses native toolbar actions",
+  "Card browser shows small type labels alongside references and native actions",
   () => {
-    assert.equal(managerDoc.querySelector(".note-kind-badge"), null);
+    assert.equal(
+      managerDoc.querySelector(".note-type-label").textContent,
+      "note-type-zettel",
+    );
     assert.deepEqual(
       [...managerDoc.querySelectorAll(".zettel-row .note-row-reference")].map(
         (el) => el.textContent,
@@ -5301,9 +5523,15 @@ check(
     assert.equal(button.title, "note-reference-copy");
   },
 );
+const originalFamilyNavigation = managerWin.ZoteroKnowledgeBase_selectZettel;
+let familyNavigation;
+managerWin.ZoteroKnowledgeBase_selectZettel = (id) => {
+  familyNavigation = id;
+};
 managerDoc.querySelector("#knowledge-base-family .family-link").click();
+managerWin.ZoteroKnowledgeBase_selectZettel = originalFamilyNavigation;
 check("Compact child entries still navigate to their card", () =>
-  assert.equal(managerCalls.opens[0].selectId, managerCards[1].id),
+  assert.equal(familyNavigation, managerCards[1].id),
 );
 check("Native highlights and images leave only readable list summaries", () => {
   const summary = managerDoc.querySelector(".card-snippet").textContent;
@@ -5474,28 +5702,33 @@ const selectNoteView = (view) =>
   managerDoc
     .querySelector('[data-note-view="' + view + '"]')
     .dispatchEvent(new managerWin.Event("command", { bubbles: true }));
-check("Four icon filters default to All, with a separate Trash entry", () => {
-  assert.equal(managerDoc.getElementById("knowledge-base-entries"), null);
-  assert.equal(managerDoc.getElementById("knowledge-base-view"), null);
-  assert.deepEqual(
-    [
-      ...managerDoc.querySelectorAll("#knowledge-base-views [data-note-view]"),
-    ].map((button) => button.getAttribute("data-note-view")),
-    ["all", "literature", "zettel", "thinking"],
-  );
-  assert.equal(
-    managerDoc
-      .getElementById("knowledge-base-view-all")
-      .getAttribute("aria-pressed"),
-    "true",
-  );
-  assert.equal(
-    managerDoc
-      .getElementById("knowledge-base-views")
-      .contains(managerDoc.getElementById("knowledge-base-view-trash")),
-    false,
-  );
-});
+check(
+  "Four type filters and All use icons, with a separate Trash entry",
+  () => {
+    assert.equal(managerDoc.getElementById("knowledge-base-entries"), null);
+    assert.equal(managerDoc.getElementById("knowledge-base-view"), null);
+    assert.deepEqual(
+      [
+        ...managerDoc.querySelectorAll(
+          "#knowledge-base-views [data-note-view]",
+        ),
+      ].map((button) => button.getAttribute("data-note-view")),
+      ["all", "literature", "zettel", "thinking", "entity"],
+    );
+    assert.equal(
+      managerDoc
+        .getElementById("knowledge-base-view-all")
+        .getAttribute("aria-pressed"),
+      "true",
+    );
+    assert.equal(
+      managerDoc
+        .getElementById("knowledge-base-views")
+        .contains(managerDoc.getElementById("knowledge-base-view-trash")),
+      false,
+    );
+  },
+);
 const categoryCards = managerCards,
   categorySearch = managerAPI.searchZettelSummaries;
 managerCards = [
@@ -5503,21 +5736,37 @@ managerCards = [
     ...categoryCards[0],
     id: "VIEW_L",
     title: "Matched paper",
-    tags: ["Literature Note"],
+    tags: ["Topic"],
+    note_type: "literature",
   },
   {
     ...categoryCards[0],
     id: "VIEW_Z",
     title: "Matched claim",
-    tags: ["Zettel"],
+    tags: ["Topic"],
+    note_type: "zettel",
   },
   {
     ...categoryCards[0],
     id: "VIEW_T",
     title: "Matched idea",
+    tags: ["Topic"],
+    note_type: "thinking",
+  },
+  {
+    ...categoryCards[0],
+    id: "VIEW_E",
+    title: "LEVIR dataset",
+    note_type: "entity",
+    tags: [],
+  },
+  {
+    ...categoryCards[0],
+    id: "VIEW_NONE",
+    title: "Other note",
+    note_type: "entity",
     tags: ["Thinking Note"],
   },
-  { ...categoryCards[0], id: "VIEW_NONE", title: "Other note", tags: [] },
 ];
 const viewQueries = [];
 managerAPI.searchZettelSummaries = async (query, options) => {
@@ -5525,7 +5774,7 @@ managerAPI.searchZettelSummaries = async (query, options) => {
   return {
     items: managerCards.filter(
       (note) =>
-        (!options.tag || note.tags.includes(options.tag)) &&
+        (!options.noteType || note.note_type === options.noteType) &&
         (!query || note.title.includes(query)),
     ),
     cursor: null,
@@ -5534,17 +5783,18 @@ managerAPI.searchZettelSummaries = async (query, options) => {
 for (const [view, id] of [
   ["literature", "VIEW_L"],
   ["zettel", "VIEW_Z"],
+  ["entity", "VIEW_E"],
   ["thinking", "VIEW_T"],
 ]) {
   selectNoteView(view);
   await wait();
   await wait();
-  check("The " + view + " icon filters its own tag", () => {
+  check("The " + view + " icon filters its stored type", () => {
     assert.deepEqual(
       [...managerDoc.querySelectorAll(".zettel-row")].map(
         (row) => row.dataset.id,
       ),
-      [id],
+      view === "entity" ? ["VIEW_E", "VIEW_NONE"] : [id],
     );
     assert.equal(
       managerDoc
@@ -5552,22 +5802,24 @@ for (const [view, id] of [
         .getAttribute("aria-pressed"),
       "true",
     );
-    assert.equal(viewQueries.at(-1).ownTagsOnly, true);
+    assert.equal(viewQueries.at(-1).noteType, view);
+    assert.equal(viewQueries.at(-1).tag, undefined);
   });
 }
 const thinkingViewCard = managerCards.find((note) => note.id === "VIEW_T");
-thinkingViewCard.tags = [];
-managerChanged({ all: false, cardIDs: ["VIEW_T"], fields: ["tags"] });
+thinkingViewCard.note_type = "entity";
+managerChanged({ all: false, cardIDs: ["VIEW_T"], fields: ["type"] });
 await wait();
 await wait();
-check("Removing a category tag immediately removes the matching row", () =>
-  assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0),
+check(
+  "Changing a type immediately removes the row from its previous view",
+  () => assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 0),
 );
-thinkingViewCard.tags = ["Thinking Note"];
-managerChanged({ all: false, cardIDs: ["VIEW_T"], fields: ["tags"] });
+thinkingViewCard.note_type = "thinking";
+managerChanged({ all: false, cardIDs: ["VIEW_T"], fields: ["type"] });
 await wait();
 await wait();
-check("Adding a category tag immediately restores the matching row", () =>
+check("Restoring a type immediately restores the matching row", () =>
   assert.equal(managerDoc.querySelectorAll(".zettel-row").length, 1),
 );
 const cancelledFrame = managerDoc.getElementById(

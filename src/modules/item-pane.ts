@@ -135,6 +135,13 @@ export async function registerItemPaneUI(): Promise<void> {
         refresh: () => Promise<void>;
       }) => {
         const unsubscribeData = onDataChange((change) => {
+          if (change?.fields.includes("tag-visibility")) {
+            const tags = ensureLayout(body).tags;
+            if (body.dataset.view === "tags" && !tagWrites.has(tags))
+              renderTags(tags, sectionItems.get(body), true);
+            if (change.fields.every((field) => field === "tag-visibility"))
+              return;
+          }
           const item = sectionItems.get(body);
           if (
             change &&

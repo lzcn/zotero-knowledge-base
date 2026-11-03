@@ -18,12 +18,13 @@ let navigationVersion = 0;
 let managerLoaded = false;
 let activeView = "all";
 let viewVersion = 0;
-/** @type {Record<string, { label: string; tag?: string }>} */
+/** @type {Record<string, { label: string; noteType?: import("../../src/modules/note-types").NoteType }>} */
 const NOTE_VIEWS = {
   all: { label: "manager-view-all" },
-  literature: { label: "manager-view-literature", tag: "Literature Note" },
-  zettel: { label: "manager-view-zettel", tag: "Zettel" },
-  thinking: { label: "manager-view-thinking", tag: "Thinking Note" },
+  literature: { label: "manager-view-literature", noteType: "literature" },
+  zettel: { label: "manager-view-zettel", noteType: "zettel" },
+  thinking: { label: "manager-view-thinking", noteType: "thinking" },
+  entity: { label: "manager-view-entity", noteType: "entity" },
   trash: { label: "trash-title" },
 };
 let deleting = false;
@@ -86,8 +87,8 @@ function setView(view) {
   activeView = view;
   syncViewButtons();
 }
-function viewTag() {
-  return NOTE_VIEWS[activeView].tag;
+function viewType() {
+  return NOTE_VIEWS[activeView].noteType;
 }
 function setActionLabel(id, key) {
   const element = document.getElementById(id),
@@ -332,7 +333,7 @@ async function load() {
   const initialEditor = args.editor;
   if (args.embedded && initialEditor) {
     if ((await showInlineEditor(initialEditor)) && initialEditor.zettelId)
-      select(initialEditor.zettelId, true, true);
+      select(initialEditor.zettelId, { mounted: true });
   } else if (wanted) select(wanted);
   else if (zettels.length) select(zettels[0].id);
   if (args.unresolvedRef)
@@ -348,7 +349,6 @@ async function load() {
             await refreshTrashState();
           if (
             all ||
-            viewTag() ||
             !change.fields.length ||
             change.fields.some((field) => field !== "tags")
           ) {
@@ -399,6 +399,10 @@ window.ZoteroKnowledgeBase_selectZettel = function (id) {
     args.selectId = id;
     return;
   }
+  if (!inTrash() && rowIndices.has(id)) {
+    safeCall(select, id);
+    return;
+  }
   const version = ++navigationVersion;
   safeCall(async () => {
     $("knowledge-base-search").value = "";
@@ -417,7 +421,7 @@ window.ZoteroKnowledgeBase_editNote = function (options) {
   }
   safeCall(async () => {
     if (await showInlineEditor(options)) {
-      if (options.zettelId) select(options.zettelId, true, true);
+      if (options.zettelId) select(options.zettelId, { mounted: true });
       else {
         selectedId = null;
         updateActions();
@@ -610,6 +614,20 @@ function bindEvents() {
     if (event.detail > 1) event.preventDefault();
     window.getSelection()?.removeAllRanges();
   });
+  let clickedNoteID = null;
+  $("knowledge-base-list").addEventListener("click", (event) => {
+    if (deleting || event.detail > 1) return;
+    const row = /** @type {Element} */ (event.target).closest(".zettel-row");
+    if (!row) return;
+    clickedNoteID = row.getAttribute("data-id");
+    safeCall(select, clickedNoteID, { reveal: false });
+  });
+  $("knowledge-base-list").addEventListener("dblclick", (event) => {
+    if (deleting || inTrash()) return;
+    const row = /** @type {Element} */ (event.target).closest(".zettel-row");
+    const id = event.detail > 1 ? clickedNoteID : row?.getAttribute("data-id");
+    if (id && rowIndices.has(id)) safeCall(openNoteWindow, id);
+  });
   document
     .getElementById("knowledge-base-back")
     .addEventListener("command", () => safeCall(navigateHistory, -1));
@@ -707,9 +725,7 @@ function bindEvents() {
       const href = link.getAttribute("href");
       const card = await api.resolveCardLink(href);
       if (card?.targetId) {
-        $("knowledge-base-search").value = "";
-        await refresh();
-        select(card.targetId);
+        window.ZoteroKnowledgeBase_selectZettel(card.targetId);
       } else if (card) newZettel(card.ref);
       else await api.openLink(href);
     });
@@ -801,9 +817,7 @@ async function showNoteMenu(event, keyboard = false) {
     menu.append(document.createXULElement("menuseparator"));
   if (card) {
     add("open", "manager-open-note", () => select(id));
-    add("window", "manager-open-note-window", () =>
-      api.openEditor({ zettelId: id, window: true }),
-    );
+    add("window", "manager-open-note-window", () => openNoteWindow(id));
     separator();
     add("copy", "manager-copy-note-link", async () => {
       const current = await api.getZettel(id);
@@ -828,7 +842,7 @@ async function showNoteMenu(event, keyboard = false) {
         async () => {
           if (args.embedded) {
             if (await showInlineEditor({ zettelId: id, editTags: true }))
-              select(id, true, true);
+              select(id, { mounted: true });
           } else api.openEditor({ zettelId: id, editTags: true });
         },
         !editable,
@@ -904,8 +918,7 @@ async function refreshChanged(cardIDs, referencesChanged) {
       cardIDs,
       limit: 500,
       availability: inTrash() ? "trash" : "active",
-      tag: viewTag(),
-      ownTagsOnly: true,
+      noteType: viewType(),
       sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
         $("knowledge-base-sort").value
       ),
@@ -961,8 +974,7 @@ async function refresh(preserve = listScope === currentScope()) {
   listReferences = undefined;
   const options = {
     availability: inTrash() ? "trash" : "active",
-    tag: viewTag(),
-    ownTagsOnly: true,
+    noteType: viewType(),
     sort: /** @type {import("../../src/modules/note-sort").NoteSort} */ (
       $("knowledge-base-sort").value
     ),
@@ -1075,11 +1087,12 @@ function revealRow(id) {
   const pane = $("knowledge-base-list-pane");
   const top = index * ROW_HEIGHT + listHeaderHeight();
   const height = pane.clientHeight || 600;
+  const before = pane.scrollTop;
   if (top < pane.scrollTop + listHeaderHeight())
     pane.scrollTop = top - listHeaderHeight();
   else if (top + ROW_HEIGHT > pane.scrollTop + height)
     pane.scrollTop = top + ROW_HEIGHT - height;
-  renderList();
+  if (pane.scrollTop !== before || !getRenderedRow(id)) renderList();
 }
 
 function getRenderedRow(id) {
@@ -1166,6 +1179,15 @@ function renderList() {
     ]
       .filter(Boolean)
       .join(" · ");
+    const type = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    type.className = "note-type-label";
+    if (z.note_type) {
+      type.textContent = api.loc("note-type-" + z.note_type);
+      badges.prepend(type);
+    }
     li.appendChild(badges);
 
     const id = document.createElementNS("http://www.w3.org/1999/xhtml", "span");
@@ -1180,13 +1202,6 @@ function renderList() {
     id.title = z.id;
     li.appendChild(id);
 
-    li.addEventListener("click", () => {
-      if (deleting) return;
-      safeCall(select, z.id);
-    });
-    li.addEventListener("dblclick", () => {
-      if (!deleting && !inTrash()) safeCall(openEditor, z.id);
-    });
     list.appendChild(li);
   }
   spacer((zettels.length - end) * ROW_HEIGHT);
@@ -1306,11 +1321,12 @@ window.knowledgeBaseShowUnresolved = (ref) => {
   });
 };
 
-function select(id, record = true, mounted = false) {
+function select(id, { record = true, mounted = false, reveal = true } = {}) {
   if (!mounted) navigationVersion++;
   if (args.embedded && !mounted)
     return safeCall(async () => {
-      if (await showInlineEditor({ zettelId: id })) select(id, record, true);
+      if (await showInlineEditor({ zettelId: id }))
+        select(id, { record, mounted: true, reveal });
     });
   if (selectedId)
     scrollPositions.set(selectedId, $("knowledge-base-preview").scrollTop);
@@ -1326,7 +1342,7 @@ function select(id, record = true, mounted = false) {
     .getElementById("knowledge-base-forward")
     .toggleAttribute("disabled", historyIndex >= history.length - 1);
   selectedId = id;
-  revealRow(id);
+  if (reveal) revealRow(id);
   updateActions();
   for (const li of /** @type {HTMLLIElement[]} */ (
     Array.from($("knowledge-base-list").children)
@@ -1364,7 +1380,7 @@ async function navigateHistory(direction) {
   setView("all");
   updateActions();
   await refresh();
-  select(card.id, false);
+  select(card.id, { record: false });
 }
 
 async function refreshDrafts() {
@@ -1419,8 +1435,12 @@ async function renderDetail(id) {
   $("knowledge-base-detail-title").title = z.id;
   $("knowledge-base-detail-title").textContent =
     z.title || api.loc("manager-untitled");
-  $("knowledge-base-detail-meta").textContent =
-    `${api.loc("manager-updated")} ${new Date(z.updated_at).toLocaleString()}`;
+  $("knowledge-base-detail-meta").textContent = [
+    z.note_type ? api.loc("note-type-" + z.note_type) : "",
+    `${api.loc("manager-updated")} ${new Date(z.updated_at).toLocaleString()}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   renderHealth(
     document.getElementById("knowledge-base-detail-health"),
@@ -1554,6 +1574,21 @@ async function showInlineEditor(options) {
   for (const id of ["knowledge-base-detail", "knowledge-base-detail-empty"])
     document.getElementById(id).hidden = true;
   return true;
+}
+
+async function openNoteWindow(id) {
+  const frame = /** @type {HTMLIFrameElement} */ (
+    document.getElementById("knowledge-base-workbench-editor")
+  );
+  const editor = frame.contentWindow;
+  if (
+    args.embedded &&
+    editor?.knowledgeBaseCardId === id &&
+    !(await editor.save(false))
+  )
+    return;
+  if (!window.closed && !window.knowledgeBaseStopping)
+    api.openEditor({ zettelId: id, window: true });
 }
 
 function openEditor(id) {

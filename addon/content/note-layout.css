@@ -1,0 +1,13 @@
+/* Shared by the native editor, Markdown and read-only note surfaces. */
+:root {
+  --knowledge-base-note-width: 1280px;
+  --knowledge-base-note-gutter: 32px;
+  --knowledge-base-note-top: 20px;
+  --knowledge-base-note-bottom: 80px;
+}
+
+@media (max-width: 640px) {
+  :root {
+    --knowledge-base-note-gutter: 20px;
+  }
+}

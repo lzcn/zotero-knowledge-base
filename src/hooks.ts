@@ -6,6 +6,7 @@ import {
   closeNativeNotes,
   stopNativeNotes,
   recoverNativeSaves,
+  discoverNativeNotes,
 } from "./modules/native-notes";
 import {
   initNativeMarkdown,
@@ -13,6 +14,7 @@ import {
   closeNativeMarkdown,
 } from "./modules/native-markdown";
 import { rebuildCounts } from "./modules/zettel";
+import { initTagExclusions, stopTagExclusions } from "./modules/note-tags";
 import {
   initNoteSessions,
   stopNoteSessions,
@@ -40,6 +42,7 @@ import {
 // Same-version development installs must not reuse Zotero's cached sidebar CSS.
 const sectionStyleVersion = `${version}-${Date.now()}`;
 const windows = new Map<Window, Element[]>();
+const windowCleanups = new Map<Window, () => void>();
 let ready = false;
 let generation = 0;
 let startupPromise: Promise<void> | undefined;
@@ -105,6 +108,7 @@ async function start(token: number): Promise<void> {
         () => recoverNativeSaves(() => token !== generation),
       ],
       ["nativeNotes", initNativeNotes],
+      ["tagExclusions", initTagExclusions],
       ["rebuildCounts", () => rebuildCounts(() => token !== generation)],
       ["cleanupUnusedImages", cleanupImagesAfterChange],
       ["nativeMarkdown", initNativeMarkdown],
@@ -121,6 +125,9 @@ async function start(token: number): Promise<void> {
     ready = true;
     step = "registerWindowUI";
     for (const win of Zotero.getMainWindows()) await onMainWindowLoad(win);
+    void discoverNativeNotes().catch((error) => {
+      if (token === generation) Zotero.logError(error);
+    });
     await clearStartupLog();
   } catch (error) {
     ready = false;
@@ -182,6 +189,7 @@ async function onMainWindowLoad(win: Window): Promise<void> {
       menu.addEventListener("command", command);
       popup.appendChild(menu);
       nodes.push(menu);
+      return menu;
     };
     addMenu("menu_ToolsPopup", "menu-open-manager", "menu-open-manager", () =>
       addon.api.openManager(),
@@ -212,6 +220,53 @@ async function onMainWindowLoad(win: Window): Promise<void> {
             : undefined,
       });
     });
+    let noteRequest = 0;
+    const noteMenu = addMenu(
+      "zotero-itemmenu",
+      "itemmenu-open-note",
+      "menu-open-native-note",
+      () => {
+        const pane = (
+          win as Window & {
+            ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
+          }
+        ).ZoteroPane;
+        const items = pane.getSelectedItems();
+        if (items.length !== 1 || !items[0].isNote() || items[0].isInTrash())
+          return;
+        const request = ++noteRequest;
+        void (async () => {
+          const draft = (await addon.api.listEditorDrafts()).find(
+            (draft) => draft.noteID === items[0].id && !draft.id,
+          );
+          const id = draft
+            ? null
+            : await addon.api.ensureManagedNote(items[0].id);
+          if (request === noteRequest && windows.has(win) && ready) {
+            if (draft) addon.api.openEditor({ draftId: draft.draftId });
+            else if (id) addon.api.openEditor({ zettelId: id });
+          }
+        })().catch((error) => Zotero.logError(error));
+      },
+    );
+    const popup = doc.getElementById("zotero-itemmenu")!;
+    const showing = () => {
+      const pane = (
+        win as Window & {
+          ZoteroPane: ReturnType<typeof Zotero.getActiveZoteroPane>;
+        }
+      ).ZoteroPane;
+      const items = pane.getSelectedItems();
+      noteMenu.setAttribute("hidden", "true");
+      if (items.length === 1 && items[0].isNote() && !items[0].isInTrash())
+        noteMenu.removeAttribute("hidden");
+    };
+    noteMenu.setAttribute("hidden", "true");
+    popup.addEventListener("popupshowing", showing);
+    windowCleanups.set(win, () => {
+      ++noteRequest;
+      popup.removeEventListener("popupshowing", showing);
+    });
   } catch (error) {
     await onMainWindowUnload(win);
     throw error;
@@ -220,12 +275,14 @@ async function onMainWindowLoad(win: Window): Promise<void> {
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   const actions = [
+    windowCleanups.get(win),
     () => libraryRuntime.onWindowUnload(win),
     () => closeWorkbenches(win),
     ...(windows.get(win) ?? []).map((node) => () => node.remove()),
   ];
   // Release ownership before callbacks can trigger another unload.
   windows.delete(win);
+  windowCleanups.delete(win);
   for (const action of actions) {
     try {
       action?.();
@@ -259,6 +316,7 @@ async function releaseResources(): Promise<void> {
       }
     },
     () => libraryRuntime.close(),
+    stopTagExclusions,
     unregisterItemPaneUI,
     unregisterReaderToolbar,
     unregisterPreferences,
@@ -322,7 +380,12 @@ function onAppShutdown(): void {
     }
     editor.knowledgeBaseStopping = true;
   }
-  for (const action of [stopNativeMarkdown, stopNativeNotes, stopNoteSessions])
+  for (const action of [
+    stopTagExclusions,
+    stopNativeMarkdown,
+    stopNativeNotes,
+    stopNoteSessions,
+  ])
     stop(action);
   ++generation;
   ready = false;

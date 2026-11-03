@@ -150,24 +150,29 @@ export default async function viewsHost({
   const literature = await api.saveZettel({
     title: "View Fixture Literature",
     body: "A literature note.",
-    initialTags: ["Literature Note"],
+    noteType: "literature",
   });
   const zettel = await api.saveZettel({
     title: "View Fixture Zettel",
     body: "A related claim.",
-    initialTags: ["Zettel"],
+    noteType: "zettel",
     parentId: literature,
   });
   const thinking = await api.saveZettel({
     title: "View Fixture Thinking",
     body: "A thinking note.",
-    initialTags: ["Thinking Note"],
+    noteType: "thinking",
   });
   const plain = await api.saveZettel({
     title: "View Fixture Untagged",
     body: "Keep an unclassified note.",
   });
-  const active = [literature, zettel, thinking, plain];
+  const entity = await api.saveZettel({
+    noteType: "entity",
+    title: "LEVIR dataset",
+    body: "A dataset record.",
+  });
+  const active = [literature, zettel, thinking, plain, entity];
   main.resizeTo(1200, 850);
   await open();
   await expectRows(active);
@@ -177,20 +182,24 @@ export default async function viewsHost({
   );
   assert(
     manager.document.querySelectorAll("#knowledge-base-views [data-note-view]")
-      .length === 4 &&
+      .length === 6 &&
       !manager.document
         .getElementById("knowledge-base-views")
         .contains(control("trash")),
-    "Trash is not separate from the four categories",
+    "Trash is not separate from All and the five types",
   );
   const before = [...manager.document.querySelectorAll("[data-note-view]")].map(
     (button) => button.getBoundingClientRect().x,
   );
   await shot("all");
+  await choose("note", [plain]);
+  await shot("note");
   await choose("literature", [literature]);
   await shot("literature");
   await choose("zettel", [zettel]);
   await shot("zettel");
+  await choose("entity", [entity]);
+  await shot("entity");
   await choose("thinking", [thinking]);
   await shot("thinking");
   const thinkingEditor = manager.document.getElementById(
@@ -200,8 +209,23 @@ export default async function viewsHost({
     .getElementById("knowledge-base-rich-frame")
     .getCurrentInstance()._item.id;
   await api.setNoteTag(noteID, thinking, "Thinking Note", false);
-  await expectRows([]);
+  await expectRows([thinking]);
   await api.setNoteTag(noteID, thinking, "Thinking Note", true);
+  await expectRows([thinking]);
+  const previous = await api.getZettel(thinking);
+  await api.saveZettel({
+    id: thinking,
+    noteType: "entity",
+    title: previous.title,
+    body: previous.body,
+  });
+  await expectRows([]);
+  await api.saveZettel({
+    id: thinking,
+    noteType: "thinking",
+    title: previous.title,
+    body: previous.body,
+  });
   await expectRows([thinking]);
   const search = manager.document.getElementById("knowledge-base-search");
   search.value = "does not match";
@@ -252,7 +276,7 @@ export default async function viewsHost({
     marker,
     JSON.stringify({
       connectionsOnly: true,
-      active: [literature, zettel, plain],
+      active: [literature, zettel, plain, entity],
       thinking,
     }),
   );

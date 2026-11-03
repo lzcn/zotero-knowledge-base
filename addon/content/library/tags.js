@@ -1,3 +1,4 @@
+/* global Zotero */
 (async () => {
   const { api, libraryID, isMac } = window.arguments[0];
   const accel = (event) =>
@@ -29,7 +30,6 @@
     busy = false,
     closed = false,
     previewReady = false,
-    plan = null,
     anchor = null;
   const fmt = (id, args) => document.l10n.formatValue(id, args);
   const active = () => !closed;
@@ -43,10 +43,18 @@
   const report = async (error) => {
     if (active()) preview.textContent = await errorText(error);
   };
+  const exclusionsObserver = Zotero.Prefs.registerObserver(
+    "extensions.zotero.similar-works.excludedTags",
+    () => {
+      if (active() && !busy) void load().catch(report);
+    },
+    true,
+  );
   window.addEventListener(
     "unload",
     () => {
       closed = true;
+      Zotero.Prefs.unregisterObserver(exclusionsObserver);
       window.clearTimeout(searchTimer);
       revision++;
       renderRevision++;
@@ -82,7 +90,6 @@
 
   async function selectionChanged() {
     const token = ++revision;
-    plan = null;
     previewReady = false;
     apply.disabled = true;
     updateSelection();
@@ -95,9 +102,7 @@
         ? "similar-works-tags-delete-button"
         : merging
           ? "similar-works-tags-merge-button"
-          : mode.value === "format"
-            ? "similar-works-tags-format-button"
-            : "similar-works-tags-rename-button",
+          : "similar-works-tags-rename-button",
     );
     apply.dataset.action = mode.value;
     target.hidden = document.getElementById("target-label").hidden = !(
@@ -118,7 +123,7 @@
       ? [...selected].sort(
           (a, b) => (counts.get(b) || 0) - (counts.get(a) || 0),
         )[0] || ""
-      : api.formatName([...selected][0] || "");
+      : [...selected][0] || "";
     updateCollision();
     if (
       !selected.size ||
@@ -131,40 +136,23 @@
     preview.textContent = await fmt("similar-works-tags-preparing");
     try {
       const valid = () => active() && token === revision;
-      let text;
-      if (merging || deleting || singleRename) {
-        const affected = await api.preview(libraryID, [...selected], valid);
-        text = await fmt(
-          deleting
-            ? "similar-works-tags-delete-preview"
-            : singleRename
-              ? "similar-works-tags-rename-preview"
-              : "similar-works-tags-preview",
-          {
-            tags: selected.size,
-            count: affected,
-          },
-        );
-      } else {
-        const result = await api.planFormat(libraryID, [...selected], valid);
-        text = await fmt("similar-works-tags-format-preview", {
-          count: result.changes.length,
-          items: result.itemCount,
-          merges: result.collisions,
-        });
-        if (valid()) plan = result;
-      }
+      const affected = await api.preview(libraryID, [...selected], valid);
+      const text = await fmt(
+        deleting
+          ? "similar-works-tags-delete-preview"
+          : singleRename
+            ? "similar-works-tags-rename-preview"
+            : "similar-works-tags-preview",
+        { tags: selected.size, count: affected },
+      );
       if (!valid()) return;
       preview.textContent = text;
       previewReady = true;
       apply.disabled =
         busy ||
-        (deleting
-          ? false
-          : merging || singleRename
-            ? !target.value.trim() ||
-              (singleRename && target.value === [...selected][0])
-            : !plan?.changes.length);
+        (!deleting &&
+          (!target.value.trim() ||
+            (singleRename && target.value === [...selected][0])));
     } catch (error) {
       if (active() && token === revision) await report(error);
     }
@@ -239,9 +227,6 @@
           "http://www.w3.org/1999/xhtml",
           "td",
         );
-        const normalized = mode.value === "format" ? api.formatName(name) : "";
-        if (normalized && normalized !== name)
-          hint.textContent = "→ " + normalized;
         input.addEventListener("click", (event) => {
           if (event.shiftKey && anchor !== null) {
             const first = visible.indexOf(anchor),
@@ -261,7 +246,7 @@
           else selected.delete(name);
           void selectionChanged().catch(report);
         });
-        if (!normalized && groups.has(name)) {
+        if (groups.has(name)) {
           const group = groups.get(name);
           const peer = names.find(
             (other) => other !== name && groups.get(other) === group,
@@ -421,10 +406,12 @@
   });
   apply.addEventListener("command", async () => {
     if (busy || apply.disabled) return;
-    const currentPlan = plan,
-      merging = mode.value === "merge",
+    if (!["merge", "rename", "delete"].includes(mode.value)) {
+      await report(new Error("similar-works-tags-changed"));
+      return;
+    }
+    const merging = mode.value === "merge",
       deleting = mode.value === "delete",
-      singleRename = mode.value === "rename" && selected.size === 1,
       keep = api.normalizeName(target.value);
     busy = true;
     revision++;
@@ -450,18 +437,14 @@
       };
       const count = deleting
         ? await api.remove(libraryID, [...selected], active, progress)
-        : merging || singleRename
-          ? await api.merge(libraryID, [...selected], keep, active)
-          : await api.applyFormat(libraryID, currentPlan, active, progress);
+        : await api.merge(libraryID, [...selected], keep, active);
       selected.clear();
       resultText = await fmt(
         deleting
           ? "similar-works-tags-deleted"
           : merging
             ? "similar-works-tags-merged"
-            : singleRename
-              ? "similar-works-tags-renamed"
-              : "similar-works-tags-formatted",
+            : "similar-works-tags-renamed",
         { count, name: keep },
       );
     } catch (error) {

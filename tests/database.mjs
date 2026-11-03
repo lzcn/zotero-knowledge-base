@@ -122,6 +122,7 @@ const zoteroStub = {
     loadDataTypes: async () => {},
   },
   Tags: { getColors: () => new Map() },
+  Prefs: { get: () => undefined },
   debug: () => {},
   logError: (e) => console.log(`   [zotero.logError] ${e?.message ?? e}`),
 };
@@ -161,6 +162,7 @@ function createCurrentDatabase(file) {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       title_folded TEXT NOT NULL DEFAULT '',
+      note_type TEXT NOT NULL DEFAULT 'entity' CHECK(note_type IN ('literature','zettel','thinking','entity')),
       source_note INTEGER NOT NULL DEFAULT 0 CHECK(source_note IN (0,1) AND (source_note=0 OR (item_key IS NOT NULL AND library_id IS NOT NULL))),
       custom_key TEXT,
       body TEXT NOT NULL DEFAULT '',
@@ -189,7 +191,7 @@ function createCurrentDatabase(file) {
     CREATE INDEX idx_zettels_item ON zettels(item_key);
   `);
   db.prepare(
-    "INSERT INTO meta (key, value) VALUES ('schemaVersion', '12')",
+    "INSERT INTO meta (key, value) VALUES ('schemaVersion', '14')",
   ).run();
   const insert = db.prepare(
     "INSERT INTO zettels (id, title, body, item_key, library_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -307,6 +309,7 @@ const REQUIRED = [
   "library_id",
   "annotation_key",
   "source_note",
+  "note_type",
   "custom_key",
   "created_at",
   "updated_at",
@@ -330,8 +333,8 @@ async function initialize(label, dataDir, prepare) {
 
   const schema = await readSchema(path.join(dataDir, "knowledge-base.sqlite"));
   check(
-    "schemaVersion is 12",
-    schema.version === "12",
+    "schemaVersion is 14",
+    schema.version === "14",
     `got ${schema.version}`,
   );
   const missing = REQUIRED.filter((c) => !schema.columns.includes(c));
@@ -1953,7 +1956,7 @@ if (currentSchema) {
   await zettel.saveZettel({ title: "Pending", body: "[[Future concept]]" });
   const allGraph = await graph.getGraphData();
   check(
-    "graph includes actual direction, provenance and unresolved references",
+    "note graphs include direction, types and unresolved references without Source nodes",
     allGraph.edges.some(
       (edge) =>
         edge.source === markdownCard &&
@@ -1961,7 +1964,10 @@ if (currentSchema) {
         edge.kind === "link",
     ) &&
       allGraph.nodes.some(
-        (node) => node.kind === "source" && node.itemKey === "ITEMKEY1",
+        (node) =>
+          node.kind === "card" &&
+          node.itemKey === "ITEMKEY1" &&
+          node.noteType === "entity",
       ) &&
       allGraph.nodes.some(
         (node) => node.kind === "unresolved" && node.title === "Future concept",
@@ -2183,21 +2189,19 @@ if (currentSchema) {
   await db.closeDB();
 }
 
-// Conversion uses a disposable copy of the immediately preceding schema.
-const conversionDir = path.join(workspace, "type-to-tags");
+// Adopt only the installed schema; source roles and all original user data stay intact.
+const conversionDir = path.join(workspace, "tag-to-types");
 await mkdir(conversionDir);
 const conversionFile = path.join(conversionDir, "knowledge-base.sqlite");
 createCurrentDatabase(conversionFile);
 const legacy = new DatabaseSync(conversionFile);
 legacy.exec(`
-  ALTER TABLE zettels ADD COLUMN kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature', 'zettel', 'thinking') AND (kind <> 'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL)));
-  UPDATE zettels SET kind = CASE id WHEN '20260101010101' THEN 'literature' WHEN '20260101010102' THEN 'thinking' ELSE 'zettel' END;
-  ALTER TABLE zettels DROP COLUMN source_note;
-  CREATE UNIQUE INDEX idx_literature_source ON zettels(library_id, item_key) WHERE kind='literature';
-  UPDATE meta SET value='11' WHERE key='schemaVersion';
+  ALTER TABLE zettels DROP COLUMN note_type;
+  UPDATE meta SET value='12' WHERE key='schemaVersion';
+  UPDATE zettels SET source_note=1 WHERE id='20260101010101';
   UPDATE zettels SET custom_key='KeepAlias' WHERE id='20260101010102';
   UPDATE card_parents SET parent_id='20260101010101' WHERE card_id='20260101010102';
-  INSERT INTO tags VALUES ('20260101010102','Existing tag');
+  INSERT INTO tags VALUES ('20260101010102','Existing tag'),('20260101010102','Thinking Note');
   CREATE TABLE card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, external INTEGER NOT NULL DEFAULT 0, UNIQUE(note_key, library_id));
   INSERT INTO card_notes VALUES ('20260101010101','OLDNOTE1',1,'body one',0);
   CREATE TABLE note_keys (key TEXT PRIMARY KEY, card_id TEXT NOT NULL);
@@ -2210,7 +2214,7 @@ const draftBefore = {
   draftRevision: 7,
   title: "未完成",
   body: "保留 **原文** [[OldAlias]]",
-  kind: "thinking",
+  initialTags: ["Thinking Note"],
   sourceDocument: "# 未完成\n\n保留 **原文** [[OldAlias]]",
 };
 legacy
@@ -2232,7 +2236,8 @@ const journalBefore = {
   input: {
     ...draftBefore,
     id: "reserved-note",
-    kind: "literature",
+    sourceNote: true,
+    initialTags: ["Literature Note"],
     itemKey: "SOURCEITEM",
     libraryID: 1,
   },
@@ -2242,8 +2247,19 @@ legacy
   .run(journalBefore.id, "reserved-note", JSON.stringify(journalBefore), 123);
 const rowsBefore = legacy.prepare("SELECT * FROM zettels ORDER BY id").all();
 legacy.close();
+const priorConversionItems = zoteroStub.Items;
+let nativeTagWrites = 0;
+zoteroStub.Items = {
+  ...priorConversionItems,
+  getByLibraryAndKeyAsync: async () => ({
+    isNote: () => true,
+    getTags: () => [{ tag: "Literature Note" }, { tag: "Dataset" }],
+    addTag: () => nativeTagWrites++,
+    saveTx: async () => nativeTagWrites++,
+  }),
+};
 zoteroStub.DataDirectory.dir = conversionDir;
-failStatement = (sql) => sql.includes("DROP COLUMN kind");
+failStatement = (sql) => sql.startsWith("UPDATE zettels SET note_type");
 let conversionFailed = false;
 try {
   await db.initDB();
@@ -2254,40 +2270,38 @@ failStatement = undefined;
 await db.closeDB();
 const rolledBack = new DatabaseSync(conversionFile);
 check(
-  "Failed type conversion rolls back schema, tags and original data together",
+  "Failed type adoption rolls back schema and leaves tags and original rows intact",
   conversionFailed &&
     rolledBack.prepare("SELECT value FROM meta WHERE key='schemaVersion'").get()
-      .value === "11" &&
-    rolledBack.prepare("SELECT COUNT(*) AS n FROM tags").get().n === 1 &&
-    rolledBack.prepare("SELECT kind FROM zettels ORDER BY id").get().kind ===
-      "literature",
+      .value === "12" &&
+    !rolledBack
+      .prepare("PRAGMA table_info(zettels)")
+      .all()
+      .some((row) => row.name === "note_type") &&
+    rolledBack.prepare("SELECT COUNT(*) AS n FROM tags").get().n === 2,
 );
 rolledBack.close();
 await db.initDB();
 const convertedSchema = await readSchema(conversionFile);
 const converted = await db.getAll("SELECT * FROM zettels ORDER BY id");
 check(
-  "Type conversion removes the type column and preserves every other note field",
-  convertedSchema.version === "12" &&
-    !convertedSchema.columns.includes("kind") &&
+  "Type adoption preserves every original note field and source role",
+  convertedSchema.version === "14" &&
     converted.every((row, i) =>
-      Object.keys(rowsBefore[i])
-        .filter((key) => key !== "kind")
-        .every((key) => row[key] === rowsBefore[i][key]),
+      Object.keys(rowsBefore[i]).every(
+        (key) => row[key] === rowsBefore[i][key],
+      ),
     ) &&
-    converted[0].source_note === 1 &&
-    converted.slice(1).every((row) => row.source_note === 0),
+    converted[0].note_type === "literature" &&
+    converted[1].note_type === "thinking" &&
+    converted[2].note_type === "entity",
 );
 check(
-  "Each previous type becomes an ordinary tag without replacing existing tags",
-  (await noteTags.getOwnNoteTags(null, "20260101010101")).join() ===
-    "Literature Note" &&
-    (await noteTags.getOwnNoteTags(null, "20260101010102")).join() ===
-      "Existing tag,Thinking Note" &&
-    (await noteTags.getOwnNoteTags(null, "20260101010103")).join() === "Zettel",
+  "Type adoption reads own tags without writing native notes or adding classification tags",
+  nativeTagWrites === 0 && (await db.getAll("SELECT * FROM tags")).length === 2,
 );
 check(
-  "Conversion retains links, parent identities, note mappings and old aliases",
+  "Type adoption retains links, parents, mappings and old aliases",
   (await zettel.getOutgoing("20260101010102"))[0].targetId ===
     "20260101010101" &&
     (await hierarchy.getFamily("20260101010102")).parent.id ===
@@ -2303,60 +2317,429 @@ check(
 const convertedDraft = await drafts.getEditorDraft("legacy-draft");
 const convertedJournal = (await operations.listNoteOperations())[0];
 check(
-  "Unsaved drafts and interrupted save intent keep content while replacing type with tags",
+  "Unsaved drafts and interrupted saves retain their complete content and receive a type",
   convertedDraft.body === draftBefore.body &&
     convertedDraft.sourceDocument === draftBefore.sourceDocument &&
     convertedDraft.draftRevision === 7 &&
-    !("kind" in convertedDraft) &&
-    convertedDraft.initialTags[0] === "Thinking Note" &&
+    convertedDraft.noteType === "thinking" &&
     convertedJournal.expectedHTML === journalBefore.expectedHTML &&
     convertedJournal.intendedHTML === journalBefore.intendedHTML &&
     convertedJournal.input.sourceNote &&
-    !("kind" in convertedJournal.input) &&
-    convertedJournal.input.initialTags[0] === "Literature Note",
-);
-const priorConversionItems = zoteroStub.Items,
-  priorLibraries = zoteroStub.Libraries;
-const nativeTagSet = new Set(["Native existing"]);
-const convertedNative = {
-  id: 5001,
-  key: "OLDNOTE1",
-  libraryID: 1,
-  isNote: () => true,
-  isInTrash: () => false,
-  getTags: () => [...nativeTagSet].map((tag) => ({ tag })),
-  addTag: (tag) => nativeTagSet.add(tag),
-  removeTag: (tag) => nativeTagSet.delete(tag),
-  saveTx: async () => {},
-};
-zoteroStub.Items = {
-  getByLibraryAndKeyAsync: async () => convertedNative,
-  getAsync: async () => convertedNative,
-  loadDataTypes: async () => {},
-};
-zoteroStub.Libraries = { get: () => ({ editable: true }) };
-await noteTags.applyPendingTagsToMappedNotes(() => false);
-check(
-  "Converted tags merge into the original native note and clear only delivered pending tags",
-  nativeTagSet.has("Native existing") &&
-    nativeTagSet.has("Literature Note") &&
-    !(await db.getAll("SELECT tag FROM tags WHERE zettel_id='20260101010101'"))
-      .length,
-);
-await noteTags.changeNoteTag(5001, "20260101010101", "Literature Note", false);
-await db.closeDB();
-await db.initDB();
-await noteTags.applyPendingTagsToMappedNotes(() => false);
-check(
-  "Deleting a converted tag remains deleted after reopening and never changes the source note",
-  !nativeTagSet.has("Literature Note") &&
-    nativeTagSet.has("Native existing") &&
-    (await zettel.getZettel("20260101010101")).source_note === 1 &&
-    (await zettel.getZettel("20260101010101")).body === "body one",
+    convertedJournal.input.noteType === "literature",
 );
 zoteroStub.Items = priorConversionItems;
-zoteroStub.Libraries = priorLibraries;
+const unclassified = await zettel.saveZettel({
+  title: "Unclassified",
+  body: "No default class",
+});
+check(
+  "New notes default to Entity and acquire no default tags",
+  (await zettel.getZettel(unclassified)).note_type === "entity" &&
+    !(await noteTags.getOwnNoteTags(null, unclassified)).length,
+);
+const entityID = await zettel.saveZettel({
+  noteType: "entity",
+  title: "LEVIR dataset",
+  body: "Dataset record [[OldAlias]]",
+  parentId: "20260101010102",
+  customKey: "LEVIR",
+});
+check(
+  "Entity is stored as metadata without a classification tag",
+  (await zettel.getZettel(entityID)).note_type === "entity" &&
+    !(await noteTags.getOwnNoteTags(null, entityID)).length,
+);
+const typeBefore = await zettel.getZettel(entityID);
+await zettel.saveZettel({
+  id: entityID,
+  noteType: "zettel",
+  title: typeBefore.title,
+  body: typeBefore.body,
+  customKey: typeBefore.custom_key,
+  expectedUpdatedAt: typeBefore.updated_at,
+});
+check(
+  "Changing a type preserves content, references, links and hierarchy",
+  (await zettel.getZettel(entityID)).note_type === "zettel" &&
+    (await zettel.getZettel(entityID)).body === typeBefore.body &&
+    (await zettel.getZettel(entityID)).reference === typeBefore.reference &&
+    (await hierarchy.getFamily(entityID)).parent.id === "20260101010102" &&
+    (await zettel.getOutgoing(entityID))[0].targetId === "20260101010102",
+);
+const staleType = await zettel.getZettel(entityID);
+await zettel.saveZettel({
+  id: entityID,
+  noteType: "entity",
+  title: staleType.title,
+  body: staleType.body,
+});
+let conflictRejected = false;
+try {
+  await zettel.saveZettel({
+    id: entityID,
+    noteType: "thinking",
+    title: "Stale",
+    body: "Overwrite",
+    expectedUpdatedAt: staleType.updated_at,
+  });
+} catch {
+  conflictRejected = true;
+}
+check(
+  "Returning to Entity and optimistic conflicts preserve the current note",
+  (await zettel.getZettel(entityID)).note_type === "entity" &&
+    conflictRejected &&
+    (await zettel.getZettel(entityID)).body === typeBefore.body,
+);
+const readingBefore = await zettel.getZettel("20260101010101");
+await zettel.saveZettel({
+  id: readingBefore.id,
+  noteType: "entity",
+  title: readingBefore.title,
+  body: readingBefore.body,
+  itemKey: readingBefore.item_key,
+  libraryID: readingBefore.library_id,
+});
+check(
+  "Classification is independent from a paper's unique source-note role",
+  (await zettel.getZettel(readingBefore.id)).note_type === "entity" &&
+    (await zettel.getZettel(readingBefore.id)).source_note === 1 &&
+    (await zettel.countByItem(readingBefore.item_key)) === 2,
+);
+let badType = false;
+try {
+  await zettel.saveZettel({
+    id: entityID,
+    noteType: "unknown",
+    title: "Lost",
+    body: "Lost",
+  });
+} catch {
+  badType = true;
+}
+check(
+  "Unsupported note types are rejected without changing content",
+  badType && (await zettel.getZettel(entityID)).body === typeBefore.body,
+);
+const typePage = await zettel.searchZettels("", { noteType: "entity" });
+check(
+  "Type filters use metadata rather than existing topic or legacy classification tags",
+  JSON.stringify(typePage.items.map((note) => note.id).sort()) ===
+    JSON.stringify(
+      ["20260101010103", unclassified, entityID, readingBefore.id].sort(),
+    ) &&
+    typePage.items.every((note) => note.note_type === "entity") &&
+    !(await zettel.searchZettels("", { noteType: "literature" })).items.length,
+);
 await db.closeDB();
+await db.initDB();
+check(
+  "Chosen types persist after reopening without resurrecting old classifications",
+  (await zettel.getZettel(entityID)).note_type === "entity" &&
+    (await zettel.getZettel(readingBefore.id)).note_type === "entity" &&
+    (await zettel.getZettel("20260101010102")).note_type === "thinking",
+);
+await db.closeDB();
+
+// Replace the previous default without touching original note content or identities.
+const ordinaryDir = path.join(workspace, "note-to-entity");
+await mkdir(ordinaryDir);
+const ordinaryFile = path.join(ordinaryDir, "knowledge-base.sqlite");
+createCurrentDatabase(ordinaryFile);
+zoteroStub.DataDirectory.dir = ordinaryDir;
+await db.initDB();
+await db.closeDB();
+const ordinary = new DatabaseSync(ordinaryFile);
+ordinary.exec(`
+  ALTER TABLE zettels DROP COLUMN note_type;
+  ALTER TABLE zettels ADD COLUMN note_type TEXT NOT NULL DEFAULT 'note' CHECK(note_type IN ('note','literature','zettel','thinking','entity'));
+  UPDATE zettels SET note_type='thinking' WHERE id='20260101010102';
+  UPDATE meta SET value='13' WHERE key='schemaVersion';
+`);
+const ordinaryRows = ordinary
+  .prepare("SELECT * FROM zettels ORDER BY id")
+  .all();
+const ordinaryDraft = { ...draftBefore, noteType: "note" };
+const ordinaryJournal = {
+  ...journalBefore,
+  input: { ...journalBefore.input, noteType: "note" },
+};
+ordinary
+  .prepare("INSERT INTO editor_drafts VALUES (?,?,?,?,?)")
+  .run(
+    ordinaryDraft.draftId,
+    ordinaryDraft.body,
+    JSON.stringify(ordinaryDraft),
+    7,
+    123,
+  );
+ordinary
+  .prepare("INSERT INTO note_save_operations VALUES (?,?,?,?)")
+  .run(
+    ordinaryJournal.id,
+    "reserved-note",
+    JSON.stringify(ordinaryJournal),
+    123,
+  );
+ordinary.close();
+failStatement = (sql) => sql.startsWith("UPDATE zettels SET note_type");
+let ordinaryFailed = false;
+try {
+  await db.initDB();
+} catch {
+  ordinaryFailed = true;
+}
+failStatement = undefined;
+await db.closeDB();
+const ordinaryRollback = new DatabaseSync(ordinaryFile);
+check(
+  "Failed default-type replacement restores the entire previous schema and pending drafts",
+  ordinaryFailed &&
+    ordinaryRollback
+      .prepare("SELECT value FROM meta WHERE key='schemaVersion'")
+      .get().value === "13" &&
+    ordinaryRollback.prepare("SELECT note_type FROM zettels ORDER BY id").get()
+      .note_type === "note" &&
+    JSON.parse(
+      ordinaryRollback.prepare("SELECT data FROM editor_drafts").get().data,
+    ).noteType === "note",
+);
+ordinaryRollback.close();
+await db.initDB();
+const entityRows = await db.getAll("SELECT * FROM zettels ORDER BY id");
+check(
+  "Existing Note metadata becomes Entity while every other field and classification is retained",
+  (await readSchema(ordinaryFile)).version === "14" &&
+    entityRows.map((row) => row.note_type).join() ===
+      "entity,thinking,entity" &&
+    entityRows.every((row, i) =>
+      Object.keys(ordinaryRows[i]).every(
+        (key) => key === "note_type" || row[key] === ordinaryRows[i][key],
+      ),
+    ) &&
+    (await zettel.getOutgoing("20260101010102"))[0].targetId ===
+      "20260101010101",
+);
+check(
+  "Pending Note drafts and interrupted saves become Entity without changing their contents or revisions",
+  (await drafts.getEditorDraft(ordinaryDraft.draftId)).noteType === "entity" &&
+    (await drafts.getEditorDraft(ordinaryDraft.draftId)).sourceDocument ===
+      ordinaryDraft.sourceDocument &&
+    (await drafts.getEditorDraft(ordinaryDraft.draftId)).draftRevision === 7 &&
+    (await operations.listNoteOperations())[0].input.noteType === "entity" &&
+    (await operations.listNoteOperations())[0].intendedHTML ===
+      ordinaryJournal.intendedHTML,
+);
+let removedTypeRejected = false;
+try {
+  await db.exec(
+    "UPDATE zettels SET note_type='note' WHERE id='20260101010101'",
+  );
+} catch {
+  removedTypeRejected = true;
+}
+check("The current schema rejects the removed Note type", removedTypeRejected);
+const originalTagPrefs = zoteroStub.Prefs;
+let exclusions = "Status, GraphNeuralNetworks，#Co-Attention";
+const exclusionObservers = new Map();
+zoteroStub.Prefs = {
+  get: (key) =>
+    key === "extensions.zotero.similar-works.excludedTags"
+      ? exclusions
+      : undefined,
+  registerObserver: (key, callback) => {
+    exclusionObservers.set(key, callback);
+    return key;
+  },
+  unregisterObserver: (key) => exclusionObservers.delete(key),
+};
+const visibleCard = await zettel.saveZettel({
+  title: "Visible labels",
+  body: "Keep all original tags.",
+  initialTags: ["Status", "#Graph Neural Networks", "co_attention", "PyTorch"],
+});
+check(
+  "One comma-separated exclusion policy hides note tags and name variants without deleting originals",
+  JSON.stringify(await noteTags.getEffectiveNoteTags(null, visibleCard)) ===
+    '["PyTorch"]' &&
+    (await noteTags.getOwnNoteTags(null, visibleCard)).length === 4 &&
+    (await graph.getGraphData()).nodes
+      .find((node) => node.id === visibleCard)
+      .tags.join() === "PyTorch",
+);
+await noteTags.getGraphTags();
+const beforeVisibleRefresh = executedStatements.length;
+exclusions = "";
+check(
+  "Unexcluding a tag restores display vocabulary from the existing tag index without new database reads",
+  (await noteTags.getGraphTags()).includes("Status") &&
+    executedStatements.length === beforeVisibleRefresh,
+);
+let visibilityChange;
+const stopVisibility = events.onDataChange((change) => {
+  visibilityChange = change;
+});
+const rawTagRevision = events.getTagRevision(),
+  rawSourceRevision = events.getSourceRevision();
+noteTags.initTagExclusions();
+noteTags.initTagExclusions();
+exclusionObservers.get("extensions.zotero.similar-works.excludedTags")();
+await Promise.resolve();
+check(
+  "Exclusion changes refresh visibility without invalidating source or stored tag data",
+  exclusionObservers.size === 1 &&
+    visibilityChange.fields.join() === "tag-visibility" &&
+    events.getTagRevision() === rawTagRevision &&
+    events.getSourceRevision() === rawSourceRevision,
+);
+noteTags.stopTagExclusions();
+noteTags.stopTagExclusions();
+stopVisibility();
+check(
+  "Tag exclusion observers are released without duplicate registrations",
+  exclusionObservers.size === 0,
+);
+zoteroStub.Prefs = originalTagPrefs;
+await db.closeDB();
+
+// Discovery links originals in place, including read-only notes and duplicate titles.
+const discoveryDir = path.join(workspace, "native-discovery");
+await mkdir(discoveryDir);
+const discoveryHost = { ...zoteroStub };
+const discoveryDOM = new JSDOM("<!doctype html><body></body>");
+zoteroStub.DataDirectory = { dir: discoveryDir };
+zoteroStub.getMainWindow = () => discoveryDOM.window;
+zoteroStub.Prefs = { get: () => undefined };
+zoteroStub.Promise = { delay: async () => {} };
+zoteroStub.ItemTypes = { getID: () => 1 };
+zoteroStub.Libraries = {
+  userLibraryID: 1,
+  getAll: () => [{ libraryID: 1, libraryType: "user" }],
+};
+let discoveryWrites = 0;
+const discoveryItems = new Map();
+const discoveryParent = {
+  id: 9001,
+  key: "PARENT01",
+  libraryID: 1,
+  isNote: () => false,
+  isRegularItem: () => true,
+  isInTrash: () => false,
+  getField: () => "",
+  getCreators: () => [],
+};
+discoveryItems.set(9001, discoveryParent);
+for (const id of [9101, 9102, 9103])
+  discoveryItems.set(id, {
+    id,
+    key: `NOTE${id}`,
+    libraryID: 1,
+    parentItemID: id === 9101 ? 9001 : false,
+    isNote: () => true,
+    isRegularItem: () => false,
+    isInTrash: () => false,
+    isEditable: () => false,
+    getField: (field) =>
+      field === "dateAdded" ? "2020-01-01 00:00:00" : "2021-01-01 00:00:00",
+    getNote: () =>
+      "<div data-schema-version='9'><h1>Identical title</h1><p>Identical original <strong>HTML</strong>.</p>" +
+      (id === 9101
+        ? '<p><a href="zotero://note/u/NOTE9102">Next</a></p>'
+        : "") +
+      "</div>",
+    setNote: () => discoveryWrites++,
+    saveTx: async () => discoveryWrites++,
+  });
+zoteroStub.Items = {
+  getAsync: async (id) => discoveryItems.get(id),
+  getByLibraryAndKeyAsync: async (libraryID, key) =>
+    [...discoveryItems.values()].find(
+      (item) => item.key === key && item.libraryID === libraryID,
+    ),
+  loadDataTypes: async () => {},
+};
+zoteroStub.DB = {
+  queryAsync: async (_sql, params) =>
+    [...discoveryItems.values()]
+      .filter((item) => item.isNote() && item.id > params[1])
+      .map((item) => ({
+        itemID: item.id,
+        key: item.key,
+        libraryID: item.libraryID,
+      })),
+};
+await db.initDB();
+const adopted = await Promise.all([
+  nativeNotes.ensureManagedNote(9101),
+  nativeNotes.ensureManagedNote(9101),
+]);
+check(
+  "Concurrent discovery creates exactly one mapping per original note",
+  adopted[0] === adopted[1] &&
+    (await db.getAll("SELECT * FROM card_notes")).length === 1,
+);
+await nativeNotes.discoverNativeNotes();
+const discovered = await zettel.listZettels();
+check(
+  "Automatic discovery includes every original with identical content without copying or merging them",
+  discovered.length === 3 &&
+    new Set(discovered.map((note) => note.id)).size === 3 &&
+    (await db.getAll("SELECT * FROM card_notes WHERE external=1")).length === 3,
+);
+check(
+  "Discovery defaults to Note and preserves read-only native HTML and placement without writes",
+  discoveryWrites === 0 &&
+    discovered.every((note) => note.note_type === "entity") &&
+    discoveryItems.get(9101).parentItemID === 9001 &&
+    (await zettel.getZettel(adopted[0])).item_key === "PARENT01" &&
+    (await db.getAll("SELECT * FROM tags")).length === 0,
+);
+await nativeNotes.discoverNativeNotes();
+check(
+  "Repeated discovery reuses mappings without creating more notes",
+  (await zettel.listZettels()).length === 3 && discoveryWrites === 0,
+);
+check(
+  "Discovery retains original dates and resolves forward native-note links after the target appears",
+  discovered.every(
+    (note) =>
+      note.created_at === Date.UTC(2020, 0, 1) &&
+      note.updated_at === Date.UTC(2021, 0, 1),
+  ) &&
+    (await zettel.getOutgoing(adopted[0]))[0]?.targetId ===
+      (await nativeNotes.ensureManagedNote(9102)),
+);
+discoveryItems.set(9104, {
+  ...discoveryItems.get(9103),
+  id: 9104,
+  key: "NOTE9104",
+});
+await drafts.saveEditorDraft({
+  draftId: "uncommitted-native",
+  draftRevision: 1,
+  title: "Draft",
+  body: "Keep unsaved content",
+  noteID: 9104,
+});
+await nativeNotes.discoverNativeNotes();
+check(
+  "Discovery leaves a retained unsaved editor draft in control of its original native note",
+  (await nativeNotes.ensureManagedNote(9104)) === null &&
+    (await zettel.listZettels()).length === 3 &&
+    (await drafts.getEditorDraft("uncommitted-native")).body ===
+      "Keep unsaved content",
+);
+await drafts.discardEditorDraft("uncommitted-native");
+await nativeNotes.discoverNativeNotes();
+check(
+  "A released draft's native note can subsequently be discovered once",
+  !!(await nativeNotes.ensureManagedNote(9104)) &&
+    (await zettel.listZettels()).length === 4 &&
+    discoveryWrites === 0,
+);
+await db.closeDB();
+Object.assign(zoteroStub, discoveryHost);
+discoveryDOM.window.close();
 
 // Trash operations target managed originals and recheck their state at write time.
 const trashDir = path.join(workspace, "trash");

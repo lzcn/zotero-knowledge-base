@@ -8,7 +8,6 @@ pref(
 pref("extensions.zotero.knowledge-base.graph.groups", "[]");
 pref("extensions.zotero.knowledge-base.graph.outline", true);
 pref("extensions.zotero.knowledge-base.graph.references", true);
-pref("extensions.zotero.knowledge-base.graph.sources", true);
 pref("extensions.zotero.knowledge-base.graph.hideIsolated", false);
 pref("extensions.zotero.knowledge-base.graph.labelLength", 20);
 pref("extensions.zotero.knowledge-base.graph.localDepth", 1);
@@ -29,7 +28,4 @@ pref("extensions.zotero.similar-works.backgroundIndexing", true);
 pref("extensions.zotero.similar-works.indexDelayMs", 2000);
 pref("extensions.zotero.similar-works.minFulltextTerms", 25);
 pref("extensions.zotero.similar-works.requestMissingFulltext", false);
-pref("extensions.zotero.similar-works.tagNameStyle", "sentence");
-pref("extensions.zotero.similar-works.tagHashtag", false);
-pref("extensions.zotero.similar-works.excludeColoredTags", true);
 pref("extensions.zotero.similar-works.excludedTags", "");

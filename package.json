@@ -1,7 +1,7 @@
 {
   "name": "zotero-knowledge-base",
   "type": "module",
-  "version": "0.6.7",
+  "version": "0.7.1",
   "description": "Notes, tags and related papers for Zotero",
   "config": {
     "addonName": "Knowledge Base",
@@ -29,6 +29,7 @@
     "test:pane": "node tests/item-pane.mjs",
     "test:host": "node scripts/test-zotero-quit.mjs",
     "test:workbench:host": "node scripts/test-zotero-quit.mjs --workbench",
+    "test:graph-views:host": "node scripts/test-zotero-quit.mjs --graph-views",
     "test:views:host": "node scripts/test-zotero-quit.mjs --views",
     "test:metadata:host": "node scripts/test-zotero-quit.mjs --metadata",
     "test:text-tools:host": "node scripts/test-zotero-quit.mjs --text-tools",
@@ -49,7 +50,7 @@
     "lint": "npm run lint:check",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ui.json",
     "build:force": "node scripts/build.mjs --force",
-    "test:tags-conversion:host": "node scripts/test-zotero-quit.mjs --tags-conversion",
+    "test:types:host": "node scripts/test-zotero-quit.mjs --note-types",
     "test:library": "node --test tests/library/*.test.js",
     "test:library:host": "node scripts/test-library-host.mjs"
   },

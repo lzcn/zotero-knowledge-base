@@ -1,7 +1,6 @@
-/* Compact rows with Zotero's native typography and controls. */
+/* Native rows with accents confined to section headings. */
 .plugin-preferences {
   min-width: 0;
-  --settings-surface: var(--material-background, #fff);
   --settings-border: var(--color-border, #d8dce1);
   --settings-general: #5f6c7b;
   --settings-notes: #3768ad;
@@ -10,7 +9,6 @@
 }
 @media (prefers-color-scheme: dark) {
   .plugin-preferences {
-    --settings-surface: var(--material-background, #242424);
     --settings-border: var(--color-border, #52565d);
     --settings-general: #b0bac7;
     --settings-notes: #a0bdec;
@@ -34,17 +32,11 @@
 .plugin-preferences
   .main-section:not([hidden]):not(.hidden-by-search)
   ~ .main-section {
-  margin: 0 0 12px;
-  padding: 12px 14px;
-  border: 1px solid
-    color-mix(in srgb, var(--section-accent) 22%, var(--settings-border));
-  border-inline-start: 3px solid var(--section-accent);
-  border-radius: 6px;
-  background: color-mix(
-    in srgb,
-    var(--section-accent) 3%,
-    var(--settings-surface)
-  );
+  margin: 0 0 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .plugin-preferences h3 {
   margin-block: 0 8px;
@@ -53,6 +45,8 @@
 .plugin-preferences .main-section > h3 {
   color: var(--section-accent);
   font-weight: 600;
+  border-inline-start: 3px solid var(--section-accent);
+  padding-inline-start: 8px;
 }
 .plugin-preferences .settings-cache,
 .plugin-preferences #knowledge-base-graph-appearance {

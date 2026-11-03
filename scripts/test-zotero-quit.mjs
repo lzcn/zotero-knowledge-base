@@ -19,6 +19,8 @@ const binary =
   process.env.ZOTERO_BINARY || "/Applications/Zotero.app/Contents/MacOS/zotero";
 await access(binary);
 const args = process.argv.slice(2);
+const graphViewsOnly = args.includes("--graph-views");
+const noteTypesOnly = args.includes("--note-types");
 const readerToolbarOnly = args.includes("--reader-toolbar");
 const textToolsOnly = args.includes("--text-tools");
 const workbenchOnly = args.includes("--workbench");
@@ -26,19 +28,29 @@ const metadataOnly = args.includes("--metadata");
 const viewsOnly = args.includes("--views");
 const retiredOnly = args.includes("--retired-features");
 const editingHost =
-  textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly
+  graphViewsOnly ||
+  noteTypesOnly ||
+  textToolsOnly ||
+  workbenchOnly ||
+  metadataOnly ||
+  viewsOnly ||
+  retiredOnly
     ? (
         await readFile(
           new URL(
-            retiredOnly
-              ? "./retired-features-host.mjs"
-              : viewsOnly
-                ? "./views-host.mjs"
-                : metadataOnly
-                  ? "./metadata-host.mjs"
-                  : workbenchOnly
-                    ? "./workbench-host.mjs"
-                    : "./text-tools-host.mjs",
+            graphViewsOnly
+              ? "./graph-views-host.mjs"
+              : noteTypesOnly
+                ? "./note-types-host.mjs"
+                : retiredOnly
+                  ? "./retired-features-host.mjs"
+                  : viewsOnly
+                    ? "./views-host.mjs"
+                    : metadataOnly
+                      ? "./metadata-host.mjs"
+                      : workbenchOnly
+                        ? "./workbench-host.mjs"
+                        : "./text-tools-host.mjs",
             import.meta.url,
           ),
           "utf8",
@@ -47,7 +59,6 @@ const editingHost =
     : "";
 const contextOnly = args.includes("--context-menu");
 const trashOnly = args.includes("--trash");
-const conversionOnly = args.includes("--tags-conversion");
 const appearanceOnly = args.includes("--appearance");
 const toolbarOnly = args.includes("--toolbar");
 const templatesOnly = args.includes("--templates");
@@ -60,7 +71,8 @@ const connectionsOnly =
   templatesOnly ||
   toolbarOnly ||
   appearanceOnly ||
-  conversionOnly ||
+  graphViewsOnly ||
+  noteTypesOnly ||
   trashOnly ||
   contextOnly ||
   readerToolbarOnly ||
@@ -119,12 +131,12 @@ if (readerToolbarOnly) {
     "\n%%EOF\n";
   await writeFile(readerPDF, pdf);
 }
-if (conversionOnly) {
+if (noteTypesOnly) {
   const legacy = new DatabaseSync(join(data, "knowledge-base.sqlite"));
   legacy.exec(`
-    CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); INSERT INTO meta VALUES('schemaVersion','11');
-    CREATE TABLE zettels(id TEXT PRIMARY KEY,title TEXT NOT NULL DEFAULT '',title_folded TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',item_key TEXT,library_id INTEGER,annotation_key TEXT,custom_key TEXT,kind TEXT NOT NULL DEFAULT 'zettel' CHECK(kind IN ('literature','zettel','thinking') AND (kind<>'literature' OR (item_key IS NOT NULL AND library_id IS NOT NULL))),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-    CREATE UNIQUE INDEX idx_literature_source ON zettels(library_id,item_key) WHERE kind='literature';
+    CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT); INSERT INTO meta VALUES('schemaVersion','12');
+    CREATE TABLE zettels(id TEXT PRIMARY KEY,title TEXT NOT NULL DEFAULT '',title_folded TEXT NOT NULL DEFAULT '',body TEXT NOT NULL DEFAULT '',item_key TEXT,library_id INTEGER,annotation_key TEXT,custom_key TEXT,source_note INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+    CREATE UNIQUE INDEX idx_literature_source ON zettels(library_id,item_key) WHERE source_note=1;
     CREATE TABLE tags(zettel_id TEXT NOT NULL,tag TEXT NOT NULL,UNIQUE(zettel_id,tag));
     CREATE TABLE card_parents(card_id TEXT PRIMARY KEY,parent_id TEXT,CHECK(card_id<>parent_id));
     CREATE TABLE links(source_id TEXT NOT NULL,target_id TEXT,ref TEXT NOT NULL,ref_folded TEXT NOT NULL DEFAULT '',UNIQUE(source_id,ref));
@@ -132,14 +144,22 @@ if (conversionOnly) {
     CREATE TABLE note_keys(key TEXT PRIMARY KEY,card_id TEXT NOT NULL);
     CREATE TABLE editor_drafts(id TEXT PRIMARY KEY,body TEXT NOT NULL,data TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE note_save_operations(id TEXT PRIMARY KEY,card_id TEXT NOT NULL,data TEXT NOT NULL,created_at INTEGER NOT NULL);
-    INSERT INTO zettels VALUES('legacy-reading','Reading','reading','Original reading body','OLDPAPER',1,NULL,NULL,'literature',1,1);
-    INSERT INTO zettels VALUES('legacy-thinking','Thinking','thinking','Original thinking body',NULL,NULL,NULL,'OldProject','thinking',2,2);
-    INSERT INTO zettels VALUES('legacy-zettel','Idea','idea','Original idea body',NULL,NULL,NULL,NULL,'zettel',3,3);
-    INSERT INTO tags VALUES('legacy-reading','Existing tag');
+    INSERT INTO zettels VALUES('legacy-reading','Reading','reading','Original reading body','OLDPAPER',1,NULL,NULL,1,1,1);
+    INSERT INTO zettels VALUES('legacy-thinking','Thinking','thinking','Original thinking body',NULL,NULL,NULL,'OldProject',0,2,2);
+    INSERT INTO zettels VALUES('legacy-zettel','Idea','idea','Original idea body',NULL,NULL,NULL,NULL,0,3,3);
+    INSERT INTO zettels VALUES('legacy-ordinary','Unclassified','unclassified','Original unclassified body',NULL,NULL,NULL,NULL,0,4,4);
+    INSERT INTO tags VALUES('legacy-reading','Existing tag'),('legacy-reading','Literature Note'),('legacy-zettel','Zettel');
     INSERT INTO card_parents VALUES('legacy-reading',NULL),('legacy-thinking','legacy-reading'),('legacy-zettel',NULL);
     INSERT INTO links VALUES('legacy-thinking','legacy-reading','legacy-reading','legacy-reading');
-    INSERT INTO note_keys VALUES('OldAlias','legacy-thinking');
+    INSERT INTO note_keys VALUES('OldAlias','legacy-thinking'),('OldProject','legacy-thinking');
   `);
+  if (process.env.KNOWLEDGE_BASE_HOST_TYPE_SCHEMA === "13") {
+    legacy.exec(`
+      ALTER TABLE zettels ADD COLUMN note_type TEXT NOT NULL DEFAULT 'note' CHECK(note_type IN ('note','literature','zettel','thinking','entity'));
+      UPDATE zettels SET note_type=CASE id WHEN 'legacy-reading' THEN 'literature' WHEN 'legacy-thinking' THEN 'thinking' WHEN 'legacy-zettel' THEN 'zettel' ELSE 'note' END;
+      UPDATE meta SET value='13' WHERE key='schemaVersion';
+    `);
+  }
   legacy.close();
 }
 const prefs = {
@@ -178,7 +198,40 @@ const trigger = "await Zotero.ZoteroKnowledgeBase.hooks.onStartup();";
 if (!bootstrap.includes(trigger))
   throw new Error("Cannot find plugin startup hook");
 files["bootstrap.js"] = strToU8(
-  bootstrap.replace(trigger, trigger + "\n  runQuitTest();") +
+  bootstrap.replace(
+    trigger,
+    (noteTypesOnly
+      ? `
+  await Zotero.initializationPromise;
+  if (!(await IOUtils.exists(${JSON.stringify(marker)}))) {
+    const note = new Zotero.Item("note");
+    note.libraryID = Zotero.Libraries.userLibraryID;
+    note.setNote('<div data-schema-version="9"><h1>Thinking</h1><p>Original thinking body</p></div>');
+    note.addTag("Thinking Note");
+    note.addTag("Topic retained");
+    await note.saveTx({skipSelect:true});
+    const {Sqlite} = ChromeUtils.importESModule("resource://gre/modules/Sqlite.sys.mjs");
+    const connection = await Sqlite.openConnection({path:PathUtils.join(Zotero.DataDirectory.dir,"knowledge-base.sqlite")});
+    try { await connection.execute("INSERT INTO card_notes (card_id,note_key,library_id,original_body) VALUES (?,?,?,?)",["legacy-thinking",note.key,note.libraryID,"Original thinking body"]); }
+    finally { await connection.close(); }
+    const paper = new Zotero.Item("journalArticle");
+    paper.libraryID = Zotero.Libraries.userLibraryID;
+    paper.setField("title","Native discovery source"); await paper.saveTx();
+    Zotero.__knowledgeBaseDiscoveryFixtures = [];
+    for (const parent of [paper.id,false]) {
+      const original = new Zotero.Item("note");
+      original.libraryID = paper.libraryID;
+      original.parentItemID = parent;
+      original.setNote('<div data-schema-version="9"><h1>Native discovery fixture</h1><p>Original <strong>native HTML</strong>.</p></div>');
+      original.addTag("Original topic"); await original.saveTx({skipSelect:true});
+      Zotero.__knowledgeBaseDiscoveryFixtures.push({id:original.id,key:original.key,parent,source:parent?paper.key:null,html:original.getNote()});
+    }
+  }
+  `
+      : "") +
+      trigger +
+      "\n  runQuitTest();",
+  ) +
     `
 function runQuitTest() {
   if (${readerToolbarOnly}) {
@@ -222,7 +275,7 @@ function runQuitTest() {
         setTimeout(run, 250);
         return;
       }
-      if (${textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
+      if (${graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
         const test = ${editingHost || "null"};
         restarting = await IOUtils.exists(${JSON.stringify(marker)});
         await test({Zotero, ChromeUtils, IOUtils, PathUtils, Services, Components, setTimeout,
@@ -532,28 +585,6 @@ function runQuitTest() {
         await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify({connectionsOnly:true,sourceID:source.id,unrelatedID:unrelated.id}));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
       }
-      if (${conversionOnly}) {
-        const restart=await IOUtils.exists(${JSON.stringify(marker)});
-        if(restart)restarting=true;
-        const expected=[['legacy-reading','Original reading body',1,['Existing tag','Research']],['legacy-thinking','Original thinking body',0,['Thinking Note']],['legacy-zettel','Original idea body',0,['Zettel']]];
-        for(const [id,body,primary,tags] of expected) {
-          const card=await knowledgeBase.api.getZettel(id);
-          if(!card || card.body!==body || card.source_note!==primary || 'kind' in card)throw new Error('Native schema conversion lost note identity or content');
-          const native=await knowledgeBase.api.acquireNativeNote({id,title:card.title,body:card.body});
-          if(!restart && id==='legacy-reading') {
-            const before=await knowledgeBase.api.getOwnNoteTags(native.noteID,id);
-            if(before.join(',')!=='Existing tag,Literature Note')throw new Error('Native conversion lost an original or converted tag');
-            await knowledgeBase.api.setNoteTag(native.noteID,id,'Literature Note',false);
-            await knowledgeBase.api.setNoteTag(native.noteID,id,'Research',true);
-          }
-          if(JSON.stringify(await knowledgeBase.api.getOwnNoteTags(native.noteID,id))!==JSON.stringify(tags))throw new Error('A converted tag was lost or resurrected across restart');
-          await knowledgeBase.api.releaseNativeNote(native.noteID);
-        }
-        if((await knowledgeBase.api.getFamily('legacy-thinking')).parent?.id!=='legacy-reading' || (await knowledgeBase.api.resolveCardLink('knowledge-base://card/OldAlias')).targetId!=='legacy-thinking' || (await knowledgeBase.api.getOutgoing('legacy-thinking'))[0]?.targetId!=='legacy-reading')throw new Error('Native conversion lost a parent, alias or link');
-        await knowledgeBase.hooks.onShutdown();
-        await IOUtils.writeUTF8(restart?${JSON.stringify(restartMarker)}:${JSON.stringify(marker)},JSON.stringify({connectionsOnly:true}));
-        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
-      }
       const auditUI=(view,scope=view.document)=>{
         for(const control of scope.querySelectorAll('button, toolbarbutton, menulist, checkbox')) {
           const box=control.getBoundingClientRect();
@@ -616,7 +647,7 @@ function runQuitTest() {
           const prose=nativeFrame.document.querySelector('.primary-editor');
           if(nativeFrame.getComputedStyle(prose).fontFamily.includes('Avenir Next') || prose.getBoundingClientRect().width>761)throw new Error('Knowledge Base prose did not adopt the reference typography and reading width');
           if(workbench.getComputedStyle(workbench.document.getElementById('knowledge-base-root')).fontFamily.includes('Avenir Next'))throw new Error('The note list kept its old UI font');
-          if(inline.document.getElementById('knowledge-base-note-kind') || inline.document.getElementById('knowledge-base-note-kind-text') || inline.document.getElementById('knowledge-base-kind-convert'))throw new Error('A unified note still exposes a type');
+          if(!inline.document.getElementById('knowledge-base-note-type'))throw new Error('Note type selector is missing');
           const tags=await knowledgeBase.api.getOwnNoteTags(inline.eval('nativeNoteID'),expected.id);
           if(!tags.length)throw new Error('Initial tag did not reach the native note');
 
@@ -692,11 +723,11 @@ function runQuitTest() {
           }
           const control=sort.getBoundingClientRect(),bar=sort.parentElement.getBoundingClientRect();
           if(control.top-bar.top<8 || bar.bottom-control.bottom<8 || control.right>bar.right-8)throw new Error("Sorting control is cramped at width "+width);
-          const key=inline.document.getElementById('knowledge-base-key-copy');
+          const key=inline.document.getElementById('knowledge-base-editor-key');
           const keyStyle=inline.getComputedStyle(key),keyRect=key.getBoundingClientRect();
-          if(key.localName!=='button' || key.textContent!==longID || !inline.document.getElementById('knowledge-base-editor-key').hidden)throw new Error('Note ID is not a plain copyable reference');
-          if(parseFloat(keyStyle.borderLeftWidth)!==0 || keyStyle.backgroundColor!=='rgba(0, 0, 0, 0)')throw new Error('Note ID still has a framed field appearance');
-          if(key.scrollWidth>key.clientWidth+1 || key.scrollHeight>key.clientHeight+1 || keyRect.right>inline.innerWidth)throw new Error('Note ID is clipped at width '+width+': '+JSON.stringify({clientWidth:key.clientWidth,scrollWidth:key.scrollWidth,clientHeight:key.clientHeight,scrollHeight:key.scrollHeight}));
+          if(key.localName!=='input' || key.value!==longID || key.hidden)throw new Error('Note ID is not a plain copyable reference');
+          if(parseFloat(keyStyle.borderLeftWidth)!==1 || keyStyle.backgroundColor!=='rgba(0, 0, 0, 0)')throw new Error('Note ID still has a framed field appearance');
+          if(key.scrollHeight>key.clientHeight+1 || keyRect.right>inline.innerWidth)throw new Error('Note ID is clipped at width '+width+': '+JSON.stringify({clientWidth:key.clientWidth,scrollWidth:key.scrollWidth,clientHeight:key.clientHeight,scrollHeight:key.scrollHeight}));
           if(keyRect.height<=24)throw new Error('Long note ID did not wrap');
           key.click();await pause(25);
           if(Zotero.Utilities.Internal.getClipboard('text/plain')!=='[['+longID+']]')throw new Error('Long note ID cannot be copied');
@@ -1345,7 +1376,7 @@ function runQuitTest() {
       if (literatureEditor.document.getElementById("knowledge-base-note-kind") || literatureEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== note.id) throw new Error("Literature UI did not reuse the linked native note");
       const literatureIDField = literatureEditor.document.getElementById("knowledge-base-editor-key");
       const literatureIDCopy = literatureEditor.document.getElementById("knowledge-base-key-copy");
-      if (literatureIDCopy.textContent !== "Host2026" || (await knowledgeBase.api.getZettel(literatureID)).reference !== "Host2026" || !literatureIDField.hidden) throw new Error("An existing Literature Note has no copyable ID");
+      if (literatureIDField.value !== "Host2026" || (await knowledgeBase.api.getZettel(literatureID)).reference !== "Host2026" || literatureIDField.hidden) throw new Error("An existing Literature Note has no copyable ID");
       literatureIDCopy.click();
       for(let n=0;n<100 && Zotero.Utilities.Internal.getClipboard('text/plain')!=='[[Host2026]]';n++) await new Promise(resolve=>setTimeout(resolve,25));
       if(Zotero.Utilities.Internal.getClipboard('text/plain')!=='[[Host2026]]')throw new Error('Clicking the ID did not copy the note reference');
@@ -1575,7 +1606,7 @@ function runQuitTest() {
       quickLinkEditor.close();
       for(let n=0;n<100 && !quickLinkEditor.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
       {
-        literatureEditor.document.getElementById("knowledge-base-key-edit").click();
+        literatureEditor.document.getElementById("knowledge-base-editor-key").focus();
         const editableID = literatureEditor.document.getElementById("knowledge-base-editor-key");
         const beforeIDHTML = note.getNote();
         editableID.value = "HostLiteratureID";
@@ -1734,8 +1765,7 @@ function runQuitTest() {
         for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = true;
         const relations = [...manager.document.querySelectorAll(".relation-link")];
         const identitiesVisible = relations.length >= 2 && relations.every(button => {
-          const id = button.querySelector(".relation-id");
-          return id && button.getAttribute("title").includes(id.textContent) && button.querySelector(".relation-title").getBoundingClientRect().width > 0;
+          return !button.querySelector(".relation-id") && !!button.getAttribute("title") && button.querySelector(".relation-title").getBoundingClientRect().width > 0;
         });
         const listId = manager.document.querySelector("#knowledge-base-list .zid");
         if (!listId || manager.getComputedStyle(listId).userSelect !== "none") throw new Error("Card IDs still select on click");
@@ -1747,14 +1777,9 @@ function runQuitTest() {
         const mathVisible = !!manager.document.querySelector("#knowledge-base-preview .katex") && !!graph.document.querySelector("#graph-node-snippet .katex");
         for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = true;
         for (const group of manager.document.querySelectorAll(".card-connections details")) group.open = false;
-        const controls = [...graph.document.querySelectorAll("#graph-outline,#graph-references,#graph-sources,#graph-hide-isolated")];
-        const graphControlsVisible = controls.length === 4 && !graph.document.getElementById("graph-hide-isolated").checked && controls.every(control => control.label && control.getBoundingClientRect().width > 0);
-        const sourceWasVisible = !!graph.document.querySelector(".graph-node.source");
-        const sourceControl = controls.find(control => control.id === "graph-sources");
-        sourceControl.checked = false;
-        sourceControl.dispatchEvent(new graph.Event("command", { bubbles: true }));
-        await new Promise(resolve => setTimeout(resolve, 150));
-        const sourcesHidden = sourceWasVisible && !graph.document.querySelector(".graph-node.source,.graph-edge.source") && Zotero.Prefs.get("extensions.zotero.knowledge-base.graph.sources", true) === false;
+        const controls = [...graph.document.querySelectorAll("#graph-outline,#graph-references,#graph-hide-isolated")];
+        const graphControlsVisible = controls.length === 3 && !!graph.document.getElementById("graph-view") && controls.every(control => control.label && control.getBoundingClientRect().width > 0);
+        const sourcesHidden = !graph.document.querySelector("#graph-sources,.graph-node.source,.graph-edge.source");
         const editor = [...Services.wm.getEnumerator("knowledge-base:editor")][0];
         let body = editor.document.getElementById("knowledge-base-editor-body");
         const rootElement = editor.document.getElementById("knowledge-base-editor-root");
@@ -1817,9 +1842,9 @@ function runQuitTest() {
           await new Promise(resolve => setTimeout(resolve,50));
         }
         const keyInput = keyEditor.document.getElementById("knowledge-base-editor-key");
-        keyEditor.document.getElementById("knowledge-base-key-edit").click();
+        keyEditor.document.getElementById("knowledge-base-editor-key").focus();
         keyInput.focus();
-        if (keyEditor.document.getElementById('knowledge-base-note-kind') || keyEditor.document.getElementById('knowledge-base-kind-convert') || keyInput.hidden) throw new Error('Unified notes still expose type controls');
+        if (!keyEditor.document.getElementById('knowledge-base-note-type') || keyInput.hidden) throw new Error('Note metadata controls are missing');
         keyInput.value = "HostProject"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         if (!(await keyEditor.save(false))) throw new Error("Thinking key save failed");
         const htmlBeforeKeyConflict = looseNote.getNote();
@@ -1846,7 +1871,7 @@ function runQuitTest() {
           await new Promise(resolve=>setTimeout(resolve,25));
         }
         if(!/^\\d{14}$/.test(resolvedKey) || (await knowledgeBase.api.resolveCardLink('knowledge-base://card/HostProject'))?.targetId!==unsourced.id) throw new Error('Available ID did not resolve the conflict with retained identity');
-        keyEditor.document.getElementById("knowledge-base-key-edit").click();
+        keyEditor.document.getElementById("knowledge-base-editor-key").focus();
         keyInput.value = "HostProjectRevised"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         if (!(await keyEditor.save(false))) throw new Error("Thinking key rename failed");
         const keyed = await knowledgeBase.api.getZettel(unsourced.id);
@@ -1855,7 +1880,7 @@ function runQuitTest() {
         if (!(await keyEditor.save(false)) || (await knowledgeBase.api.getZettel(unsourced.id)).reference !== "HostZettel" || (await knowledgeBase.api.resolveCardLink("knowledge-base://card/HostProjectRevised"))?.targetId !== unsourced.id) throw new Error("Zettel ID editing lost the note or its previous references");
         keyInput.value = "HostProjectRevised"; keyInput.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         if (!(await keyEditor.save(false)) || (await knowledgeBase.api.getZettel(unsourced.id)).source_note !== 0) throw new Error("Converting back to Thinking failed");
-        keyEditor.document.getElementById("knowledge-base-parent-change").click();
+        keyEditor.document.getElementById("knowledge-base-parent-edit").click();
         const parentSearch = keyEditor.document.getElementById("knowledge-base-parent-search");
         parentSearch.value = rows[0].title; parentSearch.dispatchEvent(new keyEditor.Event("input", {bubbles:true}));
         let parentChoice;
@@ -1866,7 +1891,7 @@ function runQuitTest() {
         }
         if (!parentChoice) throw new Error("Parent reference picker did not find a note");
         parentChoice.click(); if (!(await keyEditor.save(false)) || (await knowledgeBase.api.getFamily(unsourced.id)).parent?.id !== rows[0].id) throw new Error("Parent picker did not save its note");
-        keyEditor.document.getElementById("knowledge-base-parent-change").click();
+        keyEditor.document.getElementById("knowledge-base-parent-edit").click();
         for(let n=0; n<50 && !keyEditor.document.querySelector("#knowledge-base-parent-results .metadata-clear"); n++) await new Promise(resolve=>setTimeout(resolve,50));
         keyEditor.document.querySelector("#knowledge-base-parent-results .metadata-clear").click();
         if (!(await keyEditor.save(false)) || (await knowledgeBase.api.getFamily(unsourced.id)).parent) throw new Error("No parent did not detach the note");
@@ -1928,7 +1953,7 @@ function runQuitTest() {
         const emptyConnections = inline.document.getElementById("knowledge-base-editor-relations");
         const emptyButtons = [...emptyConnections.querySelectorAll("nav button")];
         if (!emptyConnections.hidden || emptyButtons.length !== 3 || emptyButtons.some(button => !button.hidden || !button.disabled || !button.textContent.endsWith("0"))) throw new Error("Empty connections clutter the writing surface");
-        if (!inline.document.getElementById("knowledge-base-editor-toolbar").hidden || !inline.document.getElementById("knowledge-base-parent-display").parentElement.hidden) throw new Error("Empty source or parent metadata clutter the writing surface");
+        if (inline.document.getElementById("knowledge-base-editor-toolbar").hidden || inline.document.getElementById("knowledge-base-parent-display").parentElement.hidden) throw new Error("Direct source or parent controls are missing");
         await inline.setEditorMode("source");
         const inlineBody = inline.document.getElementById("knowledge-base-editor-body");
         inlineBody.value = "# Workbench typing fixture\\n\\nTyped in the workbench.";
@@ -1940,8 +1965,7 @@ function runQuitTest() {
         {
         const parentPicker = inline.document.getElementById("knowledge-base-parent-picker");
         const parentSearch = inline.document.getElementById("knowledge-base-parent-search");
-        const parentChange = inline.document.getElementById("knowledge-base-parent-change");
-        inline.document.getElementById("knowledge-base-editor-more").open = true;
+        const parentChange = inline.document.getElementById("knowledge-base-parent-edit");
         parentChange.click();
         await inline.refreshRelations();
         if (parentPicker.closest("[hidden]") || parentSearch.getBoundingClientRect().width < 100 || inline.document.activeElement !== parentSearch) throw new Error("Change Parent did not reveal and focus the picker for an unparented note");
@@ -1990,21 +2014,14 @@ function runQuitTest() {
         if (childList.hidden || !inline.document.getElementById("knowledge-base-editor-backlinks").hidden || childNav.getAttribute("aria-expanded") !== "true") throw new Error("Connection navigation did not select one list");
         backlinkNav.click();
         if (!childList.hidden || inline.document.getElementById("knowledge-base-editor-backlinks").hidden) throw new Error("Connection categories stacked their lists");
-        const inlineMore = inline.document.getElementById("knowledge-base-editor-more");
-        inlineMore.open = true;
-        const moreRows = [...inlineMore.querySelectorAll(".editor-more-menu > button:not([hidden])")];
-        for (const button of moreRows) {
-          const bounds = button.getBoundingClientRect();
-          if (bounds.width < 180 || bounds.height < 24 || bounds.height > 40 || inline.getComputedStyle(button).whiteSpace !== "nowrap") throw new Error("More menu has a squeezed or wrapped row: " + button.id + ": " + JSON.stringify({width:bounds.width,height:bounds.height}));
-        }
+        if (inline.document.getElementById("knowledge-base-editor-more")) throw new Error("Editor retains duplicate navigation actions");
         if (metadataShots) {
           const image = await main.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,"white");
           const canvas = main.document.createElementNS("http://www.w3.org/1999/xhtml","canvas");
           canvas.width=image.width;canvas.height=image.height;canvas.getContext("2d").drawImage(image,0,0);image.close();
           const blob = await new Promise(resolve=>canvas.toBlob(resolve));
-          await IOUtils.write(PathUtils.join(metadataShots,"connections-menu.png"),new Uint8Array(await blob.arrayBuffer()));
+          await IOUtils.write(PathUtils.join(metadataShots,"connections.png"),new Uint8Array(await blob.arrayBuffer()));
         }
-        inlineMore.open = false;
         childNav.click();
         childList.querySelector("button").click();
         for (let n=0; n<150; n++) {
@@ -2330,12 +2347,9 @@ function runQuitTest() {
         const citationChip = sourceDoc.querySelector(".knowledge-base-md-node-citation");
         if (!citationChip || citationChip.textContent.includes("data-citation")) throw new Error("Native citation is not displayed as a compact chip");
         const changeButton = editor.document.getElementById("knowledge-base-src-pick");
-        const more = editor.document.getElementById("knowledge-base-editor-more");
-        if (more.open || editor.document.querySelectorAll(".metadata-change").length) throw new Error("Secondary actions are not collapsed into More");
-        more.open = true;
+        if (editor.document.getElementById("knowledge-base-editor-more") || editor.document.querySelectorAll(".metadata-change").length !== 1) throw new Error("Editor retains redundant action controls");
         const changeBounds = changeButton.getBoundingClientRect();
         if (!changeButton.getAttribute("aria-label") || changeBounds.width < 24 || changeBounds.height < 10 || changeBounds.right > editor.innerWidth) throw new Error("Source Change button is not visibly laid out: " + JSON.stringify({text:changeButton.textContent, bounds:changeBounds.toJSON(), style:editor.getComputedStyle(changeButton).cssText, display:editor.getComputedStyle(changeButton).display}));
-        more.open = false;
         const chipShots = ${JSON.stringify(process.env.KNOWLEDGE_BASE_HOST_SCREENSHOTS || "")};
         if (chipShots) {
           await IOUtils.makeDirectory(chipShots, {ignoreExisting: true});
@@ -2436,10 +2450,9 @@ function runQuitTest() {
         if (!pickerReference) throw new Error("Insert Note references are missing");
         const checkReferences = win => {
           for (const text of win.document.querySelectorAll(".note-reference-text")) {
-            const key = text.querySelector(".relation-id");
             const title = text.querySelector(".relation-title");
-            if (!key || key.hidden || !title || !text.getBoundingClientRect().height) continue;
-            if (win.getComputedStyle(key).display !== "inline" || win.getComputedStyle(title).display !== "inline" || text.textContent!==title.textContent+" ("+key.textContent+")" || text.firstElementChild!==title) throw new Error("A note reference does not show title (key): " + text.textContent);
+            if (!title || !text.getBoundingClientRect().height) continue;
+            if (text.querySelector(".relation-id") || text.textContent !== title.textContent) throw new Error("A note reference contains an inline identifier: " + text.textContent);
           }
         };
         if (screenshotDirectory) await snapshot("insert-note-picker", editor);
@@ -3176,6 +3189,10 @@ try {
     console.log(
       "PASS Real Zotero retired AI and lexical suggestions remain unavailable; manual links, source notes, hierarchy, templates, credentials and legacy settings survive native/Markdown navigation and restart.",
     );
+  else if (graphViewsOnly)
+    console.log(
+      "PASS Real Zotero note-type graph views, strict cached parent-item similarities, worker reuse, clean relationship titles, cancellation, local scope and restart.",
+    );
   else if (viewsOnly)
     console.log(
       "PASS Real Zotero four category icons and separate Trash, own tags, live edits, search, pointer targets, stable layout, Minimal/Bear widths and default All after restart.",
@@ -3204,9 +3221,9 @@ try {
     console.log(
       "PASS Real Zotero Knowledge Base Trash: recoverable unopened notes, original restoration, retained IDs and links, scoped permanent deletion, confirmed emptying across search filters, cancellation, source and unrelated Trash preservation, unified icons, narrow layout and restart persistence.",
     );
-  else if (conversionOnly)
+  else if (noteTypesOnly)
     console.log(
-      "PASS Real Zotero converts schema 11 note types to editable native tags, retains bodies, source identities, aliases, links and parents, and keeps a removed classification tag absent after restart.",
+      "PASS Real Zotero restores schema 12/13 classifications as independent note types, preserves existing native notes and tags, changes types with Entity as the default in native/Markdown editors without default tags, filters Entity, and retains content, sources, aliases, links and hierarchy after restart.",
     );
   else if (appearanceOnly)
     console.log(
@@ -3230,7 +3247,7 @@ try {
     );
   else {
     console.log(
-      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; unified notes, unique source notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable note IDs, plain timestamp initialization and refreshed Markdown references with retained aliases, retained source associations, scoped Knowledge Base typography, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, uniform More menu rows, Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; unified notes, unique source notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable note IDs, plain timestamp initialization and refreshed Markdown references with retained aliases, retained source associations, scoped Knowledge Base typography, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, direct Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
     );
     console.log(
       "Graph display intervals (ms): " +

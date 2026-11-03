@@ -14,8 +14,6 @@ pref-source-style = 参考文献格式
     .tooltiptext = 在设置 → 引用中管理格式。
 source-style-missing = 请选择可用的引用格式。
 editor-source-format-failed = 来源格式生成失败：
-editor-more = 更多
-editor-open-window = 在独立窗口中打开
 personal-knowledge-title = 个人知识
 
 menu-new-zettel = 新建卡片
@@ -29,8 +27,8 @@ section-count =
 section-no-item = 选中文献条目后显示其笔记
 section-loading = 加载中…
 section-new = 新建笔记
-section-new-zettel = 新建 Zettel
-section-zettels = Zettel · { $count }
+section-new-zettel = 新建笔记
+section-zettels = 笔记 · { $count }
 
 manager-title = 知识库
 manager-new = 新建笔记
@@ -60,7 +58,7 @@ manager-confirm-delete = 将「{ $title }」移入回收站？
 
 editor-title-new = 新建笔记
 editor-title-edit = 编辑笔记
-editor-source-label = 来源：
+editor-source-label = 来源
 editor-src-none = 未关联来源
 editor-src-pick = 选择来源
 editor-src-change = 更换
@@ -148,10 +146,8 @@ graph-hint = 单击选择，双击打开。
 graph-empty = 没有匹配的笔记
 graph-stats = { $cards } 篇笔记 · { $links } 条连接
 graph-kind-card = 笔记
-graph-kind-source = 来源文献
 graph-kind-unresolved = 待创建的卡片
 graph-legend-cards = ● 笔记 · 实线：父子层级 · 虚线：卡片链接
-graph-legend-sources = ◈ 来源
 graph-legend-unresolved = ○ 待创建的卡片
 
 section-load-error = 加载失败，请重新选择条目。
@@ -195,7 +191,6 @@ graph-backlinks = 反向链接
 
 graph-open-card = 编辑笔记
 
-graph-open-source = 打开来源文献
 
 column-card-count = 笔记
 
@@ -238,7 +233,6 @@ editor-format-native = 富文本
 editor-format-markdown = Markdown
 graph-outline = 层级
 graph-references = 引用
-graph-sources = 来源
 graph-hide-isolated = 隐藏孤立节点
 
 preview-image-missing = 图片不可用
@@ -262,8 +256,7 @@ markdown-node-annotation = 标注
 markdown-node-note-link = 笔记链接
 markdown-node-image = 图片
 
-editor-key = 笔记 ID
-editor-key-edit = 修改笔记 ID
+editor-key = ID
 
 editor-key-auto = 自动生成
 
@@ -321,6 +314,7 @@ pref-template-delete =
 
 note-tags = 标签
 note-tags-edit = 编辑标签…
+note-tags-done = 完成
 note-tag-add = 输入标签，按回车添加
 note-tag-remove = 移除标签 { $tag }
 section-source-note = 文献笔记
@@ -377,7 +371,7 @@ text-search-replaced-count = 已替换 $ 处
 
 
 settings-common = 通用
-settings-tags = 标签管理
+settings-tags = 标签
 settings-similar = 相似条目
 settings-notes = 笔记系统
 
@@ -397,3 +391,24 @@ pref-template-manage =
     .label = 管理模板…
 
 template-empty = 暂无模板
+
+note-type-change = 更改笔记类型
+note-type-literature = 文献笔记
+note-type-zettel = 原子笔记
+note-type-thinking = 思考笔记
+note-type-entity = 实体
+manager-view-entity = 实体
+
+menu-open-native-note = 在知识库中打开
+
+graph-view = 图谱视图
+graph-parent-items = 父条目
+graph-kind-item = 父条目
+graph-open-item = 打开条目
+graph-legend-items = ● 父条目 · 相似关系
+graph-similar-items = 相似条目
+graph-search-items = 搜索父条目…
+graph-items-empty = 暂无高相关度的父条目
+graph-cache-loading = 正在读取相似度缓存…
+graph-item-stats = { $cards } 个条目 · { $links } 条连接
+graph-cache-unavailable = 相似度缓存暂不可用

@@ -1,7 +1,10 @@
+/* global SWTagPolicy */
 // Recommend a small set of topics grounded in the current title and abstract.
 var SWTagSuggestions = {
   text(value) {
-    return swTagAliasKey(swTagKey(String(value || "").replace(/<[^>]*>/g, " ")))
+    return swTagAliasKey(
+      SWTagPolicy.key(String(value || "").replace(/<[^>]*>/g, " ")),
+    )
       .replace(/[^\p{L}\p{N}+#]+/gu, " ")
       .trim();
   },
@@ -101,20 +104,21 @@ var SWTagSuggestions = {
       .replace(/<[^>]*>/g, " ")
       .slice(0, 12000);
     const texts = [title, abstract].map((text) => " " + this.text(text) + " ");
+    const protectedKeys = SWTags.protectedKeys();
     const catalog = new Map();
     for (const name of names)
-      if (!catalog.has(this.text(name))) catalog.set(this.text(name), name);
+      if (
+        !protectedKeys.has(SWTagPolicy.key(name)) &&
+        !catalog.has(this.text(name))
+      )
+        catalog.set(this.text(name), name);
     const excluded = new Set(
-      [
-        ...SWTags.protectedKeys(target.libraryID),
-        ...(target.getTags?.() || []).map((t) => t.tag),
-      ].map((name) => this.text(name)),
+      (target.getTags?.() || []).map((t) => this.text(t.tag)),
     );
     const votes = new Map(
-      SWTags.recommend(target, rows.slice(0, 12), Infinity).map((tag) => [
-        this.text(tag.name),
-        tag,
-      ]),
+      SWTags.recommend(target, rows.slice(0, 12), Infinity, protectedKeys).map(
+        (tag) => [this.text(tag.name), tag],
+      ),
     );
     const pool = new Map(catalog);
     for (const name of this.phrases(title, abstract))
@@ -129,7 +133,13 @@ var SWTagSuggestions = {
         await swYield(0);
         if (SWTags._stopped || !active()) return [];
       }
-      if (!key || excluded.has(key) || !this.isSpecific(name, key)) continue;
+      if (
+        !key ||
+        excluded.has(key) ||
+        protectedKeys.has(SWTagPolicy.key(name)) ||
+        !this.isSpecific(name, key)
+      )
+        continue;
       const [inTitle, inAbstract] = texts.map((text) =>
         this.occurrences(text, key),
       );
@@ -216,14 +226,12 @@ var SWTagSuggestions = {
       }
     }
     if (SWTags._stopped || !active()) return [];
-    const protectedKeys = new Set(
-      [...SWTags.protectedKeys(target.libraryID)].map((key) => this.text(key)),
-    );
+    const protectedKeys = SWTags.protectedKeys();
     candidates = candidates
       .map((tag) =>
-        tag.isNew ? { ...tag, name: SWTags.formatName(tag.name) } : tag,
+        tag.isNew ? { ...tag, name: SWTags.normalizeName(tag.name) } : tag,
       )
-      .filter((tag) => !protectedKeys.has(this.text(tag.name)));
+      .filter((tag) => !protectedKeys.has(SWTagPolicy.key(tag.name)));
     return this.select(candidates);
   },
 };

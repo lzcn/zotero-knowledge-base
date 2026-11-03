@@ -5,6 +5,8 @@ export type DataField =
   | "hierarchy"
   | "links"
   | "tags"
+  | "tag-visibility"
+  | "type"
   | "availability";
 
 export interface DataChange {

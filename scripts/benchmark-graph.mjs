@@ -77,7 +77,7 @@ function benchmarkGraph() {
       const gpu=canvas(), paint=canvas();
       const style={getPropertyValue:name=>({"--bg":"#ffffff","--fg":"#303035","--accent":"#2469c9","--source":"#268572","--muted":"#6e6e73","--graph-link":"#929daa"}[name]),fontFamily:"system-ui"};
       const nodes=Array.from({length:1200},(_,i)=>({id:String(i),title:"Note "+i,kind:i%50===0?"source":"card",radius:6+i%5,color:["#2469c9","#30a46c","#aa22cc"][i%3],x:Math.cos(i*2.39996)*Math.sqrt(i)*9,y:Math.sin(i*2.39996)*Math.sqrt(i)*9}));
-      const edges=nodes.flatMap((node,i)=>[1,7].map(step=>({source:node,target:nodes[(i+step)%nodes.length],kind:i%17===0?"source":i%13===0?"parent":"link"})));
+      const edges=nodes.flatMap((node,i)=>[1,7].map(step=>({source:node,target:nodes[(i+step)%nodes.length],kind:i%17===0?"similarity":i%13===0?"parent":"link"})));
       const labels=new Map(nodes.filter((_,i)=>i%120===0).map(node=>[node.id,{text:node.title,visible:true}]));
       const frame=()=>new Promise(resolve=>win.requestAnimationFrame(resolve));
       const summarize=values=>({mean:values.reduce((a,b)=>a+b)/values.length,p95:[...values].sort((a,b)=>a-b)[Math.floor(values.length*0.95)],max:Math.max(...values)});

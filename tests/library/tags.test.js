@@ -77,6 +77,7 @@ function fixture() {
     "stemmer.js",
     "tokenizer.js",
     "search.js",
+    "tag-policy.js",
     "tags.js",
     "tag-suggestions.js",
   ])
@@ -87,16 +88,6 @@ function fixture() {
       ),
       context,
     );
-  const catalog = JSON.parse(
-    fs.readFileSync(
-      path.join(__dirname, "../../addon/content/library/data/tag-terms.json"),
-      "utf8",
-    ),
-  );
-  context.SWTags._terms = new Map(Object.entries(catalog.terms));
-  context.SWTags._termLength = Math.max(
-    ...Object.keys(catalog.terms).map((key) => key.split(" ").length),
-  );
   return {
     api: context.SWTags,
     context,
@@ -288,7 +279,7 @@ test("new suggestions can come from the paper without neighboring support", asyn
     tags.some((tag) => tag.name === "Graph Neural Networks" && !tag.isNew),
   );
   assert.ok(
-    tags.some((tag) => tag.name === "Molecule prediction" && tag.isNew),
+    tags.some((tag) => tag.name === "molecule prediction" && tag.isNew),
   );
   assert.ok(!tags.some((tag) => tag.name === "Other"));
   assert.ok(!tags.some((tag) => tag.name === "Learning"));
@@ -320,44 +311,7 @@ test("normalization supports one native rename to a new name while preserving co
   assert.deepEqual(writes[0], [1, "Other", "Standard Name"]);
 });
 
-test("fixed-space naming preserves scientific and unknown mixed-case names", () => {
-  const { api } = fixture();
-  const format = (name, style = "sentence", hashtag = false) =>
-    api.formatName(name, { style, hashtag });
-  assert.equal(
-    format("deep_learning GAN co-attention"),
-    "Deep learning GAN co-attention",
-  );
-  assert.equal(
-    format("deep learning GAN co-attention", "title"),
-    "Deep Learning GAN Co-attention",
-  );
-  assert.equal(format("gan yolo openai pytorch"), "GAN YOLO OpenAI PyTorch");
-  assert.equal(
-    format("MyBrand X42 C++ C# .NET", "sentence", true),
-    "#MyBrand X42 C++ C# .NET",
-  );
-  assert.equal(format("DeepLearning"), "DeepLearning");
-  assert.equal(format("self-supervised learning"), "Self-supervised learning");
-  assert.equal(format("zero-shot learning"), "Zero-shot learning");
-  assert.equal(format("zero-shot learning", "title"), "Zero-shot Learning");
-  assert.equal(format("deep-learning"), "Deep-learning");
-  assert.equal(format("神经网络", "sentence", true), "#神经网络");
-  const group = api.duplicateGroups([
-    "#DeepLearning",
-    "deep_learning",
-    "deep-learning",
-    "C++",
-    "C#",
-    "C",
-  ]);
-  assert.deepEqual(
-    Array.from(group, (g) => Array.from(g)),
-    [["#DeepLearning", "deep_learning", "deep-learning"]],
-  );
-});
-
-test("suggestions preserve existing names and format supported new phrases", async () => {
+test("suggestions preserve existing spellings and title phrases without imposing a naming format", async () => {
   const { api, context, item } = fixture();
   context.SWPref = (key, fallback) =>
     ({ tagNameStyle: "sentence", tagHashtag: true })[key] ?? fallback;
@@ -376,17 +330,39 @@ test("suggestions preserve existing names and format supported new phrases", asy
   assert.ok(
     suggestions.some((tag) => tag.name === "Deep Learning" && !tag.isNew),
   );
-  assert.ok(suggestions.some((tag) => tag.isNew && tag.name.startsWith("#")));
+  assert.ok(
+    suggestions.some(
+      (tag) => tag.isNew && tag.name === "Graph Neural Networks",
+    ),
+  );
 });
 
-test("colored tags and aliases are protected in their library, including merge destinations and new-tag creation", async () => {
+test("manual names retain hyphens, CamelCase, scientific spelling and leading hashes", () => {
+  const { api } = fixture();
+  for (const name of [
+    "co-attention",
+    "CamelCase",
+    "PyTorch",
+    "#GNU/Linux",
+    "C++",
+    "sentence case",
+    "Title Case",
+  ])
+    assert.equal(api.normalizeName("  " + name + "  "), name);
+  assert.equal(api.planFormat, undefined);
+  assert.equal(api.applyFormat, undefined);
+});
+
+test("manual exclusions protect name variants, destinations and new-tag creation across libraries", async () => {
   const { api, context, item, writes } = fixture();
   context.Zotero.Tags.getColors = (library) =>
     library === 1
       ? new Map([["Deep Learning", { color: "#123456", position: 0 }]])
       : new Map();
+  context.SWPref = (key, fallback) =>
+    key === "excludedTags" ? "Deep Learning" : fallback;
   assert.deepEqual(Array.from(await api.catalog(1, true)), ["Other"]);
-  assert.equal((await api.catalog(2, true)).length, 3);
+  assert.equal((await api.catalog(2, true)).length, 1);
   const rows = [
     {
       score: 1,
@@ -400,16 +376,15 @@ test("colored tags and aliases are protected in their library, including merge d
   await assert.rejects(api.addSelected(1, 1, ["#deep_learning"]), /protected/);
   assert.deepEqual(writes, []);
   assert.deepEqual(item.names, ["Original"]);
-  context.SWPref = (key, fallback) =>
-    key === "excludeColoredTags" ? false : fallback;
+  context.SWPref = (_key, fallback) => fallback;
   assert.equal((await api.catalog(1, true)).length, 3);
 });
 
-test("manual exclusions remain protected with color exclusion off, and are reread before a write", async () => {
+test("comma-separated exclusions are reread before each write without renaming native tags", async () => {
   const { api, context, item, writes } = fixture();
-  let excluded = " Other \n#DeepLearning\r\n";
+  let excluded = " Other , #DeepLearning， ";
   context.SWPref = (key, fallback) =>
-    ({ excludeColoredTags: false, excludedTags: excluded })[key] ?? fallback;
+    ({ excludedTags: excluded })[key] ?? fallback;
   assert.deepEqual(Array.from(await api.catalog(1, true)), []);
   await assert.rejects(api.merge(1, ["Other"], "Unblocked"), /protected/);
   await assert.rejects(api.addSelected(1, 1, ["Other"]), /protected/);
@@ -428,81 +403,6 @@ test("manual exclusions remain protected with color exclusion off, and are rerea
     ["Original"],
     "failed save reloads the native item",
   );
-});
-
-test("bulk formatting keeps unrelated tags separate, previews collisions and skips unchanged names", async () => {
-  const { api, context, tags, writes } = fixture();
-  context.SWPref = (key, fallback) =>
-    ({ tagNameStyle: "sentence", tagHashtag: true })[key] ?? fallback;
-  tags.set("deep_learning", tags.get("deep-learning"));
-  tags.delete("deep-learning");
-  const plan = await api.planFormat(1, [
-    "Deep Learning",
-    "deep_learning",
-    "Other",
-  ]);
-  assert.equal(plan.changes.length, 3);
-  assert.equal(plan.collisions, 1);
-  assert.equal(plan.itemCount, 4);
-  assert.equal(await api.applyFormat(1, plan), 3);
-  assert.deepEqual(tags.get("#Deep learning"), [1, 2, 3]);
-  assert.deepEqual(tags.get("#Other"), [4]);
-  const unchanged = await api.planFormat(1, ["#Other"]);
-  assert.equal(unchanged.changes.length, 0);
-  assert.equal(unchanged.itemCount, 0);
-  assert.equal(
-    writes.filter((value) => Array.isArray(value) && value.length === 3).length,
-    3,
-  );
-});
-
-test("bulk formatting refuses protected destinations or a changed preview, and stops after the current native write", async () => {
-  const { api, context, tags } = fixture();
-  let style = "sentence";
-  context.SWPref = (key, fallback) =>
-    ({ tagNameStyle: style, tagHashtag: true })[key] ?? fallback;
-  const plan = await api.planFormat(1, ["Other"]);
-  style = "title";
-  await assert.rejects(api.applyFormat(1, plan), /changed/);
-  style = "sentence";
-  tags.set("#Other", [9]);
-  await assert.rejects(api.applyFormat(1, plan), /changed/);
-  context.Zotero.Tags.getColors = () =>
-    new Map([["#Other", { color: "#123456" }]]);
-  await assert.rejects(api.planFormat(1, ["Other"]), /protected/);
-  context.Zotero.Tags.getColors = () => new Map();
-  let active = true;
-  const current = await api.planFormat(1, ["Deep Learning", "Other"]);
-  const rename = context.Zotero.Tags.rename;
-  context.Zotero.Tags.rename = async (...args) => {
-    await rename(...args);
-    active = false;
-  };
-  await assert.rejects(
-    api.applyFormat(1, current, () => active),
-    /cancelled/,
-  );
-  assert.ok(tags.has("#Deep learning"));
-  assert.ok(tags.has("Other"));
-  await api.finishWrites();
-});
-
-test("both case styles remain idempotent across dictionary aliases and protected spellings", () => {
-  const { api } = fixture();
-  for (const style of ["sentence", "title"])
-    for (const name of [
-      "gan yolo co-attention",
-      "deep_learning NLP",
-      "MyBrand self-supervised",
-      ...api._terms.keys(),
-    ]) {
-      const result = api.formatName(name, { style, hashtag: true });
-      assert.equal(
-        api.formatName(result, { style, hashtag: true }),
-        result,
-        name,
-      );
-    }
 });
 
 test("bulk removal uses the native host operation, preserves protected tags and stops between writes", async () => {
@@ -525,6 +425,8 @@ test("bulk removal uses the native host operation, preserves protected tags and 
   assert.ok(tags.has(names[50]));
   assert.ok(tags.has("Deep Learning"));
   context.Zotero.Tags.getColors = () => new Map([["Deep Learning", {}]]);
+  context.SWPref = (key, fallback) =>
+    key === "excludedTags" ? "DeepLearning" : fallback;
   await assert.rejects(api.remove(1, ["Deep Learning"]), /protected/);
   await api.finishWrites();
 });
@@ -604,7 +506,7 @@ test("new title topics do not duplicate existing terminology or use single abstr
       : "Graph neural networks support molecule prediction.";
   const tags = await api.suggest(item, []);
   assert.ok(
-    tags.some((tag) => tag.name === "Molecule prediction" && tag.isNew),
+    tags.some((tag) => tag.name === "molecule prediction" && tag.isNew),
   );
   assert.ok(
     tags.some((tag) => tag.name === "Graph Neural Network" && !tag.isNew),
@@ -871,7 +773,7 @@ test("core topics displace incidental abstract tags even when semantic scores ar
   const tags = await api.suggest(item, []);
   assert.ok(tags.some((tag) => tag.name === "Graph Neural Networks"));
   assert.ok(
-    tags.some((tag) => tag.isNew && tag.name === "Molecule prediction"),
+    tags.some((tag) => tag.isNew && tag.name === "molecule prediction"),
   );
   assert.ok(tags.every((tag) => tag.name !== "Representation learning"));
   assert.ok(tags.every((tag) => !incidental.includes(tag.name)));
@@ -987,7 +889,7 @@ test("paper topics exclude the reported PDF fragments and mix New and Existing b
     Array.from(tags, (tag) => [tag.name, tag.isNew]),
     [
       ["#Combinatorial Optimization", false],
-      ["#Combinatorial Adjoint Matching", true],
+      ["combinatorial adjoint matching", true],
     ],
   );
   assert.ok(tags[0].score > tags[1].score);

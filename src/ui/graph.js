@@ -18,6 +18,47 @@ const svgNS = "http://www.w3.org/2000/svg";
 let graph = { nodes: [], edges: [] };
 let graphNodes = new Map();
 let refreshVersion = 0;
+let graphView = "all";
+let cachedNotes;
+let notesDirty = true;
+let dataRevision = 0;
+let itemWork;
+let itemCache = { stamp: "", edges: [] };
+let loadingItems = false;
+function stopItemWork() {
+  itemWork?.worker.terminate();
+  itemWork?.resolve(null);
+  itemWork = undefined;
+}
+function compareItems(documents) {
+  return new Promise((resolve, reject) => {
+    const worker = new window.Worker(
+      "chrome://knowledge-base/content/item-graph-worker.js",
+    );
+    itemWork = { worker, resolve };
+    const finish = () => {
+      worker.terminate();
+      if (itemWork?.worker === worker) itemWork = undefined;
+    };
+    worker.onmessage = (event) => {
+      const data = /** @type {MessageEvent} */ (event).data;
+      finish();
+      if (data.error) reject(new Error(data.error));
+      else resolve(data.edges);
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      finish();
+      reject(new Error(event.message));
+    };
+    try {
+      worker.postMessage({ documents });
+    } catch (error) {
+      finish();
+      reject(error);
+    }
+  });
+}
 let centerId = /** @type {{ centerId?: string }} */ (window.arguments[0] || {})
   .centerId;
 let selectedId = centerId;
@@ -67,36 +108,73 @@ function run(fn) {
   Promise.resolve()
     .then(fn)
     .catch((error) => {
-      $("graph-error").textContent = String(error.message || error);
+      $("graph-error").textContent =
+        error.message === "graph-cache-unavailable"
+          ? api.loc("graph-cache-unavailable")
+          : String(error.message || error);
     });
 }
 async function refresh() {
   const version = ++refreshVersion;
-  const next = await api.getGraph();
-  if (version !== refreshVersion) return;
+  stopItemWork();
+  const view = graphView;
+  const revision = dataRevision;
+  const active = () => !window.closed && version === refreshVersion;
+  loadingItems = view === "items";
+  if (loadingItems && graph.nodes.some((node) => node.kind === "card")) {
+    graph = { nodes: [], edges: [] };
+    graphNodes = new Map();
+    render();
+  }
+  const next =
+    view === "items"
+      ? { nodes: await api.getParentItems(active), edges: [] }
+      : await api.getGraph();
+  if (!active()) return;
+  if (view !== "items") {
+    cachedNotes = next;
+    notesDirty = revision !== dataRevision;
+  }
   graph = next;
   graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
   $("graph-error").textContent = "";
   render();
+  if (view !== "items") return;
+  try {
+    const snapshot = await api.getItemGraphSnapshot(
+      next.nodes.map((node) => node.id.slice(5)),
+      active,
+    );
+    if (!snapshot || !active()) return;
+    const edges =
+      itemCache.stamp === snapshot.stamp
+        ? itemCache.edges
+        : await compareItems(snapshot.documents);
+    if (!edges || !active()) return;
+    itemCache = { stamp: snapshot.stamp, edges };
+    graph.edges = edges;
+  } finally {
+    if (active()) {
+      loadingItems = false;
+      render();
+    }
+  }
 }
 function visibleGraph() {
   const options = api.getGraphOptions();
   const data = filterGraph(graph, {
-    includeSources: options.sources,
+    noteType:
+      graphView === "all" || graphView === "items"
+        ? undefined
+        : /** @type {import("../modules/note-types").NoteType} */ (graphView),
     includeUnresolved: true,
   });
-  data.edges = data.edges.filter((edge) =>
-    edge.kind === "parent"
-      ? options.outline
-      : edge.kind === "link"
-        ? options.references
-        : options.sources,
+  data.edges = data.edges.filter(
+    (edge) =>
+      edge.kind === "similarity" ||
+      (edge.kind === "parent" ? options.outline : options.references),
   );
-  const scoped = filterGraph(data, {
-    includeSources: options.sources,
-    centerId,
-    depth: localDepth,
-  });
+  const scoped = filterGraph(data, { centerId, depth: localDepth });
   data.nodes = scoped.nodes;
   data.edges = scoped.edges;
   if (options.hideIsolated && !centerId) {
@@ -353,7 +431,23 @@ function fit() {
   else applyTransform();
 }
 function render() {
-  $("graph-legend-sources").hidden = !api.getGraphOptions().sources;
+  const items = graphView === "items";
+  $("graph-legend-cards").hidden = items;
+  $("graph-legend-items").hidden = !items;
+  $("graph-legend-unresolved").hidden = items;
+  for (const id of ["graph-outline", "graph-references"])
+    document.getElementById(id).hidden = items;
+  $("graph-search").placeholder = api.loc(
+    items ? "graph-search-items" : "graph-search",
+  );
+  $("graph-empty").textContent = api.loc(
+    loadingItems
+      ? "graph-cache-loading"
+      : items
+        ? "graph-items-empty"
+        : "graph-empty",
+  );
+  $("graph-canvas").setAttribute("aria-busy", String(loadingItems));
   const data = visibleGraph();
   visibleData = data;
   syncScope();
@@ -413,7 +507,7 @@ function render() {
   } else {
     const style = window.getComputedStyle($("knowledge-base-graph-root"));
     const styleKey =
-      ["--bg", "--fg", "--accent", "--source", "--muted", "--graph-link"]
+      ["--bg", "--fg", "--accent", "--graph-item", "--muted", "--graph-link"]
         .map((name) => style.getPropertyValue(name))
         .join(":") + style.fontFamily;
     if (styleKey !== rendererStyle) {
@@ -465,7 +559,7 @@ function render() {
     };
     const line = svgElement("path", {
       class: `graph-edge ${edge.kind}`,
-      "marker-end": edge.kind !== "source" ? "url(#graph-arrow)" : "",
+      "marker-end": edge.kind !== "similarity" ? "url(#graph-arrow)" : "",
     });
     const title = svgElement("title");
     title.textContent = edge.context || edge.ref;
@@ -602,10 +696,14 @@ function render() {
   if (firstLayout) fit();
   else applyTransform();
   $("graph-empty").hidden = nodes.length > 0;
-  $("graph-stats").textContent = api.loc("graph-stats", {
-    cards: nodes.filter((node) => node.kind === "card").length,
-    links: edges.length,
-  });
+  $("graph-stats").textContent = api.loc(
+    items ? "graph-item-stats" : "graph-stats",
+    {
+      cards: nodes.filter((node) => node.kind === (items ? "item" : "card"))
+        .length,
+      links: edges.length,
+    },
+  );
   select(selectedId);
 }
 function highlight() {
@@ -631,7 +729,7 @@ function highlight() {
       ? edge.source.id === focusId || edge.target.id === focusId
       : matched.has(edge.source.id) || matched.has(edge.target.id);
     line.classList.toggle("highlighted", active && connected);
-    if (edge.kind !== "source")
+    if (edge.kind !== "similarity")
       line.setAttribute(
         "marker-end",
         connected && active
@@ -666,7 +764,11 @@ function select(id) {
     $("graph-node-tags"),
     node.tags || [],
   );
-  $("graph-node-kind").textContent = api.loc(`graph-kind-${node.kind}`);
+  $("graph-node-kind").textContent = api.loc(
+    node.kind === "card" && node.noteType
+      ? `note-type-${node.noteType}`
+      : `graph-kind-${node.kind}`,
+  );
   window.ZoteroKnowledgeBaseMarkdown.reference(
     $("graph-node-reference"),
     node.kind === "card" ? node.reference || node.id : "",
@@ -676,7 +778,7 @@ function select(id) {
     $("graph-node-snippet"),
     node.snippet,
   );
-  if (node.kind === "source" && node.itemKey) {
+  if (node.kind === "item" && node.itemKey) {
     api
       .getItemSummary(node.itemKey, node.libraryID)
       .then((item) => {
@@ -692,7 +794,7 @@ function select(id) {
   api
     .prepareMarkdown(node.snippet)
     .then(() => {
-      if (!window.closed && selectedId === id && node.kind !== "source")
+      if (!window.closed && selectedId === id && node.kind !== "item")
         window.ZoteroKnowledgeBaseMarkdown.render(
           $("graph-node-snippet"),
           node.snippet,
@@ -704,7 +806,7 @@ function select(id) {
       ? "manager-unresolved"
       : node.kind === "card"
         ? "graph-open-card"
-        : "graph-open-source",
+        : "graph-open-item",
   );
   $("graph-node-open").setAttribute("data-kind", node.kind);
   $("graph-node-open").setAttribute("label", openLabel);
@@ -723,7 +825,7 @@ function select(id) {
     "children",
     "manager-outgoing",
     "manager-backlinks",
-    "manager-source",
+    "graph-similar-items",
   ]) {
     const section = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
@@ -766,7 +868,7 @@ function select(id) {
         peer.reference,
       );
     else row.textContent = peer.title;
-    if (edge.kind === "source" && peer.citation) {
+    if (edge.kind === "similarity" && peer.citation) {
       const context = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
         "small",
@@ -774,8 +876,7 @@ function select(id) {
       context.textContent = peer.citation;
       row.appendChild(context);
     }
-    row.addEventListener("click", () => select(peerId));
-    row.addEventListener("dblclick", () => run(() => openNode(peer)));
+    row.dataset.nodeId = peerId;
     row.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") select(peerId);
     });
@@ -784,8 +885,8 @@ function select(id) {
         ? edge.source === id
           ? "children"
           : "parent"
-        : edge.kind === "source"
-          ? "manager-source"
+        : edge.kind === "similarity"
+          ? "graph-similar-items"
           : edge.source === id
             ? "manager-outgoing"
             : "manager-backlinks";
@@ -796,14 +897,20 @@ function select(id) {
   }
 }
 async function openNode(node) {
+  if (!node) return;
   if (node.kind === "card") api.openEditor({ zettelId: node.id });
-  else if (node.kind === "source")
+  else if (node.kind === "item")
     await api.selectItem(node.itemKey, node.libraryID);
   else api.openManager({ unresolvedRef: node.title });
 }
 window.ZoteroKnowledgeBase_showGraph = (id) => {
+  if (graphView !== "all") {
+    graphView = "all";
+    $("graph-view").value = "all";
+  }
   showScope(id, true);
 };
+
 async function load() {
   document.title = api.loc("graph-title");
   $("graph-gpu").addEventListener("webglcontextlost", gpuChanged);
@@ -813,7 +920,7 @@ async function load() {
     "graph-connections-title": "graph-connections",
     "graph-empty": "graph-empty",
     "graph-legend-cards": "graph-legend-cards",
-    "graph-legend-sources": "graph-legend-sources",
+    "graph-legend-items": "graph-legend-items",
     "graph-legend-unresolved": "graph-legend-unresolved",
   };
   for (const [id, key] of Object.entries(labels))
@@ -836,7 +943,6 @@ async function load() {
     /** @type {[keyof import("../modules/preferences").GraphOptions, string][]} */ ([
       ["outline", "graph-outline"],
       ["references", "graph-references"],
-      ["sources", "graph-sources"],
       ["hideIsolated", "graph-hide-isolated"],
     ]);
   const syncOptions = () => {
@@ -850,6 +956,33 @@ async function load() {
     }
   };
   syncOptions();
+  const view = $("graph-view");
+  view.setAttribute("aria-label", api.loc("graph-view"));
+  for (const option of view.options) {
+    const value = option.getAttribute("value");
+    option.textContent = api.loc(
+      value === "all"
+        ? "graph-all"
+        : value === "items"
+          ? "graph-parent-items"
+          : "note-type-" + value,
+    );
+  }
+  view.addEventListener("change", () => {
+    graphView = view.value;
+    centerId = undefined;
+    selectedId = undefined;
+    scopeChanged = true;
+    viewMoved = false;
+    if (graphView !== "items" && cachedNotes && !notesDirty) {
+      ++refreshVersion;
+      stopItemWork();
+      loadingItems = false;
+      graph = cachedNotes;
+      graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
+      render();
+    } else run(refresh);
+  });
   $("graph-global").addEventListener("click", () => showScope(undefined));
   $("graph-local").addEventListener("click", () => {
     if (selectedId) showScope(selectedId);
@@ -874,6 +1007,26 @@ async function load() {
   $("graph-node-open").addEventListener("click", () =>
     run(() => openNode(graphNodes.get(selectedId))),
   );
+  let clickedConnectionId;
+  $("graph-connections").addEventListener("click", (event) => {
+    if (event.detail > 1) return;
+    const row = /** @type {Element} */ (event.target).closest(
+      "li[data-node-id]",
+    );
+    if (!row) return;
+    clickedConnectionId = row.getAttribute("data-node-id");
+    select(clickedConnectionId);
+  });
+  $("graph-connections").addEventListener("dblclick", (event) => {
+    const row = /** @type {Element} */ (event.target).closest(
+      "li[data-node-id]",
+    );
+    const id =
+      event.detail > 1
+        ? clickedConnectionId
+        : row?.getAttribute("data-node-id");
+    if (id) run(() => openNode(graphNodes.get(id)));
+  });
   $("graph-search").addEventListener("input", () => select(undefined));
   $("graph-svg").addEventListener("click", (event) => {
     if (canvasRenderer && event.target === $("graph-svg")) {
@@ -1044,9 +1197,12 @@ async function load() {
     resizeObserver.observe($("graph-canvas"));
   }
   unsubscribe = api.onDataChange((change) => {
+    dataRevision++;
+    notesDirty = true;
     if (
       change &&
       !change.all &&
+      !change.fields.includes("tag-visibility") &&
       !change.cardIDs.some((id) => graphNodes.has(id)) &&
       !change.itemKeys.some((key) =>
         graph.nodes.some((node) => node.itemKey === key),
@@ -1085,6 +1241,7 @@ window.addEventListener("unload", () => {
   drag = null;
   d3Select($("graph-svg")).on(".zoom", null);
   refreshVersion++;
+  stopItemWork();
   unsubscribe?.();
   unsubscribeOptions?.();
   clearTimeout(refreshTimer);

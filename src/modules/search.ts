@@ -3,6 +3,7 @@ import { noteSortOrder, type NoteSort } from "./note-sort";
 import { getNoteReferences } from "./note-references";
 import { exec, getAll, transaction, type ZettelRow } from "./db";
 import { searchQueryTerms } from "./search-query";
+import { requireNoteType, type NoteType } from "./note-types";
 
 function terms(text: string): Set<string> {
   const chars = Array.from(text.toLowerCase());
@@ -72,6 +73,7 @@ async function flushSearchIndex(): Promise<void> {
 }
 
 export interface SearchOptions {
+  noteType?: NoteType;
   availability?: "active" | "trash";
   sort?: NoteSort;
   tag?: string;
@@ -111,6 +113,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     throw new Error("Invalid note IDs");
   const scope = JSON.stringify([
     q,
+    options.noteType ?? null,
     options.tag ?? null,
     options.ownTagsOnly ?? false,
     options.availability ?? "active",
@@ -171,6 +174,10 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       JSON.stringify(await getTaggedNoteIDs(options.tag, options.ownTagsOnly)),
     );
   }
+  if (options.noteType !== undefined) {
+    filters.push("z.note_type = ?");
+    params.push(requireNoteType(options.noteType));
+  }
   if (options.cardIDs) {
     filters.push(
       `z.id IN (${options.cardIDs.map(() => "?").join(",") || "NULL"})`,
@@ -188,7 +195,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     : "1";
   if (options.summary && keywords.length) params.push(JSON.stringify(keywords));
   const projection = options.summary
-    ? `id, title, title_folded, SUBSTR(body, ${excerptStart}, 2048) AS body, item_key, library_id, annotation_key, source_note, custom_key, created_at, updated_at, search_rank`
+    ? `id, title, title_folded, SUBSTR(body, ${excerptStart}, 2048) AS body, item_key, library_id, annotation_key, source_note, note_type, custom_key, created_at, updated_at, search_rank`
     : "*";
   const continuation = cursor
     ? `WHERE (search_rank > ? OR (search_rank = ? AND (sort_value ${comparison} ? OR (sort_value = ? AND id ${comparison} ?))))`

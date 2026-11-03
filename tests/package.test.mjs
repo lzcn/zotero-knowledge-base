@@ -97,6 +97,7 @@ test("production package excludes personal library maintenance and test fixtures
       new URL("../dist/zotero-knowledge-base.xpi", import.meta.url),
     ),
   );
+  assert.equal(files["content/library/data/tag-terms.json"], undefined);
   const main = strFromU8(files["content/scripts/knowledge-base.js"]);
   assert.doesNotMatch(
     main,

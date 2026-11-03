@@ -226,7 +226,7 @@ export default async function retiredFeaturesHost({
       "Retired note suggestions remain available",
     );
     assert(
-      editor.document.getElementById("knowledge-base-editor-graph"),
+      manager.document.getElementById("knowledge-base-btn-local-graph"),
       "Manual graph navigation was removed",
     );
     return editor;

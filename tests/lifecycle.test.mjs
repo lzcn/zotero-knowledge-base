@@ -49,7 +49,10 @@ await build({
       export const initNoteSessions = () => run("noteSessions");
       export const stopNoteSessions = () => stop("stopNoteSessions");
       export const closeNoteSessions = () => run("closeNoteSessions");
+      export const discoverNativeNotes = async () => {};
       export const initNativeNotes = () => run("nativeNotes");
+      export const initTagExclusions = () => run("tagExclusions");
+      export const stopTagExclusions = () => stop("stopTagExclusions");
       export const recoverNativeSaves = () => run("recoverNativeSaves");
       export const stopNativeNotes = () => stop("stopNativeNotes");
       export const closeNativeNotes = () => run("closeNativeNotes");
@@ -140,6 +143,8 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
       openManager: () => state.calls.push("openManager"),
       openWorkbenchWindow: () => state.calls.push("openWorkbenchWindow"),
       openEditor: () => {},
+      ensureManagedNote: async () => "native-card",
+      listEditorDrafts: async () => [],
     },
   };
   globalThis.ztoolkit = {
@@ -170,11 +175,11 @@ test("two windows retain independent resources; duplicate registration and shutd
       1,
     );
     for (const dom of h.doms)
-      assert.equal(dom.window.document.querySelectorAll("menuitem").length, 2);
+      assert.equal(dom.window.document.querySelectorAll("menuitem").length, 3);
     await h.hooks.onMainWindowLoad(h.doms[1].window);
     assert.equal(
       h.doms[1].window.document.querySelectorAll("menuitem").length,
-      2,
+      3,
     );
     const styles = h.doms.map(
       (dom) => dom.window.document.querySelector("link").href,
@@ -188,7 +193,7 @@ test("two windows retain independent resources; duplicate registration and shutd
     );
     assert.equal(
       h.doms[1].window.document.querySelectorAll("menuitem").length,
-      2,
+      3,
     );
     h.doms[1].window.document
       .getElementById("knowledge-base-menu-open-manager")
@@ -218,6 +223,52 @@ test("two windows retain independent resources; duplicate registration and shutd
       ).length,
       0,
     );
+  } finally {
+    h.close();
+  }
+});
+
+test("native notes expose one scoped context action without replacing native open behavior", async () => {
+  const h = await fixture();
+  try {
+    await h.hooks.onStartup();
+    const win = h.doms[0].window;
+    const popup = win.document.getElementById("zotero-itemmenu");
+    const menu = win.document.getElementById(
+      "knowledge-base-itemmenu-open-note",
+    );
+    popup.dispatchEvent(new win.Event("popupshowing"));
+    assert.equal(menu.hasAttribute("hidden"), true);
+    win.ZoteroPane.getSelectedItems = () => [
+      { id: 42, isNote: () => true, isInTrash: () => false },
+    ];
+    popup.dispatchEvent(new win.Event("popupshowing"));
+    assert.equal(menu.hasAttribute("hidden"), false);
+    const calls = [];
+    globalThis.addon.api.ensureManagedNote = async (id) => {
+      calls.push(id);
+      return "native-card";
+    };
+    globalThis.addon.api.openEditor = (options) => calls.push(options);
+    popup.dispatchEvent(new win.MouseEvent("dblclick", { bubbles: true }));
+    assert.deepEqual(calls, []);
+    menu.dispatchEvent(new win.Event("command"));
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    assert.deepEqual(calls, [42, { zettelId: "native-card" }]);
+    calls.length = 0;
+    globalThis.addon.api.listEditorDrafts = async () => [
+      { noteID: 42, draftId: "held-draft" },
+    ];
+    menu.dispatchEvent(new win.Event("command"));
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    assert.deepEqual(calls, [{ draftId: "held-draft" }]);
+    await h.hooks.onMainWindowUnload(win);
+    popup.dispatchEvent(new win.Event("popupshowing"));
+    assert.equal(
+      win.document.getElementById("knowledge-base-itemmenu-open-note"),
+      null,
+    );
+    await h.hooks.onShutdown();
   } finally {
     h.close();
   }
@@ -374,6 +425,7 @@ test("the confirmed-quit barrier drains local writes before storage shutdown", a
 test("one failing stop action cannot skip remaining quit cleanup", async () => {
   for (const fail of [
     "stopWorkbenches",
+    "stopTagExclusions",
     "stopNativeMarkdown",
     "stopNativeNotes",
     "stopNoteSessions",

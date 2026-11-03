@@ -14,11 +14,15 @@ Requires Zotero 10. Download the XPI from [Releases](https://github.com/lzcn/zot
 
 Open **Knowledge Base** from the **Tools** menu or its library and PDF toolbar buttons.
 
-- **Notes:** Edit in the native editor or Markdown with autosave. Link notes with `[[ID]]`, search and browse the graph. Notes inherit source and parent tags. **Manage Templates…** in Settings opens a template list and a text editor; choose the new-note default there.
-- **Suggested Tags:** Select from at most six high-confidence topics, ordered by relevance with distinct New and Existing badges, and add them to the current paper. The top action row provides Add Selected Tags and Tag Manager.
+- **Notes:** Existing Zotero notes appear automatically, linked to the original note and its parent source. Right-click **Open in Knowledge Base**; double-click keeps Zotero's default behavior. Edit in the native editor or Markdown with autosave. A small type selector offers Literature, Zettel, Thinking and Entity (default) without adding tags. Link notes with `[[ID]]`, search and browse the graph. Notes inherit source and parent tags. Settings provides **Manage Templates…**.
+- **Suggested Tags:** Select from at most six high-confidence topics, ordered by relevance with distinct New and Existing badges, and add them to the current paper. The top action row provides Add Selected Tags and Tag Manager. Tag Manager keeps explicit merge, single-tag rename and delete actions; bulk naming formats are unavailable. Comma-separated Excluded Tags are shared across suggestions, Tag Manager and note displays. Excluding a label preserves its original Zotero tags.
 - **Similar Items:** Find similar papers locally. Items without full text are included. Recommendations do not create note links. On macOS, semantic search downloads required files automatically.
 
-The three tabs share one library runtime across windows. Startup restores the completed search cache; unchanged papers reuse their vectors and saved results. New or changed papers update in the background. The first launch after upgrading prepares the new cache from the existing index. Settings uses subtly colored section cards and one compact Cache status.
+The three tabs share one library runtime across windows. Startup restores the completed search cache; unchanged papers reuse their vectors and saved results. New or changed papers update in the background. The first launch after upgrading prepares the new cache from the existing index. Settings distinguishes section headings with small color accents and keeps one compact Cache status.
+
+The graph switches between note types and Parent Items. The latter includes only papers with notes and reuses the local search cache with stricter, mutual top-three similarity links. Note graphs show hierarchy and references without Source nodes. Relationship lists show titles; IDs stay in tooltips and copy controls.
+
+The editor keeps Source, Parent and Tags above the note, with changes made in place. Click the Parent title to navigate; use its pencil to change the hierarchy. Long titles stay on one line, with the complete title in a tooltip. Its bottom status bar holds the type and directly editable ID with a copy action; long IDs stay compact and remain fully editable. Native and Markdown editing share a wider, responsive writing area and compact spacing. Single-click a note in the Knowledge Base list to view it; double-click to open it in a separate window. Graph actions stay in the top toolbar and list context menu.
 
 ## Backup
 
@@ -38,6 +42,8 @@ knowledge-base/
 ```
 
 Images use `assets/`; search and compiled model caches use `cache/`; downloaded resources use `models/` and `runtime/`. Existing retrieval and Core ML caches are adopted when the destination is absent. Standalone Related Work data is retained separately. SQLite manages its own `-wal` and `-shm` files.
+
+Schemas 12 and 13 are upgraded in one transaction; the former Note type becomes Entity. Existing classification tags initialize the type field and remain intact. Discovery preserves original HTML, tags and placement; read-only libraries remain read-only.
 
 ## Development
 
