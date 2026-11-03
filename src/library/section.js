@@ -158,6 +158,13 @@ var SWSection = {
     var body = props.body;
     if (body?.hidden) return;
     var key = props.item && SWIndexer.docKey(props.item);
+    if (
+      !compute &&
+      body?._swRefreshWait &&
+      body._swRefreshToken === body._swToken &&
+      body._swWorkKey === key
+    )
+      return;
     if (!compute && body?._swWork && body._swWorkKey === key) return;
     var token;
     var work = (async () => {
@@ -251,18 +258,54 @@ var SWSection = {
       body._swMethod = method;
       this.setStatus(body, "");
     }
-    var includeWeak = SWPref("allowMetadataOnlyRecommendations", true);
+    var includeWeak = true;
     let restored = null;
     if (!compute) {
       // Cached rows need the database, not the full in-memory search index.
-      await corpus.opened;
+      restored = await corpus.readStored(async () => {
+        if (this._stopped || body._swToken !== token) return null;
+        let saved = await corpus.getRecommendations(
+          docKey,
+          includeWeak,
+          method,
+        );
+        if (method === "hybrid" && saved?.model !== SWSemantic.version)
+          saved = null;
+        if (
+          !saved &&
+          method === "hybrid" &&
+          (corpus.progress.phase !== "ready" || !SWSemantic.ready) &&
+          corpus.progress.phase !== "error"
+        )
+          saved = await SWSemantic.preview(
+            corpus,
+            docKey,
+            100,
+            () =>
+              this._stopped ||
+              body._swToken !== token ||
+              body.hidden ||
+              sectionEl?.open === false,
+          );
+        if (saved && !this._stopped && body._swToken === token)
+          await this._presentMatches(props, saved.matches, docKey, token);
+        return saved;
+      });
       if (this._stopped || body._swToken !== token) return;
-      restored = await corpus.getRecommendations(docKey, includeWeak, method);
-      if (method === "hybrid" && restored?.model !== SWSemantic.version)
-        restored = null;
-      if (restored)
-        await this._presentMatches(props, restored.matches, docKey, token);
-      if (this._stopped || body._swToken !== token) return;
+    }
+    if (
+      restored &&
+      corpus.progress.phase !== "ready" &&
+      corpus.progress.phase !== "error"
+    ) {
+      this._refreshWhenReady(
+        props,
+        token,
+        method === "hybrid"
+          ? Promise.all([corpus.ready, SWSemantic.start(corpus)])
+          : corpus.ready,
+      );
+      return;
     }
     if (corpus.progress.phase !== "ready") {
       if (!compute && !restored && corpus.progress.phase !== "error") {
@@ -306,7 +349,7 @@ var SWSection = {
     if (corpus.progress.phase !== "ready") return;
 
     if (method === "hybrid") {
-      await this._renderHybrid(props, target, docKey, token, compute);
+      await this._renderHybrid(props, target, docKey, token, compute, restored);
       return;
     }
     var cached = compute
@@ -419,19 +462,56 @@ var SWSection = {
       if (props.body.isConnected) void this.renderBody(props);
   },
 
-  async _renderHybrid(props, target, key, token, compute) {
+  _refreshWhenReady(props, token, ready) {
     const body = props.body;
-    await SWSemantic.start(SWIndexer.corpus);
+    if (body._swRefreshWait && body._swRefreshToken === token) return;
+    body._swRefreshToken = token;
+    const active = () =>
+      !this._stopped &&
+      body._swToken === token &&
+      body.isConnected &&
+      !body.hidden &&
+      body.closest?.("collapsible-section")?.open !== false;
+    const work = (async () => {
+      try {
+        await ready;
+        await body._swWork;
+        if (active()) await this._renderBody(props, false);
+      } catch (error) {
+        Zotero.logError(error);
+        if (active())
+          this.setStatus(body, String(error.message || error), false);
+      } finally {
+        if (active()) {
+          body.setAttribute("aria-busy", "false");
+          const progress = body.querySelector(".sw-computation-progress");
+          if (progress) progress.hidden = true;
+        }
+        if (body._swRefreshWait === work) body._swRefreshWait = null;
+      }
+    })();
+    body._swRefreshWait = work;
+  },
+
+  async _renderHybrid(props, target, key, token, compute, restored) {
+    const body = props.body;
+    const ready = SWSemantic.start(SWIndexer.corpus);
+    if (restored && !SWSemantic.ready) {
+      this._refreshWhenReady(props, token, ready);
+      return;
+    }
+    await ready;
     if (body._swToken !== token || this._stopped) return;
     if (
       !SWSemantic._enabled ||
       (compute && SWSemantic.status.state === "error")
     )
       SWSemantic.enable();
-    const includeWeak = SWPref("allowMetadataOnlyRecommendations", true);
+    const includeWeak = true;
     const cached = compute
       ? null
-      : SWSemantic.getRecommendations(key, includeWeak);
+      : await SWSemantic.restoreRecommendations(key, includeWeak);
+    if (body._swToken !== token || this._stopped) return;
     if (cached && !cached.dirty) {
       await this._presentMatches(props, cached.matches, key, token);
       if (body._swToken !== token || this._stopped) return;
@@ -473,7 +553,11 @@ var SWSection = {
     var doc = body.ownerDocument;
     var corpus = SWIndexer.corpus;
     if (setSectionSummary) setSectionSummary("");
-    var rows = await this._resolveRows(matches, body._swMethod);
+    var rows = await this._resolveRows(
+      matches,
+      body._swMethod,
+      () => !this._stopped && body._swToken === token,
+    );
     if (body._swToken !== token) {
       return;
     }
@@ -726,10 +810,11 @@ var SWSection = {
     return wrapper;
   },
 
-  async _resolveRows(matches, method = "text") {
+  async _resolveRows(matches, method = "text", active = () => true) {
     var out = [];
     const minimum = Number(SWPref("minimumSimilarity", 0.05));
     for (var m of SWSearch.relevant(matches, method, minimum)) {
+      if (!active()) return [];
       var idx = m.key.indexOf("/");
       if (idx < 1) {
         continue;

@@ -84,6 +84,72 @@ test("schema initialization uses LIKE bindings accepted by Gecko", async () => {
   await corpus._ensureSchema();
 });
 
+test("foreground stored reads finish before background model decoding, including reads arriving during I/O", async () => {
+  const corpus = new SWCorpus();
+  corpus._ready = Promise.resolve();
+  corpus._resolveOpened();
+  let readModel, releaseModel;
+  const modelRead = new Promise((resolve) => {
+    readModel = resolve;
+  });
+  const modelIO = new Promise((resolve) => {
+    releaseModel = resolve;
+  });
+  corpus._db = {
+    async execute(sql) {
+      if (!sql.includes("signatureModel")) return [];
+      readModel();
+      await modelIO;
+      return [
+        {
+          getResultByName: () =>
+            JSON.stringify({
+              algorithm: 4,
+              epoch: 2,
+              n: 1,
+              averageLength: 1,
+              averageFieldLengths: [1, 1, 1],
+              df: [[7, 1]],
+            }),
+        },
+      ];
+    },
+  };
+  const loading = corpus._loadModel();
+  await modelRead;
+  let finishDisplay;
+  const display = corpus.readStored(
+    () =>
+      new Promise((resolve) => {
+        finishDisplay = resolve;
+      }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  releaseModel();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(
+    corpus.search.epoch,
+    0,
+    "Model parsing must wait for first-row display",
+  );
+  finishDisplay("shown");
+  assert.equal(await display, "shown");
+  await loading;
+  assert.equal(corpus.search.epoch, 2);
+  await assert.rejects(
+    corpus.readStored(async () => {
+      throw new Error("Read failed");
+    }),
+    /Read failed/,
+  );
+  await corpus._loadModel();
+  assert.equal(
+    corpus._storedReads.size,
+    0,
+    "A failed read must release background loading",
+  );
+});
+
 test("RRF uses fixed ranks rather than incompatible score scales", () => {
   const lexical = [
     { key: "1/A", score: 1000, weak: true },
@@ -558,8 +624,11 @@ test("an unsupported index schema closes the database and shutdown blocker", asy
     DataDirectory: { dir: "/data" },
     logError() {},
   };
-  global.PathUtils = { join: (...parts) => parts.join("/") };
-  global.IOUtils = { makeDirectory: async () => {} };
+  global.PathUtils = {
+    join: (...parts) => parts.join("/"),
+    parent: (value) => value.slice(0, value.lastIndexOf("/")),
+  };
+  global.IOUtils = { makeDirectory: async () => {}, exists: async () => false };
   global.ChromeUtils = {
     importESModule: () => ({
       Sqlite: {
@@ -649,7 +718,9 @@ test("startup restores source checks so an unchanged document needs no repeat wr
                     counts,
                     signature,
                     epoch: 1,
-                    simhash: null,
+                    simhash: SWSearch.encodeSimhash(
+                      new Uint32Array([123, 456]),
+                    ),
                     itemModifiedAt: "2026-11-02 04:00:00",
                     sourceHash: "source-v1",
                   })[name],
@@ -661,6 +732,10 @@ test("startup restores source checks so an unchanged document needs no repeat wr
   };
   corpus._maintainEpoch = async () => {};
   await corpus._loadAll();
+  assert.deepEqual(
+    Array.from(corpus.search.docs.get("1/A").simhash),
+    [123, 456],
+  );
   await corpus.recordSource("1/A", "2026-11-02 04:00:00", "source-v1");
   assert.equal(writes.length, 0);
   await corpus.recordSource("1/A", "2026-11-02 05:00:00", "source-v2");

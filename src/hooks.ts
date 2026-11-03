@@ -250,6 +250,7 @@ async function releaseResources(): Promise<void> {
         "graph",
         "annotations",
         "image",
+        "templates",
       ]) {
         for (const win of Services.wm.getEnumerator(
           `${config.addonRef}:${kind}`,
@@ -298,6 +299,10 @@ function onAppShutdown(): void {
       stopWorkbenches().catch((error) => Zotero.logError(error)),
     );
   });
+  for (const win of Services.wm.getEnumerator(`${config.addonRef}:templates`)) {
+    win.knowledgeBaseStopping = true;
+    win.close();
+  }
   // Start pending draft writes before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {
     const editor = win as unknown as Window & {

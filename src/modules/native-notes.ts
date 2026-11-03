@@ -1,3 +1,4 @@
+import { SWStorage } from "../library/storage.js";
 import {
   applyPendingNoteTags,
   applyPendingTagsToMappedNotes,
@@ -5,7 +6,7 @@ import {
 } from "./note-tags";
 import { exec, getAll, getOne, transaction } from "./db";
 import { notifyDataChange, onDataChange } from "./events";
-import { getTagInheritance, getNewNoteBody } from "./preferences";
+import { getNewNoteBody } from "./preferences";
 import { getFamily } from "./hierarchy";
 import { richTextToMarkdown } from "./rich-text";
 import {
@@ -376,12 +377,7 @@ export async function nativeNoteHTML(
     image.setAttribute(
       "src",
       await Zotero.File.generateDataURI(
-        PathUtils.join(
-          Zotero.DataDirectory.dir,
-          "knowledge-base",
-          "assets",
-          match[1],
-        ),
+        PathUtils.join(SWStorage.assets(), match[1]),
         `image/${type}`,
       ),
     );
@@ -1309,30 +1305,7 @@ export async function initNativeNotes(): Promise<void> {
           notifyDataChange({ noteIDs, fields: ["availability"] });
         }
         if (_type === "item-tag") {
-          if (getTagInheritance()) {
-            notifyDataChange({ all: true, fields: ["tags"] });
-            return;
-          }
-          pending = pending
-            .catch((error) => Zotero.logError(error))
-            .then(async () => {
-              for (const id of noteIDs) {
-                if (stopping) return;
-                const note = await Zotero.Items.getAsync(id);
-                if (!note?.isNote()) continue;
-                const row = await getOne<NoteMapping>(
-                  "SELECT * FROM card_notes WHERE note_key = ? AND library_id = ?",
-                  [note.key, note.libraryID],
-                );
-                if (row)
-                  notifyDataChange({
-                    cardIDs: [row.card_id],
-                    noteIDs: [id],
-                    fields: ["tags"],
-                  });
-              }
-            })
-            .catch((error) => Zotero.logError(error));
+          notifyDataChange({ all: true, fields: ["tags"] });
           return;
         }
         if (

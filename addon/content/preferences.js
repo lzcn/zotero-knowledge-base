@@ -37,119 +37,6 @@ window.KnowledgeBasePreferences = (() => {
     return button;
   }
 
-  function bindTemplates(doc, api) {
-    const template = getMenu(doc, "knowledge-base-literature-template");
-    const templateBody = /** @type {HTMLTextAreaElement} */ (
-      doc.getElementById("knowledge-base-template-body")
-    );
-    const templateName = /** @type {HTMLInputElement} */ (
-      doc.getElementById("knowledge-base-template-name")
-    );
-    const templateEditor = doc.getElementById("knowledge-base-template-editor");
-    const templateError = doc.getElementById("knowledge-base-template-error");
-    const deleteTemplate = doc.getElementById("knowledge-base-template-delete");
-    const renderTemplateMenu = () => {
-      const settings = api.getLiteratureTemplateSettings();
-      const popup = doc.getElementById("knowledge-base-literature-templates");
-      const entries = [
-        { id: "", name: api.loc("template-none") },
-        ...settings.templates,
-      ];
-      // Native menus must retain their items while a selection closes the popup.
-      const items = new Map(
-        Array.from(popup.children, (item) => [
-          item.getAttribute("value"),
-          item,
-        ]),
-      );
-      const ids = new Set(entries.map((entry) => entry.id));
-      for (const [id, item] of items) if (!ids.has(id)) item.remove();
-      for (const entry of entries) {
-        let item = items.get(entry.id);
-        if (!item) {
-          item = doc.createXULElement("menuitem");
-          item.setAttribute("value", entry.id);
-          popup.append(item);
-        }
-        if (item.getAttribute("label") !== entry.name)
-          item.setAttribute("label", entry.name);
-      }
-      const selectedID = settings.selected || "";
-      if (template.value !== selectedID || !template.selectedItem)
-        template.value = selectedID;
-      return settings.templates.find((entry) => entry.id === settings.selected);
-    };
-    const renderTemplate = () => {
-      const selected = renderTemplateMenu();
-      templateEditor.hidden = !selected;
-      deleteTemplate.hidden = !selected;
-      templateName.value = selected?.name || "";
-      templateBody.value = selected?.body || "";
-      templateError.hidden = true;
-    };
-    const changeTemplate = (run) => {
-      try {
-        run();
-        templateError.hidden = true;
-      } catch (failure) {
-        templateError.textContent = String(failure.message || failure);
-        templateError.hidden = false;
-      }
-    };
-    renderTemplate();
-    if (!menus.has(template)) {
-      menus.add(template);
-      template.addEventListener("command", () =>
-        changeTemplate(() => {
-          api.setLiteratureTemplate(template.value || null);
-          renderTemplate();
-        }),
-      );
-      doc
-        .getElementById("knowledge-base-template-new")
-        .addEventListener("command", () =>
-          changeTemplate(() => {
-            api.createLiteratureTemplate();
-            renderTemplate();
-            templateName.focus();
-            templateName.select();
-          }),
-        );
-      templateName.addEventListener("change", () =>
-        changeTemplate(() => {
-          api.updateLiteratureTemplate(template.value, {
-            name: templateName.value,
-          });
-          const selected = renderTemplateMenu();
-          templateName.value = selected.name;
-        }),
-      );
-      templateBody.addEventListener("input", () =>
-        changeTemplate(() =>
-          api.updateLiteratureTemplate(template.value, {
-            body: templateBody.value,
-          }),
-        ),
-      );
-      deleteTemplate.addEventListener("command", () =>
-        changeTemplate(() => {
-          const selected = api
-            .getLiteratureTemplateSettings()
-            .templates.find((entry) => entry.id === template.value);
-          if (
-            selected &&
-            doc.defaultView.confirm(
-              api.loc("template-delete-confirm", { name: selected.name }),
-            )
-          ) {
-            api.deleteLiteratureTemplate(selected.id);
-            renderTemplate();
-          }
-        }),
-      );
-    }
-  }
-
   function bindGraphControls(doc, api) {
     const labelLength = /** @type {HTMLInputElement} */ (
       doc.getElementById("knowledge-base-graph-label-length")
@@ -167,16 +54,6 @@ window.KnowledgeBasePreferences = (() => {
       () => api.getGraphLabelLength(),
       (value) => api.setGraphLabelLength(value),
     );
-    const inheritance = /** @type {HTMLElement & {checked: boolean}} */ (
-      doc.getElementById("knowledge-base-inherit-tags")
-    );
-    inheritance.checked = api.getTagInheritance();
-    if (!menus.has(inheritance)) {
-      menus.add(inheritance);
-      inheritance.addEventListener("command", () =>
-        api.setTagInheritance(inheritance.checked),
-      );
-    }
   }
 
   function bindGraphGroups(doc, api, error, addGroup, initialTags) {
@@ -325,7 +202,19 @@ window.KnowledgeBasePreferences = (() => {
       const popup = doc.getElementById("knowledge-base-source-styles");
       const error = doc.getElementById("knowledge-base-preferences-error");
       try {
-        bindTemplates(doc, api);
+        const manage = doc.getElementById("knowledge-base-template-manage");
+        if (!menus.has(manage)) {
+          menus.add(manage);
+          manage.addEventListener("command", () => {
+            try {
+              api.openTemplateManager();
+            } catch (failure) {
+              error.textContent = String(failure.message || failure);
+              error.hidden = false;
+              Zotero.logError(failure);
+            }
+          });
+        }
         bindGraphControls(doc, api);
         const addGroup = doc.getElementById("knowledge-base-add-group");
         if (!menus.has(addGroup)) {

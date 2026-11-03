@@ -9,34 +9,6 @@ window.KnowledgeBaseCommonPreferences = (() => {
     generation++;
     window.clearTimeout(timer);
   };
-  function renderProgress(doc, status) {
-    for (const [id, total, done, enabled] of [
-      [
-        "similar-works-index-progress",
-        status.state === "scanning" && status.totalItems === null
-          ? 0
-          : (status.totalItems ?? status.indexProgress.total),
-        status.indexProgress.phase === "loading"
-          ? status.indexProgress.done
-          : status.indexedItems,
-        ["preparing", "scanning", "indexing"].includes(status.state),
-      ],
-      [
-        "similar-works-vector-progress",
-        status.vectorTotal,
-        status.semantic.indexedItems,
-        !["disabled", "idle", "stopped"].includes(status.semantic.state),
-      ],
-    ]) {
-      const bar = doc.getElementById(id);
-      bar.hidden = !enabled;
-      if (total > 0) {
-        bar.max = total;
-        bar.value = Math.min(done, total);
-      } else bar.removeAttribute("value");
-    }
-  }
-
   async function start(doc) {
     stop();
     const token = generation;
@@ -63,35 +35,42 @@ window.KnowledgeBaseCommonPreferences = (() => {
         return;
       }
       try {
+        const semantic = status.semantic;
+        const textBusy = !["idle", "disabled", "stopped"].includes(
+          status.state,
+        );
+        const vectorBusy =
+          Zotero.isMac &&
+          !["idle", "disabled", "stopped"].includes(semantic.state);
+        const busy = textBusy || vectorBusy;
         const phase = await doc.l10n.formatValue(
-          "similar-works-state-" + status.state,
+          "similar-works-state-" +
+            (textBusy ? status.state : vectorBusy ? semantic.state : "idle"),
         );
-        const vectorPhase = await doc.l10n.formatValue(
-          "similar-works-state-" + status.semantic.state,
+        const total =
+          status.totalItems ??
+          status.indexProgress.total ??
+          status.indexedItems;
+        const done =
+          status.indexProgress.phase === "loading"
+            ? status.indexProgress.done
+            : vectorBusy
+              ? semantic.indexedItems
+              : status.indexedItems;
+        const text = await doc.l10n.formatValue(
+          busy
+            ? "similar-works-pref-index-value"
+            : "similar-works-pref-cache-ready",
+          { phase, count: done, total, known: Number(total > 0) },
         );
-        const deferred = status.indexProgress.phase === "idle";
-        const indexText = deferred
-          ? phase
-          : await doc.l10n.formatValue("similar-works-pref-index-value", {
-              phase,
-              count: status.indexedItems,
-              total: status.totalItems ?? status.indexProgress.total ?? 0,
-              known: Number(status.totalItems !== null),
-            });
-        const vectorText = deferred
-          ? phase
-          : await doc.l10n.formatValue("similar-works-pref-vector-value", {
-              phase: vectorPhase,
-              count: status.semantic.indexedItems,
-              total: status.vectorTotal,
-            });
         if (token !== generation || !root.isConnected) return;
-        for (const [id, text] of Object.entries({
-          "similar-works-index": indexText,
-          "similar-works-vectors": vectorText,
-        }))
-          doc.getElementById(id).textContent = text;
-        renderProgress(doc, status);
+        doc.getElementById("similar-works-cache-status").textContent = text;
+        const bar = doc.getElementById("similar-works-cache-progress");
+        bar.hidden = !busy;
+        if (total > 0) {
+          bar.max = total;
+          bar.value = Math.min(done, total);
+        } else bar.removeAttribute("value");
         const error = doc.getElementById("similar-works-diagnostics-error");
         error.textContent =
           status.error || status.semantic.error

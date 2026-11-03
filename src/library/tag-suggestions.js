@@ -1,9 +1,47 @@
-// Current-paper evidence admits topics; neighbors and MiniLM only rank them.
+// Recommend a small set of topics grounded in the current title and abstract.
 var SWTagSuggestions = {
   text(value) {
     return swTagAliasKey(swTagKey(String(value || "").replace(/<[^>]*>/g, " ")))
       .replace(/[^\p{L}\p{N}+#]+/gu, " ")
       .trim();
+  },
+
+  isSpecific(name, normalized = this.text(name)) {
+    if (
+      /\b(?:et al|references|bibliography)\b|^(?:via|using|based on|towards?)\b|\b(?:generative|discrete|continuous|unsupervised|supervised|neural|independent|conditional)$/i.test(
+        normalized,
+      )
+    )
+      return false;
+    const words = normalized.split(" ").filter(Boolean);
+    if (words.length === 1) {
+      if (
+        /^(?:learning|networks?|models?|optimization|representation|analysis|systems?|frameworks?|methods?|algorithms?|approach(?:es)?|performance|results?|research)$/.test(
+          words[0],
+        )
+      )
+        return false;
+      if (/^#?C(?:\+\+|#)$/.test(String(name))) return true;
+      if (/\p{Script=Han}/u.test(words[0]))
+        return (
+          words[0].length >= 4 &&
+          !/^(研究方法|实验结果|性能提升|相关研究)$/.test(words[0])
+        );
+      return (
+        /^[A-Z][A-Z0-9]{1,9}$/.test(String(name).replace(/^#/, "")) &&
+        !/^(AI|ML|DL|LLMS?)$/.test(String(name).replace(/^#/, ""))
+      );
+    }
+    const generic =
+      /^(?:proposed|novel|new|effective|efficient|improved?|approach(?:es)?|methods?|frameworks?|results?|research|study|studies|papers?|performance|improvements?|solutions?|experiments?|problems?)$/;
+    return (
+      words.filter(
+        (word) =>
+          word.length > 1 &&
+          !SWTokenizer.isStopword(word) &&
+          !generic.test(word),
+      ).length >= 2
+    );
   },
 
   occurrences(text, phrase) {
@@ -18,111 +56,51 @@ var SWTagSuggestions = {
     return count;
   },
 
-  phrases(title, abstract, body) {
+  phrases(title, abstract) {
+    if (!abstract.trim()) return [];
+    const text = " " + this.text(abstract) + " ";
     const found = new Map();
-    const usable = (word) =>
-      !SWTokenizer.isStopword(word.toLowerCase()) &&
-      !/^(paper|study|results?|methods?|approach|proposed|using|based|novel|show|demonstrate|experiments?)$/i.test(
-        word,
-      );
-    for (const [text, field] of [
-      [title, "title"],
-      [abstract, "abstract"],
-      [body, "body"],
-    ]) {
-      for (const run of text.match(
-        /[\p{L}][\p{L}\p{N}+#-]*(?: +[\p{L}][\p{L}\p{N}+#-]*)*/gu,
-      ) || []) {
-        let group = [];
-        const addGroup = () => {
-          for (let i = 0; i < group.length; i++) {
-            const standalone =
-              /^[A-Z][A-Z0-9]{1,9}$/.test(group[i]) ||
-              /^[\p{Script=Han}]{2,10}$/u.test(group[i]);
-            for (
-              let n = standalone ? 1 : 2;
-              n <= 4 && i + n <= group.length;
-              n++
-            ) {
-              const name = group.slice(i, i + n).join(" ");
-              if (name.length > 64) continue;
-              const key = this.text(name);
-              const old = found.get(key) || {
-                name,
-                title: 0,
-                abstract: 0,
-                body: 0,
-                complete: false,
-              };
-              old[field]++;
-              if (field === "title" && i === 0 && n === group.length)
-                old.complete = true;
-              found.set(key, old);
-            }
-          }
-          group = [];
-        };
-        for (const word of [...run.split(/ +/), ""]) {
-          if (word && usable(word)) group.push(word);
-          else addGroup();
-        }
+    // Keep complete title segments, never sliding n-grams or PDF prose.
+    for (const run of title.match(
+      /[\p{L}][\p{L}\p{N}+#-]*(?: +[\p{L}][\p{L}\p{N}+#-]*)*/gu,
+    ) || []) {
+      let group = [];
+      const add = () => {
+        const name = group.join(" "),
+          key = this.text(name);
+        if (
+          group.length >= 2 &&
+          group.length <= 4 &&
+          name.length <= 64 &&
+          this.isSpecific(name, key) &&
+          this.occurrences(text, key)
+        )
+          found.set(key, name);
+        group = [];
+      };
+      for (const word of [...run.split(/ +/), ""]) {
+        if (
+          word &&
+          !SWTokenizer.isStopword(word.toLowerCase()) &&
+          !/^(?:via|using|towards?|based|novel|new|proposed|efficient|effective|paper|study|results?|methods?|approach|show|demonstrate|experiments?|solving)$/i.test(
+            word,
+          )
+        )
+          group.push(word);
+        else add();
       }
     }
-    const candidates = [...found.values()].filter(
-      (p) =>
-        p.complete ||
-        (p.title && p.abstract + p.body > 0) ||
-        p.abstract >= 2 ||
-        p.body >= 3,
-    );
-    // Prefer complete phrases over fragments with exactly the same evidence.
-    return candidates
-      .filter(
-        (p) =>
-          !candidates.some(
-            (other) =>
-              other !== p &&
-              other.name.length > p.name.length &&
-              (" " + this.text(other.name) + " ").includes(
-                " " + this.text(p.name) + " ",
-              ) &&
-              other.title === p.title &&
-              other.abstract === p.abstract &&
-              other.body === p.body,
-          ),
-      )
-      .sort(
-        (a, b) =>
-          Number(b.complete) - Number(a.complete) ||
-          3 * b.title +
-            b.abstract +
-            Math.log1p(b.body) -
-            (3 * a.title + a.abstract + Math.log1p(a.body)),
-      )
-      .slice(0, 48)
-      .map((p) => p.name);
+    return [...found.values()];
   },
 
-  async rank(target, rows, names, body = "", active = () => true) {
+  async rank(target, rows, names, active = () => true) {
     const title = String(target.getField?.("title") || "")
       .replace(/<[^>]*>/g, " ")
       .slice(0, 12000);
     const abstract = String(target.getField?.("abstractNote") || "")
       .replace(/<[^>]*>/g, " ")
       .slice(0, 12000);
-    // References and repeating page furniture cannot establish a paper's topic.
-    body = SWSearch.clean(
-      body.split(
-        /(?:^|\n)\s*(?:references|bibliography|参考文献)\s*(?:\n|$)/i,
-      )[0],
-    );
-    const texts = [title, abstract, body].map(
-      (text) => " " + this.text(text) + " ",
-    );
-    const passages = body
-      .split(/[.!?。！？\n]+/)
-      .filter((s) => s.trim())
-      .map((s) => " " + this.text(s) + " ");
+    const texts = [title, abstract].map((text) => " " + this.text(text) + " ");
     const catalog = new Map();
     for (const name of names)
       if (!catalog.has(this.text(name))) catalog.set(this.text(name), name);
@@ -139,16 +117,10 @@ var SWTagSuggestions = {
       ]),
     );
     const pool = new Map(catalog);
-    for (const name of this.phrases(title, abstract, body))
+    for (const name of this.phrases(title, abstract))
       if (!pool.has(this.text(name))) pool.set(this.text(name), name);
     for (const [key, vote] of votes)
       if (!pool.has(key)) pool.set(key, vote.name);
-    const index =
-      typeof SWIndexer === "undefined" ? null : SWIndexer.corpus?.search;
-    const indexed = index?.docs.get(SWIndexer.docKey(target));
-    const bodyCounts = indexed
-      ? SWSearch.decodeCounts(indexed.counts).fields?.[2]
-      : null;
     const voteMax = Math.max(1, ...[...votes.values()].map((tag) => tag.score));
     const candidates = [];
     let visited = 0;
@@ -157,125 +129,87 @@ var SWTagSuggestions = {
         await swYield(0);
         if (SWTags._stopped || !active()) return [];
       }
-      if (!key || excluded.has(key)) continue;
-      const [inTitle, inAbstract, inBody] = texts.map((text) =>
+      if (!key || excluded.has(key) || !this.isSpecific(name, key)) continue;
+      const [inTitle, inAbstract] = texts.map((text) =>
         this.occurrences(text, key),
       );
-      // A single background mention or a neighbor's application is insufficient.
-      if (!inTitle && !inAbstract) {
-        if (inBody < 3) continue;
-        const spread = passages.filter((text) =>
-          this.occurrences(text, key),
-        ).length;
-        if (spread < 2) continue;
-        const features = [...SWSearch.features(SWSearch.clean(name))];
-        const indexedFrequency =
-          bodyCounts && features.length
-            ? Math.min(...features.map((id) => bodyCounts.get(id) || 0))
-            : inBody;
-        if (indexedFrequency < 3) continue;
-      }
+      const vote = votes.get(key),
+        isNew = !catalog.has(key) && !vote;
+      // New names need two metadata fields. Known library topics still require
+      // evidence in this paper, regardless of how many neighbors use them.
+      if (isNew ? !inTitle || !inAbstract : !inTitle && !inAbstract) continue;
       const direct = inTitle
-        ? 0.94
-        : inAbstract
-          ? 0.7 + Math.min(0.1, (inAbstract - 1) * 0.05)
-          : 0.7 + Math.min(0.14, (inBody - 1) * 0.04);
-      const vote = votes.get(key);
-      const score = direct + (0.04 * (vote?.score || 0)) / voteMax;
+        ? 1
+        : 0.84 + Math.min(0.04, (inAbstract - 1) * 0.02);
       candidates.push({
         name,
-        isNew: !catalog.has(key) && !vote,
+        isNew,
         count: vote?.count || 0,
-        score,
+        score: direct + (0.03 * (vote?.score || 0)) / voteMax,
       });
     }
     return candidates
       .sort(
         (a, b) =>
           b.score - a.score ||
+          b.count - a.count ||
           b.name.length - a.name.length ||
           a.name.localeCompare(b.name),
       )
-      .slice(0, 48);
+      .slice(0, 24);
   },
 
   select(candidates) {
-    if (!candidates.length) return [];
-    const remaining = candidates.filter(
-        (tag) =>
-          !candidates.some(
-            (other) =>
-              other !== tag &&
-              other.score >= tag.score * 0.9 &&
-              this.text(other.name).length > this.text(tag.name).length &&
-              (" " + this.text(other.name) + " ").includes(
-                " " + this.text(tag.name) + " ",
-              ),
-          ),
-      ),
-      selected = [];
-    const floor = Math.max(0.68, remaining[0].score * 0.79);
-    const overlap = (a, b) => {
-      const left = this.text(a).split(" "),
-        right = this.text(b).split(" ");
-      const shared = left.filter((word) => right.includes(word)).length;
-      if (
-        (" " + this.text(a) + " ").includes(" " + this.text(b) + " ") ||
-        (" " + this.text(b) + " ").includes(" " + this.text(a) + " ")
-      )
-        return 1;
-      return shared / (new Set([...left, ...right]).size || 1);
-    };
-    while (remaining.length) {
-      const ranked = remaining
-        .map((tag) => ({
-          tag,
-          gain:
-            tag.score -
-            0.48 *
-              Math.max(
-                0,
-                ...selected.map((other) => overlap(tag.name, other.name)),
-              ),
-        }))
-        .sort((a, b) => b.gain - a.gain || b.tag.score - a.tag.score);
-      const { tag, gain } = ranked[0];
-      if (gain < floor) break;
-      selected.push(tag);
-      remaining.splice(remaining.indexOf(tag), 1);
-    }
-    // Presentation order never reserves or displaces a topic by tag type.
-    return selected.sort(
-      (a, b) => Number(b.isNew) - Number(a.isNew) || b.score - a.score,
+    const ranked = [...candidates].sort(
+      (a, b) =>
+        b.score - a.score ||
+        (b.count || 0) - (a.count || 0) ||
+        b.name.length - a.name.length ||
+        a.name.localeCompare(b.name),
     );
+    if (!ranked.length) return [];
+    const floor = Math.max(0.84, ranked[0].score * 0.9),
+      selected = [];
+    for (const tag of ranked) {
+      if (tag.score < floor) break;
+      const key = " " + this.text(tag.name) + " ";
+      if (
+        selected.some((other) => {
+          const existing = " " + this.text(other.name) + " ";
+          return (
+            key.includes(existing) ||
+            existing.includes(key) ||
+            SWTags.duplicateReason(tag.name, other.name)
+          );
+        })
+      )
+        continue;
+      selected.push(tag);
+      if (selected.length === 6) break;
+    }
+    return selected;
   },
 
   async suggest(target, rows, active) {
     const names = await SWTags.catalog(target.libraryID);
     if (SWTags._stopped || !active()) return [];
-    const body =
-      typeof SWIndexer === "undefined"
-        ? ""
-        : await SWIndexer.tagText(target, active);
-    if (SWTags._stopped || !active()) return [];
-    let candidates = await this.rank(target, rows, names, body, active);
+    // Tag suggestions never read a PDF or wait for the document index.
+    let candidates = await this.rank(target, rows, names, active);
     if (
       typeof SWSemantic !== "undefined" &&
       SWSemantic._enabled &&
       typeof SWSemantic.tagSimilarity === "function"
     ) {
-      const pool = candidates.slice(0, 24);
       try {
         const scores = await SWSemantic.tagSimilarity(
           target,
-          pool.map((tag) => tag.name),
+          candidates.map((tag) => tag.name),
           active,
         );
-        // A missing semantic result must not discard otherwise eligible topics.
         if (scores)
-          pool.forEach((tag, i) => {
+          candidates.forEach((tag, i) => {
             if (Number.isFinite(scores[i]))
-              tag.score += 0.08 * Math.max(0, scores[i]);
+              tag.score += 0.03 * Math.max(0, scores[i]);
           });
       } catch (error) {
         if (active() && !SWTags._stopped) Zotero.logError(error);
@@ -289,8 +223,7 @@ var SWTagSuggestions = {
       .map((tag) =>
         tag.isNew ? { ...tag, name: SWTags.formatName(tag.name) } : tag,
       )
-      .filter((tag) => !protectedKeys.has(this.text(tag.name)))
-      .sort((a, b) => b.score - a.score || b.name.length - a.name.length);
+      .filter((tag) => !protectedKeys.has(this.text(tag.name)));
     return this.select(candidates);
   },
 };

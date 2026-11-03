@@ -1,0 +1,99 @@
+#knowledge-base-templates {
+  color-scheme: light dark;
+  --template-background: var(--color-background, #fff);
+  --template-foreground: var(--fill-primary, #222);
+  --template-control: var(--material-control, #fff);
+  background: var(--template-background);
+  color: var(--template-foreground);
+  min-width: 620px;
+  min-height: 360px;
+}
+@media (prefers-color-scheme: dark) {
+  #knowledge-base-templates {
+    --template-background: var(--color-background, #202020);
+    --template-foreground: var(--fill-primary, #eee);
+    --template-control: var(--material-control, #282828);
+  }
+}
+.template-manager {
+  background: var(--template-background);
+  color: var(--template-foreground);
+  padding: 16px;
+  gap: 16px;
+  min-height: 0;
+}
+.template-sidebar {
+  width: 210px;
+  min-height: 0;
+  border-inline-end: 1px solid var(--color-border, #c8c8c8);
+  padding-inline-end: 16px;
+}
+.template-sidebar > hbox > button {
+  appearance: none;
+  background: var(--template-control);
+  color: var(--template-foreground);
+  border: 1px solid var(--color-border, #999);
+  border-radius: 4px;
+}
+#knowledge-base-literature-templates {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+#knowledge-base-literature-templates button {
+  display: block;
+  width: 100%;
+  text-align: start;
+  padding: 8px 10px;
+  margin: 0 0 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  overflow-wrap: anywhere;
+}
+#knowledge-base-literature-templates button[aria-selected="true"] {
+  background: var(--accent-blue, #2675bf);
+  color: white;
+}
+#knowledge-base-literature-templates button:focus-visible {
+  outline: 2px solid var(--accent-blue, #2675bf);
+  outline-offset: 1px;
+}
+.template-content,
+#knowledge-base-template-editor {
+  min-width: 0;
+  min-height: 0;
+}
+#knowledge-base-template-editor {
+  gap: 8px;
+}
+.template-content input,
+.template-content textarea {
+  appearance: auto;
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--color-border, #b8b8b8);
+  border-radius: 4px;
+  padding: 8px 10px;
+  background: var(--template-control);
+  color: var(--template-foreground);
+}
+.template-content input:focus,
+.template-content textarea:focus {
+  outline: 2px solid var(--accent-blue, #2675bf);
+  outline-offset: 1px;
+}
+#knowledge-base-template-body {
+  flex: 1;
+  min-height: 12em;
+  resize: none;
+  font:
+    13px/1.6 ui-monospace,
+    monospace;
+}
+#knowledge-base-template-empty {
+  margin: auto;
+  color: var(--color-text-secondary, GrayText);
+}

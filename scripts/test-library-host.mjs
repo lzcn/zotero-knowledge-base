@@ -31,12 +31,9 @@ const prefs = {
   "extensions.autoDisableScopes": 0,
   "extensions.enabledScopes": 15,
   "extensions.zotero.automaticScraperUpdates": false,
-  "extensions.zotero.similar-works.backgroundStartupDelayMs": process.env
-    .KNOWLEDGE_BASE_STARTUP_PROBE
-    ? 60000
-    : 0,
   "extensions.zotero.similar-works.tagNameStyle": "sentence",
   "extensions.zotero.similar-works.maxRecommendations": 15,
+  "extensions.zotero.similar-works.allowMetadataOnlyRecommendations": false,
   "app.update.auto": false,
   "extensions.update.enabled": false,
 };
@@ -98,35 +95,190 @@ startup = async function(data) {
   setTimeout(async () => {
     const result = {};
     try {
-      if (${Boolean(process.env.KNOWLEDGE_BASE_STARTUP_PROBE)}) {
+      if (${Boolean(process.env.KNOWLEDGE_BASE_STORAGE_PROBE)}) {
         const indexer = SWScope.SWIndexer;
-        if (!indexer._startupPending || indexer.corpus._ready || SWScope.SWSemantic._native) throw new Error("Startup eagerly loaded retrieval resources: "+JSON.stringify({pending:indexer._startupPending,opened:!!indexer.corpus._ready,native:!!SWScope.SWSemantic._native}));
-        const doc = Zotero.getMainWindow().document;
-        const source = new Zotero.Item("journalArticle"); source.setField("title", "Lazy startup fixture"); await source.saveTx();
-        const id = await Zotero.ZoteroKnowledgeBase.api.saveZettel({title:"Immediate note", body:"Notes stay available while retrieval waits.", itemKey:source.key, libraryID:source.libraryID});
-        await Zotero.getActiveZoteroPane().selectItem(source.id);
-        let section;
-        for (let n=0;n<200;n++) {
-          section = [...doc.querySelectorAll("item-pane-custom-section")].find(el=>el.dataset.pane?.includes("knowledge-base-zettel-section"));
-          if(section?.querySelector(".knowledge-base-section-list li")) break;
-          await new Promise(resolve=>setTimeout(resolve,25));
-        }
-        if (!section?.querySelector(".knowledge-base-section-list li")) throw new Error("Notes did not appear before retrieval");
-        const panel=section.querySelector(".knowledge-base-similar-body");
-        if(!panel.hidden || indexer.corpus._ready || SWScope.SWSemantic._native)throw new Error("Automatic sidebar rendering bypassed lazy startup");
-        const started=Date.now();
-        section.querySelector('button[data-view="similar"]').click();
-        for(let n=0;n<100 && (indexer._startupPending || !indexer.corpus._ready);n++)await new Promise(resolve=>setTimeout(resolve,10));
-        if(indexer._startupPending || !indexer.corpus._ready)throw new Error("Explicit activation did not prioritize retrieval");
-        result.foregroundWakeMs=Date.now()-started;
-        if(result.foregroundWakeMs>1000)throw new Error("Explicit retrieval waited for the startup timer");
+        await indexer._scanPromise;
+        const semantic = SWScope.SWSemantic;
+        semantic.pause();
+        const model = PathUtils.join(SWScope.SWStorage.model(), 'model.onnx');
+        const previous = PathUtils.join(SWScope.SWStorage.model(), 'coreml-cache');
+        const cache = SWScope.SWStorage.compiledModel();
+        if (!(await IOUtils.exists(previous))) throw new Error('Existing compiled cache fixture missing');
+        const read = IOUtils.read;
+        let modelReads = 0;
+        IOUtils.read = function(file, ...args) {
+          if (file === model) { modelReads++; throw new Error('Model should be validated on disk'); }
+          return read.call(this, file, ...args);
+        };
+        Zotero.HTTP.request = function() {throw new Error('Unexpected network request with cached assets');};
+        let first;
+        try {
+          for (let run = 0; run < 2; run++) {
+            semantic._enabled = true;
+            await semantic._init();
+            const encoded = await semantic._encode(['Graph neural networks for representation learning.']);
+            if (encoded.vectors[0]?.length !== 384) throw new Error('Invalid native vector');
+            if (first) {
+              const cosine = first.reduce((sum, value, i) => sum + value * encoded.vectors[0][i], 0);
+              if (cosine < 0.99999) throw new Error('Reused cache changed inference');
+            } else first = encoded.vectors[0];
+            semantic.pause();
+            await semantic._nativeExit;
+          }
+          if (await IOUtils.exists(previous)) throw new Error('Compiled cache remains mixed with model downloads');
+          if (!(await IOUtils.exists(cache)) || !(await IOUtils.getChildren(cache)).length) throw new Error('Relocated compiled cache missing');
+          if (!(await IOUtils.exists(model)) || modelReads) throw new Error('Model weights were not preserved on disk');
+        } finally { IOUtils.read = read; Zotero.HTTP.request = request; }
         await Zotero.ZoteroKnowledgeBase.hooks.onShutdown();
-        if(indexer._startupTimer || indexer._startupIdleCancel || indexer.corpus._db)throw new Error("Shutdown leaked scheduled work or storage");
-        if(await Zotero.Items.getByLibraryAndKeyAsync(source.libraryID,source.key)===false || !id)throw new Error("Startup probe lost native data");
-        result.ok=true;
+        result.ok = true;
+        result.modelReads = modelReads;
         await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify(result));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         return;
+      }
+      if (${Boolean(process.env.KNOWLEDGE_BASE_REUSE_PROBE)}) {
+        const indexer = SWScope.SWIndexer;
+        await indexer._scanPromise;
+        SWScope.SWSemantic.pause();
+        const items = [];
+        for (let n = 0; n < 3; n++) {
+          const item = new Zotero.Item("journalArticle");
+          item.setField("title", "Incremental graph learning fixture " + n);
+          await item.saveTx({skipSelect:true});
+          items.push(item);
+        }
+        await indexer._drainPromise;
+        await indexer.enqueueLibrary();
+        await indexer._drainPromise;
+        if (indexer.corpus.docs.size !== 3) throw new Error("Fixture index incomplete");
+        const before = indexer.corpus.revision;
+        const migratedVector = new Float32Array(384); migratedVector[0] = 1;
+        const migratedKey = indexer.docKey(items[0]);
+        await indexer.corpus._db.execute('INSERT OR REPLACE INTO embeddings (key, sourceHash, model, vector, updatedAt) VALUES (?, ?, ?, ?, ?)', [migratedKey,indexer.corpus.docs.get(migratedKey).hash,SWScope.SWSemantic.version,SWScope.SWSemantic.encode(migratedVector),Date.now()]);
+        await indexer.corpus._taskDrain;
+        await indexer.corpus.saveSearchCache();
+        if (!(await IOUtils.exists(SWScope.SWStorage.searchCache()))) throw new Error('Finished search cache was not saved');
+        await indexer._statusWrite;
+        await indexer.corpus.close();
+        const previousCache = PathUtils.join(SWScope.SWStorage.root(),'cache','related-papers');
+        await IOUtils.move(SWScope.SWStorage.cache(), previousCache, {noOverwrite:true});
+        indexer.corpus = new SWScope.SWCorpus();
+        indexer.corpus._loadModel=async()=>{throw new Error('Warm restart reparsed the full IDF model');};
+        indexer.corpus._loadAll=async()=>{throw new Error('Warm restart decoded full-text counts');};
+        indexer._scanSources.clear();
+        indexer._itemKeys.clear();
+        await indexer.corpus.ready;
+        if (indexer.corpus.progress.phase !== 'ready' || !indexer.corpus.restoredSearchCache) throw new Error("Finished search cache did not restore");
+        if (await IOUtils.exists(previousCache) || !(await IOUtils.exists(PathUtils.join(SWScope.SWStorage.cache(),'similarity.sqlite')))) throw new Error('Index cache was not relocated');
+        const preserved = await indexer.corpus._db.execute('SELECT vector FROM embeddings WHERE key = ?', [migratedKey]);
+        if (preserved.length !== 1 || SWScope.SWSemantic.decode(preserved[0].getResultByName('vector'))[0] !== 1) throw new Error('Index relocation lost cached embeddings');
+
+        const originalGet = Zotero.Items.getAsync;
+        const originalExtract = indexer.extractText;
+        let hydrated = 0, extracted = 0;
+        Zotero.Items.getAsync = async function(...args) { hydrated++; return originalGet.apply(this,args); };
+        indexer.extractText = async function(...args) { extracted++; return originalExtract.apply(this,args); };
+        const started = Date.now();
+        try {
+          await indexer.enqueueLibrary();
+          await indexer._drainPromise;
+          result.unchangedScanMs = Date.now() - started;
+          result.unchangedHydrations = hydrated;
+          result.unchangedExtractions = extracted;
+          if (hydrated || extracted || indexer.corpus.revision !== before) throw new Error("Reopened unchanged index repeated source work");
+          const item = new Zotero.Item('journalArticle');
+          item.setField('title', 'One new incremental paper');
+          await item.saveTx({skipSelect:true});
+          await indexer._drainPromise;
+          await indexer.enqueueLibrary();
+          await indexer._drainPromise;
+          if (indexer.corpus.docs.size !== 4 || extracted !== 1) throw new Error("Adding one item reprocessed unchanged documents");
+          result.addedItemExtractions = extracted;
+          extracted = 0;
+          items[0].setField('title', 'Revised graph learning fixture');
+          await items[0].saveTx({skipSelect:true});
+          await indexer._drainPromise;
+          await indexer.enqueueLibrary();
+          await indexer._drainPromise;
+          if (extracted !== 1 || indexer.corpus.revision <= before + 1) throw new Error("Changed source was not updated incrementally");
+          result.modifiedItemExtractions = extracted;
+        } finally {
+          Zotero.Items.getAsync = originalGet;
+          indexer.extractText = originalExtract;
+        }
+        await indexer.corpus._taskDrain;
+        await indexer.corpus.saveSearchCache();
+        await indexer.corpus.close();
+        await IOUtils.write(SWScope.SWStorage.searchCache(),new Uint8Array([0]));
+        indexer.corpus = new SWScope.SWCorpus();
+        await indexer.corpus.ready;
+        if (indexer.corpus.progress.phase !== 'ready' || indexer.corpus.docs.size !== 4 || indexer.corpus.restoredSearchCache) throw new Error('Damaged derived cache did not fall back to the stored index');
+        await indexer.corpus.saveSearchCache();
+        result.searchCacheReused = true; result.damagedCacheRecovered = true;
+        await Zotero.ZoteroKnowledgeBase.hooks.onShutdown();
+        if (indexer.corpus._db) throw new Error("Reopened database leaked at shutdown");
+        result.ok = true;
+        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify(result));
+        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
+        return;
+      }
+      if (${Boolean(process.env.KNOWLEDGE_BASE_STARTUP_PROBE)}) {
+        const indexer = SWScope.SWIndexer;
+        if (!indexer.corpus._ready) throw new Error('Index did not preload at startup');
+        await indexer._scanPromise;
+        const source = new Zotero.Item('journalArticle'); source.setField('title','Graph learning source'); await source.saveTx();
+        const match = new Zotero.Item('journalArticle'); match.setField('title','Graph learning match'); await match.saveTx();
+        await indexer.ensureNow(source); await indexer.ensureNow(match);
+        const unseen = new Zotero.Item('journalArticle'); unseen.setField('title','Unseen graph learning paper'); await unseen.saveTx();
+        await indexer.ensureNow(unseen);
+        SWScope.SWSemantic.pause();
+        const warm = indexer.corpus, key = indexer.docKey(source), semantic = SWScope.SWSemantic;
+        await warm.saveHybridRecommendations(key,true,[{key:indexer.docKey(match),score:0.8,lexicalScore:0.8,semanticScore:0.8}],{revision:warm.revision,epoch:warm.search.epoch,queryHash:warm.docs.get(key).hash},semantic.version);
+        const vector = new Float32Array(384); vector[0] = 1;
+        const unrelated = new Float32Array(384); unrelated[1] = 1;
+        const putVector = async (key,hash,values) => warm._db.execute('INSERT OR REPLACE INTO embeddings (key,sourceHash,model,vector,updatedAt) VALUES (?,?,?,?,?)',[key,hash,semantic.version,semantic.encode(values),Date.now()]);
+        await warm._db.executeTransaction(async()=>{
+          for (const item of [source,match,unseen]) await putVector(indexer.docKey(item),warm.docs.get(indexer.docKey(item)).hash,vector);
+          for (let n=0;n<5450;n++) {
+            const key='1/PREVIEW'+String(n).padStart(5,'0');
+            await warm._db.execute('INSERT INTO docs (key,hash,weak,tf) VALUES (?,?,0,?)',[key,'fixture','{}']);
+            await putVector(key,'fixture',unrelated);
+          }
+        });
+        await warm.close();
+        const corpus = new SWScope.SWCorpus(); indexer.corpus = corpus;
+        semantic._loaded = null; semantic.ready = false; semantic.vectors.clear();
+        const loadModel = corpus._loadModel;
+        let release;
+        const gate = new Promise(resolve=>{release=resolve;});
+        corpus._loadModel = async function() { await gate; if (!this._stopped) await loadModel.call(this); };
+        void corpus.ready;
+        const doc = Zotero.getMainWindow().document;
+        const body = doc.createElementNS('http://www.w3.org/1999/xhtml','div'); doc.documentElement.append(body);
+        try {
+          let started=Date.now();
+          await Promise.race([SWScope.SWSection.renderBody({body,item:source}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Saved recommendations waited for model statistics')),2000))]);
+          if (!body.querySelector('.sw-row')) throw new Error('Saved recommendations were not immediately usable');
+          result.savedResultsMs=Date.now()-started;
+          started=Date.now();
+          await Promise.race([SWScope.SWSection.renderBody({body,item:unseen}),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Uncached paper waited for full index loading')),3000))]);
+          if (!body.querySelector('.sw-row')) throw new Error('Persisted vectors did not produce results for an uncached paper');
+          if (body.getAttribute('aria-busy') !== 'false' || !body.querySelector('.sw-computation-progress').hidden) throw new Error('Preview left a blocking loading indicator');
+          result.unseenPaperMs=Date.now()-started;
+          result.persistedVectors=5453;
+          if (corpus.progress.phase === 'ready') throw new Error('Cold preview depended on full corpus loading');
+          if (semantic._enabled || semantic._worker) throw new Error('Cold preview started inference');
+        } finally {
+          body.hidden=true;
+          const closing=corpus.close(); release(); await closing;
+          await body._swRefreshWait;
+          body.remove();
+        }
+        await Zotero.ZoteroKnowledgeBase.hooks.onShutdown();
+        if (corpus._db) throw new Error('Shutdown leaked preloaded index');
+        result.ok=true;
+        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify(result));
+        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit); return;
       }
       if (!SWReady || !SWScope.SWSection._registered) throw new Error("Sidebar did not register");
       await SWScope.SWIndexer.corpus.ready;
@@ -271,12 +423,32 @@ startup = async function(data) {
       taggedNote.addTag("deep-learning");
       await taggedNote.saveTx({skipSelect:true});
       const noteBeforeMerge = taggedNote.getNote();
+      item.setField("title", "Deep Learning for representation learning");
+      item.setField("abstractNote", "Deep Learning supports representation learning. Deep Learning learns useful representations.");
+      await item.saveTx({skipSelect:true});
       section.querySelector('button[data-view="tags"]').click();
       await waitFor(() => section.querySelector(".knowledge-base-manage-tags"), "current item tags");
-      if (section.querySelector(".sw-tags")) throw new Error("Suggestions remain in the sidebar");
-      item.addTag("Deep Learning");
-      await item.saveTx({skipSelect:true});
-      await waitFor(() => section.querySelector(".knowledge-base-item-tags li")?.textContent === "Deep Learning", "tag change refresh");
+      const suggestion = [...section.querySelectorAll('.knowledge-base-tag-option input')].find(input=>input.value === 'Deep Learning');
+      if (!suggestion || suggestion.checked) throw new Error("Recommended tag missing or preselected");
+      const newBadge = section.querySelector('.knowledge-base-tag-new');
+      const existingBadge = section.querySelector('.knowledge-base-tag-existing');
+      if (!newBadge?.textContent || !existingBadge?.textContent || doc.defaultView.getComputedStyle(newBadge).color === doc.defaultView.getComputedStyle(existingBadge).color) throw new Error('New and Existing tags do not have distinct localized badges');
+      await capture('sidebar-tags-ranked',doc.defaultView);
+      const tagActions=section.querySelector('.knowledge-base-tag-actions');
+      const applyBounds=tagActions?.querySelector('.knowledge-base-apply-tags')?.getBoundingClientRect();
+      const manageBounds=tagActions?.querySelector('.knowledge-base-manage-tags')?.getBoundingClientRect();
+      const optionBounds=section.querySelector('.knowledge-base-tag-option')?.getBoundingClientRect();
+      if (!applyBounds || !manageBounds || applyBounds.bottom>optionBounds.top+1 || manageBounds.bottom>optionBounds.top+1 || Math.abs(manageBounds.right-tagActions.getBoundingClientRect().right)>3) throw new Error('Suggested tag actions are not above the list with Tag Manager at the right: '+JSON.stringify({apply:applyBounds,manage:manageBounds,option:optionBounds,toolbar:tagActions?.getBoundingClientRect()}));
+
+      suggestion.click();
+      section.querySelector('button[data-view="tags"]').click();
+      if (!suggestion.checked || !suggestion.isConnected) throw new Error('Repeated tab click discarded selection');
+      section.querySelector('.knowledge-base-apply-tags').click();
+      await waitFor(() => item.hasTag("Deep Learning"), "recommended tag was not saved");
+      Zotero.Prefs.set('extensions.zotero.knowledge-base.inheritParentTags', false, true);
+      if (!(await Zotero.ZoteroKnowledgeBase.api.getNoteTags(taggedNote.id)).includes('Deep Learning')) throw new Error('Fixed inheritance still follows the retired off preference');
+
+      await waitFor(() => section.querySelector(".knowledge-base-manage-tags") && ![...section.querySelectorAll('.knowledge-base-tag-option input')].some(input=>input.value === 'Deep Learning'), "applied tag remained recommended");
       section.querySelector(".knowledge-base-manage-tags").click();
       await waitFor(() => [...tagAPI._dialogs].some(win => !win.closed), "sidebar Tag Manager");
       for (const win of tagAPI._dialogs) win.close();
@@ -436,7 +608,15 @@ startup = async function(data) {
         "The stochastic control objective guides the diffusion solver.\\n" +
         "References\\nPersonalized marketing. Personalized marketing. Personalized marketing.");
       await SWScope.SWIndexer.ensureNow(diffusionPaper);
+      const reviewedTags = await tagAPI.suggest(diffusionPaper,[{item:diffusionNeighbor,score:0.99}]);
+      if (reviewedTags.length > 6 || !reviewedTags.some(tag=>/combinatorial adjoint matching/i.test(tag.name)) || reviewedTags.some((tag,i)=>i && reviewedTags[i-1].score < tag.score)) throw new Error('Suggested topics are not conservative and relevance-ranked');
+      if (reviewedTags.some(tag=>/via |et al|^#?j t$|^#?u θ$|coordinate|transition rates/i.test(tag.name))) throw new Error('Suggested topics contain citation, variable or sentence fragments');
+
       await Zotero.getActiveZoteroPane().selectItem(diffusionPaper.id);
+      section.querySelector('button[data-view="tags"]').click();
+      await waitFor(() => [...section.querySelectorAll('.knowledge-base-tag-option span')].some(node=>/combinatorial adjoint matching/i.test(node.textContent)), 'conservative paper tags');
+      if (section.querySelectorAll('.knowledge-base-tag-option').length > 6) throw new Error('Sidebar pads suggested tags');
+      await capture('sidebar-tags-conservative',doc.defaultView);
       const liveTagBody = section.querySelector('.knowledge-base-similar-body');
       section.querySelector('button[data-view="similar"]').click();
       const diffusionProps = {body:liveTagBody,item:diffusionPaper,tabType:"library"};
@@ -498,7 +678,10 @@ startup = async function(data) {
       if (panes.length !== 1 || settings.document.querySelector(".settings-pages") || settings.document.getElementById("knowledge-base-data-path")) throw new Error("Settings still have extra navigation or implementation details");
       const menu = settings.document.getElementById("knowledge-base-ui-style");
       if (menu.getBoundingClientRect().width < 280) throw new Error("Native appearance menu was forcibly shortened");
-      const matchingLabel = settings.document.getElementById("similar-works-vectors");
+      const groups=[...settings.document.querySelectorAll('.plugin-preferences .main-section')];
+      const groupColors=new Set(groups.map(group=>settings.getComputedStyle(group).borderInlineStartColor));
+      if(groups.length!==4 || groupColors.size!==4 || groups.some(group=>parseFloat(settings.getComputedStyle(group).borderInlineStartWidth)<3 || settings.getComputedStyle(group).backgroundColor==='rgba(0, 0, 0, 0)') || !settings.document.querySelector('.settings-notes #knowledge-base-graph-appearance') || !settings.document.querySelector('.settings-similar #similar-works-diagnostics')) throw new Error('Settings sections lack distinct visual boundaries or grouped subsettings');
+      const matchingLabel = settings.document.getElementById("similar-works-cache-status");
       for (let n = 0; n < 100 && !matchingLabel?.textContent.trim(); n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!matchingLabel?.textContent.trim() || settings.document.getElementById("similar-works-model") || settings.document.getElementById("similar-works-build")) throw new Error("Settings did not show simple preparation status without model internals");
       if (settings.document.documentElement.textContent.includes("minilm-l6") || settings.document.documentElement.textContent.includes("Xenova/")) throw new Error("Model identity leaked into Settings");
@@ -506,8 +689,8 @@ startup = async function(data) {
       const originalStatus = sharedAPI.getLibraryStatus;
       const snapshot = originalStatus();
       sharedAPI.getLibraryStatus = () => ({...snapshot, state:"indexing", indexedItems:3, totalItems:10, queuedItems:7, indexProgress:{phase:"ready",done:3,total:10}, vectorTotal:10, semantic:{state:"indexing",indexedItems:2,queuedItems:8,error:null}});
-      for (let n = 0; n < 50 && settings.document.getElementById("similar-works-vector-progress").value !== 2; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (settings.document.getElementById("similar-works-index-progress").value !== 3 || settings.document.getElementById("similar-works-vector-progress").value !== 2 || settings.document.getElementById("similar-works-vector-progress").hidden) throw new Error("Settings progress did not refresh with indexing state");
+      for (let n = 0; n < 50 && settings.document.getElementById("similar-works-cache-progress").value !== 2; n++) await new Promise(resolve => setTimeout(resolve, 50));
+      if (settings.document.getElementById("similar-works-cache-progress").value !== 2 || settings.document.getElementById("similar-works-cache-progress").hidden || settings.document.getElementById('knowledge-base-open-data') || settings.document.getElementById('knowledge-base-literature-template')) throw new Error("Settings did not show the compact Cache status");
       if (${JSON.stringify(process.env.SW_HOST_SCREENSHOT || "")}) {
         const image = await settings.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
         const canvas = settings.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
@@ -551,6 +734,8 @@ startup = async function(data) {
       await capture("settings-tags",settings);
       await waitFor(() => settings.document.getElementById("knowledge-base-source-style")?.value, "Note System controls did not load");
       await capture("settings-notes",settings);
+      settings.document.getElementById("similar-works-diagnostics").scrollIntoView({block:"center"});
+      await capture("settings-cache",settings);
       settings.close();
       peers[0].addTag("format HTTP parser");
       peers[1].addTag("#format_HTTP_parser");
@@ -876,11 +1061,32 @@ try {
     throw new Error(JSON.stringify({ code, result }));
   console.log(
     process.env.KNOWLEDGE_BASE_STARTUP_PROBE
-      ? "PASS Lazy startup: notes are ready before index/model loading; explicit activation takes priority; shutdown drains scheduled work (wake " +
-          result.foregroundWakeMs +
-          " ms)."
+      ? "PASS Cold database: saved results " +
+          result.savedResultsMs +
+          " ms; unseen paper " +
+          result.unseenPaperMs +
+          " ms from " +
+          result.persistedVectors +
+          " persisted vectors; full model blocked; no inference; clean shutdown."
       : "PASS Knowledge Base: local text and semantic retrieval, no generative AI runtime/settings, tag filtering and native operations, indexing progress and shutdown cleanup.",
   );
+  if (process.env.KNOWLEDGE_BASE_STORAGE_PROBE)
+    console.log(
+      "PASS Cached native inference twice offline; compiled cache relocated; model reads into JS: " +
+        result.modelReads,
+    );
+  if (process.env.KNOWLEDGE_BASE_REUSE_PROBE)
+    console.log(
+      JSON.stringify({
+        searchCacheReused: result.searchCacheReused,
+        damagedCacheRecovered: result.damagedCacheRecovered,
+        unchangedScanMs: result.unchangedScanMs,
+        unchangedHydrations: result.unchangedHydrations,
+        unchangedExtractions: result.unchangedExtractions,
+        addedItemExtractions: result.addedItemExtractions,
+        modifiedItemExtractions: result.modifiedItemExtractions,
+      }),
+    );
   if (result.runtimeDownload)
     console.log(
       JSON.stringify({

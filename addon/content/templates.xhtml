@@ -1,0 +1,72 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/" type="text/css"?> <?xml-stylesheet
+href="chrome://zotero/skin/zotero.css" type="text/css"?> <?xml-stylesheet
+href="chrome://knowledge-base/content/preferences.css" type="text/css"?>
+<?xml-stylesheet
+href="chrome://knowledge-base/content/templates.css?v=__styleVersion__"
+type="text/css"?>
+<window
+  id="knowledge-base-templates"
+  windowtype="knowledge-base:templates"
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+  width="880"
+  height="580"
+  onload="document.title = Zotero.ZoteroKnowledgeBase.api.loc('pref-literature-template'); window.KnowledgeBaseTemplates.bind(document, Zotero.ZoteroKnowledgeBase.api)"
+  onkeydown="if (event.key === 'Escape' || (event.key.toLowerCase() === 'w' &amp;&amp; (Zotero.isMac ? event.metaKey : event.ctrlKey))) { event.preventDefault(); window.close(); }"
+>
+  <script src="chrome://zotero/content/include.js" />
+  <script src="chrome://knowledge-base/content/templates.js" />
+  <hbox class="template-manager" flex="1">
+    <vbox class="template-sidebar">
+      <html:div id="knowledge-base-literature-templates" role="listbox" />
+      <hbox>
+        <button
+          id="knowledge-base-template-new"
+          data-l10n-id="knowledge-base-pref-template-new"
+        />
+        <button
+          id="knowledge-base-template-delete"
+          disabled="true"
+          data-l10n-id="knowledge-base-pref-template-delete"
+        />
+      </hbox>
+    </vbox>
+    <vbox class="template-content" flex="1">
+      <description
+        id="knowledge-base-template-empty"
+        data-l10n-id="knowledge-base-template-empty"
+      />
+      <vbox id="knowledge-base-template-editor" hidden="true" flex="1">
+        <html:label
+          for="knowledge-base-template-name"
+          data-l10n-id="knowledge-base-pref-template-name"
+        />
+        <html:input
+          id="knowledge-base-template-name"
+          type="text"
+          required="required"
+        />
+        <checkbox
+          id="knowledge-base-template-default"
+          native="true"
+          data-l10n-id="knowledge-base-pref-template-choice"
+        />
+        <html:label
+          for="knowledge-base-template-body"
+          data-l10n-id="knowledge-base-pref-template-edit"
+        />
+        <html:textarea
+          id="knowledge-base-template-body"
+          rows="6"
+          spellcheck="false"
+        />
+      </vbox>
+      <description
+        id="knowledge-base-template-error"
+        role="alert"
+        hidden="true"
+      />
+    </vbox>
+  </hbox>
+</window>

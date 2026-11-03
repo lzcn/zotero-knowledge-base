@@ -9,28 +9,24 @@ similar-works-progress =
 
 similar-works-pref-limit =
     .value = Initial results
-similar-works-pref-metadata =
-    .label = Include items without full text
-
-similar-works-pref-index-heading = Index Status
-similar-works-pref-index = Text index
-similar-works-pref-error = Preparation failed. Restart Zotero.
+similar-works-pref-index-heading = Cache
+similar-works-pref-error = Cache unavailable
 similar-works-pref-index-value = { $known ->
     [1] { $phase } · { $count } / { $total }
    *[0] { $phase } · { $count }
     }
 similar-works-pref-index-progress =
     .aria-label = Text indexing progress
-similar-works-state-preparing = Loading index
+similar-works-state-preparing = Loading
 similar-works-state-waiting = Waiting
-similar-works-state-scanning = Scanning library
-similar-works-state-indexing = Indexing
-similar-works-state-idle = Up to date
+similar-works-state-scanning = Checking
+similar-works-state-indexing = Updating
+similar-works-state-idle = Ready
 similar-works-state-disabled = Paused
 similar-works-state-stopped = Stopped
 similar-works-state-error = Failed
-similar-works-state-loading = Preparing matching
-similar-works-state-downloading = Preparing required files
+similar-works-state-loading = Preparing
+similar-works-state-downloading = Downloading
 
 similar-works-tags-menu =
     .label = Tag Manager
@@ -109,12 +105,8 @@ similar-works-pref-tag-title =
 similar-works-tags-clear-selection =
     .label = Clear selection
 
-similar-works-pref-vectors = Semantic matching
 
-similar-works-pref-vector-value = { $phase } · { $count } / { $total }
 
-similar-works-pref-vector-progress =
-    .aria-label = Related paper matching progress
 
 similar-works-source = From
 
@@ -144,3 +136,5 @@ similar-works-evidence-current = Current paper
 similar-works-evidence-match = Matched paper
 similar-works-evidence-empty = No shared wording was located in the available text.
 similar-works-evidence-failed = Could not load the evidence. Try again.
+
+similar-works-pref-cache-ready = Ready · { $count } items

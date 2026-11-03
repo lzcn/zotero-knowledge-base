@@ -278,8 +278,6 @@ editor-key-invalid = ID 不能含空格、方括号、|，或以 @ 开头。
 editor-key-exists = 此 ID 已被另一篇笔记使用。
 editor-key-resolve = 使用可用 ID
 
-pref-inherit-tags =
-    .label = 继承来源和上级笔记标签
 pref-groups-heading = 分组
 pref-graph-label-length = 标题长度
 pref-graph-label-length-unit = 个字符
@@ -307,7 +305,8 @@ manager-sort-id-desc = ID：降序
 pref-graph-appearance = 图谱
 
 pref-literature-template = 笔记模板
-pref-template-choice = 新建时使用
+pref-template-choice =
+    .label = 用于新笔记
 template-none = 不使用模板
 pref-template-edit = 正文（Markdown）
 pref-template-name = 名称
@@ -384,8 +383,17 @@ settings-notes = 笔记系统
 
 
 section-notes = 笔记
-section-tags = 标签
-section-tags-empty = 暂无标签
+section-tags = 推荐标签
+section-tags-empty = 暂无推荐标签
 section-tags-manage = 管理标签
 section-similar = 相似条目
 section-similar-refresh = 刷新相似条目
+section-tags-add = 添加所选标签
+section-tags-new = 新标签
+section-tags-existing = 库内标签
+section-tags-add-error = 添加标签失败，请重试。
+section-tags-load-error = 推荐标签加载失败，请重新选择条目。
+pref-template-manage =
+    .label = 管理模板…
+
+template-empty = 暂无模板

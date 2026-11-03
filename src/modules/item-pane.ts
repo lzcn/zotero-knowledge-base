@@ -12,6 +12,8 @@ import { onDataChange } from "./events";
 
 const subscriptions = new Map<HTMLElement, () => void>();
 const sectionItems = new WeakMap<HTMLElement, Zotero.Item>();
+const tagRequests = new WeakMap<HTMLElement, object>();
+const tagWrites = new WeakMap<HTMLElement, object>();
 
 let sectionID: string | undefined;
 let columnID: string | false;
@@ -21,7 +23,10 @@ export function unregisterItemPaneUI(): void {
   sectionID = undefined;
   if (columnID) Zotero.ItemTreeManager.unregisterColumn(columnID);
   columnID = false;
-  for (const unsubscribe of subscriptions.values()) unsubscribe();
+  for (const [body, unsubscribe] of subscriptions) {
+    tagRequests.delete(ensureLayout(body).tags);
+    unsubscribe();
+  }
   subscriptions.clear();
 }
 
@@ -50,6 +55,12 @@ export async function registerItemPaneUI(): Promise<void> {
         ? Zotero.Items.get(props.item.parentItemID)
         : props.item;
     sectionItems.set(props.body, source);
+    const sourceKey = source ? `${source.libraryID}/${source.key}` : "";
+    if (layout.tags.dataset.itemKey !== sourceKey) {
+      tagRequests.delete(layout.tags);
+      layout.tags.dataset.itemKey = sourceKey;
+      layout.tags.replaceChildren();
+    }
     const childProps = {
       ...props,
       body: layout.body,
@@ -68,12 +79,13 @@ export async function registerItemPaneUI(): Promise<void> {
       );
       if (!target || target.hidden) return;
       const previous = props.body.dataset.view;
+      if (previous === target.dataset.view) return;
       selectView(props.body, target.dataset.view!);
       if (previous === "similar" && target.dataset.view !== "similar")
         similar.onCollapse(childProps);
       if (target.dataset.view === "tags") renderTags(layout.tags, source);
+      if (target.dataset.view === "notes") renderSection(layout.notes, source);
       if (target.dataset.view === "similar") {
-        libraryRuntime.wakeIndex();
         void similar.onAsyncRender(childProps);
       }
     };
@@ -99,7 +111,6 @@ export async function registerItemPaneUI(): Promise<void> {
       tabs[index].click();
     };
     layout.refresh.onclick = () => {
-      libraryRuntime.wakeIndex();
       void similar.onRefresh(childProps);
     };
     return childProps;
@@ -139,9 +150,16 @@ export async function registerItemPaneUI(): Promise<void> {
         });
         const observer = Zotero.Notifier.registerObserver(
           {
-            notify: () => {
-              if (body.dataset.view === "tags")
-                renderTags(ensureLayout(body).tags, sectionItems.get(body));
+            notify: (_event, type, ids) => {
+              const item = sectionItems.get(body);
+              const tags = ensureLayout(body).tags;
+              if (body.dataset.view !== "tags" || tagWrites.has(tags)) return;
+              if (
+                type === "item-tag" &&
+                !ids.some((id) => String(id).split("-")[0] === String(item?.id))
+              )
+                return;
+              renderTags(tags, item, true);
             },
           },
           ["item-tag", "tag"],
@@ -153,6 +171,7 @@ export async function registerItemPaneUI(): Promise<void> {
         });
       },
       onDestroy: ({ body }: { body: HTMLElement }) => {
+        tagRequests.delete(ensureLayout(body).tags);
         subscriptions.get(body)?.();
         subscriptions.delete(body);
         const child = similarProps.get(body);
@@ -166,7 +185,8 @@ export async function registerItemPaneUI(): Promise<void> {
       onRender: (props: Record<string, any>) => {
         const child = prepare(props);
         const layout = ensureLayout(props.body);
-        renderSection(layout.notes, sectionItems.get(props.body));
+        if (props.body.dataset.view === "notes")
+          renderSection(layout.notes, sectionItems.get(props.body));
         if (props.body.dataset.view === "tags")
           renderTags(layout.tags, sectionItems.get(props.body));
         similar.onRender(child);
@@ -178,7 +198,15 @@ export async function registerItemPaneUI(): Promise<void> {
       onToggle: (props: Record<string, any>) => {
         const child = prepare(props);
         const section = props.body.closest("collapsible-section");
-        if (section?.open === false) return similar.onCollapse(child);
+        if (section?.open === false) {
+          tagRequests.delete(ensureLayout(props.body).tags);
+          return similar.onCollapse(child);
+        }
+        if (props.body.dataset.view === "tags")
+          renderTags(
+            ensureLayout(props.body).tags,
+            sectionItems.get(props.body),
+          );
         if (!child.body.hidden) return similar.onToggle(child);
       },
     }) || undefined;
@@ -261,6 +289,10 @@ function ensureLayout(root: HTMLElement) {
 }
 
 function selectView(root: HTMLElement, view: string): void {
+  if (view !== "tags") {
+    const tags = root.querySelector<HTMLElement>(".knowledge-base-tags-body");
+    if (tags) tagRequests.delete(tags);
+  }
   root.dataset.view = view;
   for (const tab of Array.from(
     root.querySelectorAll('[role="tab"]'),
@@ -278,24 +310,102 @@ function selectView(root: HTMLElement, view: string): void {
   )!.hidden = view !== "similar";
 }
 
-function renderTags(body: HTMLElement, item?: Zotero.Item): void {
+function renderTags(
+  body: HTMLElement,
+  item?: Zotero.Item,
+  force = false,
+): void {
   const key = item ? `${item.libraryID}/${item.key}` : "";
+  if (!force && body.dataset.itemKey === key && tagRequests.has(body)) return;
   body.dataset.itemKey = key;
-  body.replaceChildren();
+  const request = {};
+  tagRequests.set(body, request);
+  const section = body.closest("collapsible-section") as
+    | (Element & { open?: boolean })
+    | null;
+  const active = () =>
+    body.isConnected &&
+    !body.hidden &&
+    section?.open !== false &&
+    tagRequests.get(body) === request &&
+    body.dataset.itemKey === key;
+  if (!body.querySelector(".knowledge-base-tag-option"))
+    body.replaceChildren(muted(body, getString("section-loading")));
   if (!item) return;
   void (async () => {
     await item.loadDataType("tags");
-    if (!body.isConnected || body.dataset.itemKey !== key) return;
-    const list = el(body, "ul");
-    list.className = "knowledge-base-item-tags";
-    for (const { tag } of item.getTags()) {
-      const row = el(list, "li");
-      row.textContent = tag;
-      list.append(row);
+    if (!active()) return;
+    const suggestions = await libraryRuntime.suggestTags(item, active);
+    if (!active()) return;
+    const selectedNames = new Set(
+      (
+        Array.from(body.querySelectorAll("input:checked")) as HTMLInputElement[]
+      ).map((input) => input.value),
+    );
+    const content: HTMLElement[] = [];
+    const controls: HTMLInputElement[] = [];
+    const apply = el(body, "button");
+    apply.type = "button";
+    apply.className = "knowledge-base-apply-tags";
+    apply.textContent = getString("section-tags-add");
+    apply.disabled = true;
+    for (const tag of suggestions) {
+      const label = el(body, "label");
+      label.className = "knowledge-base-tag-option";
+      const check = el(body, "input");
+      check.type = "checkbox";
+      check.value = tag.name;
+      check.checked = selectedNames.has(tag.name);
+      check.disabled = !item.isEditable();
+      check.onchange = () => {
+        apply.disabled = !controls.some(
+          (input) => input.checked && !input.disabled,
+        );
+      };
+      controls.push(check);
+      const name = el(body, "span");
+      name.textContent = tag.name;
+      const origin = el(body, "small");
+      origin.className = tag.isNew
+        ? "knowledge-base-tag-new"
+        : "knowledge-base-tag-existing";
+      origin.textContent = getString(
+        tag.isNew ? "section-tags-new" : "section-tags-existing",
+      );
+      label.append(check, name, origin);
+      content.push(label);
     }
-    const content: HTMLElement[] = list.childElementCount
-      ? [list]
-      : [muted(body, getString("section-tags-empty"))];
+    const message = muted(
+      body,
+      suggestions.length ? "" : getString("section-tags-empty"),
+    );
+    message.setAttribute("role", "status");
+    apply.disabled = !controls.some(
+      (input) => input.checked && !input.disabled,
+    );
+    apply.onclick = () => {
+      if (!active() || apply.disabled) return;
+      apply.disabled = true;
+      for (const control of controls) control.disabled = true;
+      const selected = suggestions.filter((_, i) => controls[i].checked);
+      tagWrites.set(body, request);
+      void libraryRuntime
+        .addSuggestedTags(item, selected, active)
+        .then(() => {
+          if (active()) renderTags(body, item, true);
+        })
+        .catch((error: Error) => {
+          Zotero.logError(error);
+          if (!active()) return;
+          message.textContent = getString("section-tags-add-error");
+          for (const control of controls) control.disabled = !item.isEditable();
+          apply.disabled = !item.isEditable();
+        })
+        .finally(() => {
+          if (tagWrites.get(body) === request) tagWrites.delete(body);
+        });
+    };
+    content.push(message);
     const manage = el(body, "button");
     manage.type = "button";
     manage.className = "knowledge-base-manage-tags";
@@ -311,11 +421,15 @@ function renderTags(body: HTMLElement, item?: Zotero.Item): void {
         Zotero.logError(error as Error);
       }
     };
-    body.replaceChildren(...content, manage);
+    const actions = el(body, "div");
+    actions.className = "knowledge-base-tag-actions";
+    if (suggestions.length) actions.append(apply);
+    actions.append(manage);
+    body.replaceChildren(actions, ...content);
   })().catch((error: Error) => {
     Zotero.logError(error);
-    if (body.isConnected && body.dataset.itemKey === key)
-      body.replaceChildren(muted(body, getString("section-load-error")));
+    if (active())
+      body.replaceChildren(muted(body, getString("section-tags-load-error")));
   });
 }
 

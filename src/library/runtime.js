@@ -47,7 +47,9 @@ var libraryRuntime = (() => {
         "stemmer",
         "tokenizer",
         "search",
+        "search-cache",
         "corpus",
+        "sources",
         "indexer",
         "semantic",
         "tags",
@@ -105,11 +107,40 @@ var libraryRuntime = (() => {
     start,
     stop,
     close,
-    wakeIndex() {
-      scope.SWIndexer.wake();
-    },
     openTagManager(win, libraryID) {
       return scope.SWTags.open(win, libraryID);
+    },
+    async suggestTags(item, active) {
+      const target = await scope.SWIndexer.resolveDocItem(item);
+      if (!target || stopped || !active()) return [];
+      const corpus = scope.SWIndexer.corpus;
+      const key = scope.SWIndexer.docKey(target);
+      const method = Zotero.isMac ? "hybrid" : "text";
+      // Optional neighbor votes reuse saved results; tags never wait for a
+      // full-library index load or start model downloads.
+      const cached = await corpus.getRecommendations(key, true, method);
+      if (stopped || !active()) return [];
+      const rows = cached
+        ? await scope.SWSection._resolveRows(
+            cached.matches.slice(0, 12),
+            method,
+          )
+        : [];
+      await Zotero.Items.loadDataTypes(
+        [target, ...rows.map((row) => row.item)],
+        ["tags"],
+      );
+      if (stopped || !active()) return [];
+      return scope.SWTags.suggest(target, rows, () => !stopped && active());
+    },
+    addSuggestedTags(item, suggestions, active) {
+      return scope.SWTags.addSelected(
+        item.id,
+        item.libraryID,
+        suggestions.map((tag) => tag.name),
+        () => !stopped && active(),
+        suggestions.filter((tag) => tag.isNew).map((tag) => tag.name),
+      );
     },
     getItemPaneCallbacks() {
       return scope.SWSection.getItemPaneCallbacks();

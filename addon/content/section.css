@@ -149,15 +149,49 @@
   width: 16px;
   height: 16px;
 }
-.knowledge-base-item-tags {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.knowledge-base-tag-option {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 0;
 }
-.knowledge-base-item-tags li {
-  padding: 4px 0;
+.knowledge-base-tag-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 2px 0 8px;
+  margin-bottom: 4px;
+  background: var(--material-sidepane, var(--ui-bg));
+  border-bottom: 1px solid var(--ui-border);
+}
+.knowledge-base-tag-option span {
+  flex: 1;
+  min-width: 0;
   overflow-wrap: anywhere;
+}
+.knowledge-base-tag-option small {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.knowledge-base-tag-new {
+  color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
+}
+.knowledge-base-tag-existing {
+  color: var(--ui-muted);
+  background: var(--ui-hover);
+}
+.knowledge-base-apply-tags {
+  margin: 0;
 }
 .knowledge-base-manage-tags {
   color: var(--ui-accent);
+  margin-inline-start: auto;
 }

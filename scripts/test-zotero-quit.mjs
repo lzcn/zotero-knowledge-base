@@ -664,7 +664,6 @@ function runQuitTest() {
         const addGroup=settings.document.getElementById('knowledge-base-add-group');
         const settingsFont=settings.getComputedStyle(addGroup).fontFamily;
         addGroup.dispatchEvent(new settings.Event('command',{bubbles:true}));
-        settings.document.getElementById('knowledge-base-template-new').dispatchEvent(new settings.Event('command',{bubbles:true}));
         settings.document.getElementById('knowledge-base-graph-appearance').open=true;
         await pause(150);
         if(settingsFont.includes('Avenir Next'))throw new Error('Settings inherited the Bear font');
@@ -869,41 +868,45 @@ function runQuitTest() {
         const initial=knowledgeBase.api.getLiteratureTemplateSettings();
         if(initial.selected!==null || initial.templates.length)throw new Error("Fresh install contains preset templates");
         const blank=await makeNote("Blank Literature Note");if(blank.card.body!=="")throw new Error("Fresh install did not create a blank Literature Note");
-        const preferences=Zotero.Utilities.Internal.openPreferences("knowledge-base-notes");
+        const settingsWindow=Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
+        for(let n=0;n<100 && !settingsWindow.document.getElementById('knowledge-base-template-manage');n++) await pause(50);
+        if(settingsWindow.document.getElementById('knowledge-base-template-body') || settingsWindow.document.getElementById('knowledge-base-inherit-tags') || settingsWindow.document.querySelector('[preference$="allowMetadataOnlyRecommendations"]')) throw new Error('Settings still expose template editor or retired options');
+        settingsWindow.document.getElementById('knowledge-base-template-manage').dispatchEvent(new settingsWindow.Event('command'));
+        const preferences=knowledgeBase.api.openTemplateManager();
+        if(preferences !== knowledgeBase.api.openTemplateManager()) throw new Error('Duplicate template managers opened');
         let choice;
         for(let n=0;n<100;n++) {
-          choice=preferences.document.getElementById("knowledge-base-literature-template");
-          if(choice?.querySelectorAll('menuitem').length===1)break;
+          choice=preferences.document.getElementById("knowledge-base-literature-templates");
+          if(choice && preferences.KnowledgeBaseTemplates) break;
           await pause(50);
         }
         const details=preferences.document.getElementById("knowledge-base-template-editor");
         const content=preferences.document.getElementById("knowledge-base-template-body");
         const name=preferences.document.getElementById("knowledge-base-template-name");
+        const use=preferences.document.getElementById("knowledge-base-template-default");
         const add=preferences.document.getElementById("knowledge-base-template-new");
         const remove=preferences.document.getElementById("knowledge-base-template-delete");
-        if(!choice || choice.value!=="" || !details?.hidden || choice.querySelectorAll('menuitem').length!==1 || !add.label)throw new Error("Native Settings did not start empty and without a template");
+        const selectedID=()=>choice.querySelector('[aria-selected="true"]')?.dataset.id;
+        if(!choice || choice.children.length || !details?.hidden || !add.label)throw new Error("Template manager did not start with an empty list");
         const command=(control)=>control.dispatchEvent(new preferences.Event("command"));
-        const rename=(text)=>{name.value=text;name.dispatchEvent(new preferences.Event("change"));};
+        const rename=(text)=>{name.value=text;name.dispatchEvent(new preferences.Event("input"));};
         const write=(text)=>{content.value=text;content.dispatchEvent(new preferences.Event("input",{bubbles:true}));};
         const chooseTemplate=async(id)=>{
-          preferences.focus();choice.scrollIntoView({block:"nearest"});choice.focus();
-          const popup=choice.menupopup;
-          choice.openMenu(true);
-          for(let n=0;n<100 && popup.state!=="open";n++)await pause(20);
-          if(popup.state!=="open")throw new Error("Template menu could not reopen: "+JSON.stringify({state:popup.state,open:choice.open,value:choice.value,target:id}));
-          const item=[...popup.children].find(item=>item.value===(id || ""));
-          if(!item)throw new Error("Template menu is missing its target");
-          popup.activateItem(item);
-          for(let n=0;n<100 && (popup.state!=="closed" || choice.open);n++)await pause(20);
-          if(popup.state!=="closed" || choice.open || knowledgeBase.api.getLiteratureTemplateSettings().selected!==id)throw new Error("Template selection did not close and save: "+JSON.stringify({state:popup.state,open:choice.open,value:choice.value,target:id}));
+          if(id) {
+            const button=choice.querySelector('[data-id="'+id+'"]');
+            if(!button) throw new Error("Template list is missing its target");
+            button.click();
+          }
+          use.checked=!!id;command(use);
+          if(knowledgeBase.api.getLiteratureTemplateSettings().selected!==id) throw new Error("Default template was not saved");
         };
         command(add);
-        const firstID=choice.value;
+        const firstID=selectedID();
         if(!firstID || details.hidden || content.value!=="" || preferences.document.activeElement!==name)throw new Error("New template is not empty or did not focus its name");
         rename("阅读记录");
         const firstBody="## Takeaway\\n\\n- One research insight\\n\\n## Evidence\\n\\n- Supporting experiment";
         write(firstBody);
-        if(choice.querySelector('menuitem[value="'+firstID+'"]').label!=="阅读记录")throw new Error("Naming the first template did not refresh its menu label");
+        if(choice.querySelector('[data-id="'+firstID+'"]').textContent!=="阅读记录")throw new Error("Naming the first template did not refresh its menu label");
         await chooseTemplate(null);await chooseTemplate(firstID);await chooseTemplate(firstID);
         const research=await makeNote("Named-template Literature Note");
         if(research.card.body!==firstBody || await knowledgeBase.api.ensureLiteratureNote(research.source.key,research.source.libraryID)!==research.id)throw new Error("New Literature Note did not use the named template exactly once");
@@ -924,7 +927,7 @@ function runQuitTest() {
         if(!(await editor.save(false)))throw new Error("Edited template note did not save");
         const savedResearch=await knowledgeBase.api.getZettel(research.id);
         if(!savedResearch.body.includes("Reader's own takeaway."))throw new Error("Template note lost the reader's own text");
-        command(add);const secondID=choice.value;
+        command(add);const secondID=selectedID();
         if(secondID===firstID || content.value!=="")throw new Error("A second new template reused the first template or its content");
         rename("实验计划");
         const custom="## Questions\\n\\nWhat should I investigate next?";
@@ -932,25 +935,36 @@ function runQuitTest() {
         await chooseTemplate(firstID);await chooseTemplate(secondID);await chooseTemplate(null);await chooseTemplate(secondID);
         const customNote=await makeNote("Second-template Literature Note");
         if(customNote.card.body!==custom)throw new Error("The selected second template was not used");
-        command(add);const temporaryID=choice.value;rename("Temporary template");
+        command(add);const temporaryID=selectedID();rename("Temporary template");
         const realConfirm=preferences.confirm;
         preferences.confirm=()=>false;command(remove);
         if(knowledgeBase.api.getLiteratureTemplateSettings().templates.length!==3)throw new Error("Cancelled template deletion removed content");
         preferences.confirm=()=>true;command(remove);preferences.confirm=realConfirm;
-        if(choice.value!=="" || !details.hidden || knowledgeBase.api.getLiteratureTemplateSettings().templates.some(entry=>entry.id===temporaryID))throw new Error("Deleting a selected template did not show No template");
+        if(details.hidden || knowledgeBase.api.getLiteratureTemplateSettings().templates.some(entry=>entry.id===temporaryID))throw new Error("Deleting a template did not keep the remaining templates editable");
         const without=await makeNote("Opted-out Literature Note");if(without.card.body!=="")throw new Error("No template did not produce a blank note");
-        choice.value=firstID;command(choice);
+        await chooseTemplate(firstID);
         if(content.value!==firstBody || name.value!=="阅读记录")throw new Error("Switching templates did not preserve independent names and bodies");
+        const rootStyle=preferences.getComputedStyle(preferences.document.querySelector(".template-manager"));
+        if(rootStyle.backgroundColor==='rgba(0, 0, 0, 0)' || rootStyle.backgroundColor===rootStyle.color) throw new Error('Template manager has no matching theme background');
+        if (${process.env.KNOWLEDGE_BASE_HOST_COLOR_SCHEME === "dark"}) {
+          const channels=rootStyle.backgroundColor.match(/\\d+/g)?.map(Number);
+          if(!channels || channels.slice(0,3).some(value=>value>128)) throw new Error('Dark template manager kept a light background: '+JSON.stringify({background:rootStyle.backgroundColor,color:rootStyle.color,dark:preferences.matchMedia('(prefers-color-scheme: dark)').matches}));
+        }
+
+        const inputStyle=preferences.getComputedStyle(content);
+        if(parseFloat(inputStyle.borderTopWidth)<1 || inputStyle.borderTopStyle==='none' || content.getBoundingClientRect().height<150)throw new Error('Template content does not look like an editable text field');
+        preferences.focus();await pause(100);content.focus();await pause(50);
+        if(preferences.document.hasFocus() && preferences.getComputedStyle(content).outlineStyle==='none')throw new Error('Template editor has no visible focus state: '+JSON.stringify({active:preferences.document.activeElement?.id,focused:preferences.document.hasFocus(),outline:preferences.getComputedStyle(content).outline,border:preferences.getComputedStyle(content).border}));
         rename("阅读记录（更新）");await chooseTemplate(secondID);await chooseTemplate(firstID);write(firstBody+"\\n\\nUpdated template instructions.");
         const edited=await makeNote("Updated-template Literature Note");
         if(!edited.card.body.endsWith("Updated template instructions."))throw new Error("Editing a template was not autosaved for future notes");
         await assertBody(blank.id,"");await assertBody(research.id,savedResearch.body);await assertBody(customNote.id,custom);await assertBody(without.id,"");
         if(await knowledgeBase.api.ensureLiteratureNote(blank.source.key,blank.source.libraryID)!==blank.id || (await knowledgeBase.api.getZettel(blank.id)).body!=="")throw new Error("Choosing a template modified an existing blank note");
-        choice.closest(".main-section").scrollIntoView({block:"start"});await pause(100);
+        choice.scrollIntoView({block:"start"});await pause(100);
         await screenshot("literature-template-settings",preferences);
         await editor.setEditorMode("visual",false);
         await screenshot("literature-template-note",editor);
-        choice.value=secondID;command(choice);
+        await chooseTemplate(secondID);
         const settings=knowledgeBase.api.getLiteratureTemplateSettings();
         const notes=[{id:blank.id,body:""},{id:research.id,body:savedResearch.body},{id:customNote.id,body:custom},{id:without.id,body:""}];
         await editor.knowledgeBasePrepareNavigation();editor.close();preferences.close();
@@ -1032,7 +1046,7 @@ function runQuitTest() {
         if(knowledgeBase.api.getWorkbenchMode()!=="window") throw new Error('Restart lost the workbench opening preference');
         if(knowledgeBase.api.getGraphLabelLength()!==18) throw new Error("Restart lost the graph title length");
         if(!knowledgeBase.api.getGraphOptions().hideIsolated) throw new Error('Restart lost the isolated-node filter preference');
-        if(!knowledgeBase.api.getTagInheritance() || JSON.stringify(knowledgeBase.api.getGraphGroups())!==JSON.stringify([{tag:"#Ideas",color:"#aa22cc"}])) throw new Error('Restart lost tag inheritance or graph group settings');
+        if(JSON.stringify(knowledgeBase.api.getGraphGroups())!==JSON.stringify([{tag:"#Ideas",color:"#aa22cc"}])) throw new Error('Restart lost tag inheritance or graph group settings');
         knowledgeBase.api.setWorkbenchMode("tab");
         const cards = await knowledgeBase.api.listZettels();
         const card = cards.find(row => row.id === first.cardID);
@@ -1409,7 +1423,7 @@ function runQuitTest() {
       }
       knowledgeBase.api.setSourceStyle("http://www.zotero.org/styles/apa");
       if (!Zotero.PreferencePanes.pluginPanes.some(pane => pane.id === "knowledge-base-preferences") || note.getNote() !== originalLiteratureHTML) throw new Error("Source Settings are missing or rendering rewrote the note");
-      const preferences = Zotero.Utilities.Internal.openPreferences("knowledge-base-notes");
+      const preferences = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
       let styleMenu;
       for (let n=0; n<100; n++) {
         styleMenu = preferences.document.getElementById("knowledge-base-source-style");
@@ -1418,7 +1432,7 @@ function runQuitTest() {
       }
       if (!styleMenu || styleMenu.value !== "http://www.zotero.org/styles/apa") throw new Error("Native Settings style control did not initialize");
       if(preferences.document.getElementById("knowledge-base-ai-open") || Zotero.PreferencePanes.pluginPanes.some(pane=>pane.id==="knowledge-base-ai-preferences"))throw new Error("Retired AI Settings remain available");
-      Zotero.Utilities.Internal.openPreferences("knowledge-base-notes");
+      Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
       for(let n=0;n<100 && !preferences.document.getElementById("knowledge-base-workbench-mode")?.getBoundingClientRect().width;n++) await new Promise(resolve=>setTimeout(resolve,20));
       const modeMenu=preferences.document.getElementById("knowledge-base-workbench-mode");
       if(modeMenu?.value!=="tab" || modeMenu.getAttribute("native")!=="true" || !modeMenu.querySelector('menuitem[value="window"]').label) throw new Error('Native Settings workbench mode did not initialize');
@@ -1438,12 +1452,7 @@ function runQuitTest() {
       labelLengthControl.value="0";labelLengthControl.dispatchEvent(new preferences.Event("change",{bubbles:true}));
       if(labelLengthControl.value!=="18" || knowledgeBase.api.getGraphLabelLength()!==18) throw new Error('Invalid graph title length was accepted');
       const metadataShots = ${JSON.stringify(process.env.KNOWLEDGE_BASE_HOST_SCREENSHOTS || "")};
-      const inheritanceControl=preferences.document.getElementById("knowledge-base-inherit-tags");
-      if(!inheritanceControl?.checked) throw new Error('Native Settings did not enable tag inheritance by default');
-      if(!(inheritanceControl.querySelector(".checkbox-check")?.getBoundingClientRect().width>=12)) throw new Error('Native inheritance checkbox is not visibly rendered');
-      inheritanceControl.checked=false;inheritanceControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
-      if(knowledgeBase.api.getTagInheritance()) throw new Error('Native Settings did not save tag inheritance');
-      inheritanceControl.checked=true;inheritanceControl.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+      if(preferences.document.getElementById('knowledge-base-inherit-tags')) throw new Error('Fixed tag inheritance is still configurable');
       const expectedGraphTags=[...new Set((await knowledgeBase.api.getGraph()).nodes.flatMap(node=>node.tags||[]))].sort((a,b)=>a.localeCompare(b));
       if(JSON.stringify(await knowledgeBase.api.getGraphTags())!==JSON.stringify(expectedGraphTags)) throw new Error("Settings tag vocabulary differs from graph inheritance");
       const addGroup=preferences.document.getElementById("knowledge-base-add-group");
@@ -2177,10 +2186,6 @@ function runQuitTest() {
         if(!groupedSVG || groupedSVG.style.getPropertyValue("--node-color")!=="#ff5500" || !graph.document.getElementById("graph-groups-legend").textContent.includes("Outline topic")) throw new Error('Live graph colors or group legend did not refresh');
         knowledgeBase.api.setGraphGroups([{tag:"User marker",color:"#00aa66"},{tag:"Outline topic",color:"#ff5500"},...priorGroups]);
         if((await knowledgeBase.api.getGraph()).nodes.find(node=>node.id===unsourced.id).color!=="#00aa66") throw new Error('Reordered graph groups did not change matching priority');
-        knowledgeBase.api.setTagInheritance(false);
-        for(let n=0;n<100 && inheritedLabels().length;n++) await new Promise(resolve=>setTimeout(resolve,25));
-        if(inheritedLabels().length || (await knowledgeBase.api.getGraph()).nodes.find(node=>node.id===unsourced.id).group) throw new Error('Disabling inheritance did not remove inherited tags and groups');
-        knowledgeBase.api.setTagInheritance(true);
         await setTagParent(null);
         for(let n=0;n<100 && inheritedLabels().includes("Outline topic");n++) await new Promise(resolve=>setTimeout(resolve,25));
         if(inheritedLabels().includes("Outline topic") || (await knowledgeBase.api.getNoteTags(looseNote.id,unsourced.id)).includes("Outline topic")) throw new Error('Moving a card left its old inherited tags');

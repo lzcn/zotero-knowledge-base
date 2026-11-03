@@ -1,3 +1,4 @@
+/* global SWLibrarySources */
 function SWPref(name, fallback) {
   try {
     var v = Zotero.Prefs.get("similar-works." + name);
@@ -26,11 +27,6 @@ var SWIndexer = {
   _draining: false,
   _notifierID: null,
   _started: false,
-  _startupPending: false,
-  _startupTimer: null,
-  _startupIdleCancel: null,
-  _releaseStartup: null,
-  _startupWait: null,
   _libraryScanned: false,
   _libraryScanning: false,
   _libraryTotal: null,
@@ -38,6 +34,8 @@ var SWIndexer = {
   _statusWrite: Promise.resolve(),
   _tagText: new Map(),
   _tagTextPending: new Map(),
+  _scanSources: new Map(),
+  _sourceGeneration: 0,
 
   getStatus() {
     const indexedItems = this.corpus?.n || 0;
@@ -45,19 +43,17 @@ var SWIndexer = {
       updatedAt: new Date().toISOString(),
       state: this._stopped
         ? "stopped"
-        : this._startupPending
-          ? "waiting"
-          : this.corpus?.progress.phase === "error"
-            ? "error"
-            : this.corpus?.progress.phase !== "ready"
-              ? "preparing"
-              : this._libraryScanning
-                ? "scanning"
-                : !this._libraryScanned
-                  ? "waiting"
-                  : this._draining || this._queue.length || this._inFlight.size
-                    ? "indexing"
-                    : "idle",
+        : this.corpus?.progress.phase === "error"
+          ? "error"
+          : this.corpus?.progress.phase !== "ready"
+            ? "preparing"
+            : this._libraryScanning
+              ? "scanning"
+              : !this._libraryScanned
+                ? "waiting"
+                : this._draining || this._queue.length || this._inFlight.size
+                  ? "indexing"
+                  : "idle",
       indexedItems,
       totalItems: this._libraryTotal,
       queuedItems: this._queue.length,
@@ -72,6 +68,9 @@ var SWIndexer = {
 
   _reportStatus(force = false) {
     if (typeof IOUtils.writeUTF8 !== "function") return;
+    // Preparation owns the directory. A quick quit must not create an empty
+    // destination that prevents adoption of the existing index on next launch.
+    if (!this.corpus?._dbPath) return;
     const now = Date.now();
     if (!force && now - this._statusLastWrite < 10000) return;
     this._statusLastWrite = now;
@@ -97,28 +96,9 @@ var SWIndexer = {
     }
     this._started = true;
     this.corpus = new SWCorpus();
-    // Register immediately; open the heavy index only after startup has settled
-    // or an explicit Similar Items request takes priority.
-    this._startupPending = true;
+    this.registerNotifier();
+    // Warm persisted retrieval as soon as startup is ready, without blocking UI registration.
     this._scanPromise = (async () => {
-      await (this._startupWait = new Promise((resolve) => {
-        this._releaseStartup = resolve;
-        const delay = Math.max(0, SWPref("backgroundStartupDelayMs", 30000));
-        if (!delay) {
-          this.wake();
-          return;
-        }
-        this._startupTimer = setTimeout(() => {
-          this._startupTimer = null;
-          const win = Zotero.getMainWindow?.();
-          if (win?.requestIdleCallback) {
-            const id = win.requestIdleCallback(() => this.wake(), {
-              timeout: 5000,
-            });
-            this._startupIdleCancel = () => win.cancelIdleCallback(id);
-          } else this.wake();
-        }, delay);
-      }));
       if (this._stopped) return;
       await this.corpus.ready;
       if (this._stopped || this.corpus.progress.phase !== "ready") return;
@@ -127,30 +107,8 @@ var SWIndexer = {
         this._drainPromise = this._drain();
       if (typeof SWSemantic !== "undefined")
         await SWSemantic.start(this.corpus);
-      // Do not overlap initial cache loading with a full-library scan.
-      for (
-        let remaining = 1500;
-        !this._stopped && remaining > 0;
-        remaining -= 100
-      )
-        await swYield(100);
       if (!this._stopped) await this.enqueueLibrary();
     })().catch((error) => Zotero.logError(error));
-    this.registerNotifier();
-  },
-
-  wake() {
-    clearTimeout(this._startupTimer);
-    this._startupTimer = null;
-    try {
-      this._startupIdleCancel?.();
-    } catch (error) {
-      Zotero.logError(error);
-    }
-    this._startupIdleCancel = null;
-    this._startupPending = false;
-    this._releaseStartup?.();
-    this._releaseStartup = null;
   },
 
   registerNotifier() {
@@ -174,6 +132,7 @@ var SWIndexer = {
     if (this._stopped || type !== "item") {
       return;
     }
+    this._sourceGeneration++;
     if (event === "trash" || event === "delete") {
       for (const id of ids) {
         const work = this._removeById(id, extraData[id]).catch((e) =>
@@ -197,7 +156,6 @@ var SWIndexer = {
   },
 
   async _removeById(id, extra = {}) {
-    if (this._startupPending) await this._startupWait;
     if (this._stopped) return;
     await this.corpus.ready;
     if (this._stopped) return;
@@ -250,8 +208,7 @@ var SWIndexer = {
     this._queued.add(id);
     if (priority > 0) this._queue.unshift(id);
     else this._queue.push(id);
-    if (!this._startupPending && !this._draining)
-      this._drainPromise = this._drain();
+    if (!this._draining) this._drainPromise = this._drain();
   },
 
   async enqueueLibrary() {
@@ -259,42 +216,32 @@ var SWIndexer = {
     this._libraryScanned = false;
     this._reportStatus(true);
     try {
-      var live = new Set();
-      var oldKeys = Array.from(this.corpus.docs.keys());
-      var sliceStarted = Date.now();
-      for (var lib of Zotero.Libraries.getAll()) {
-        var ids = await Zotero.Items.getAll(lib.id, true, false, true);
-        // Fetch items in pages through the host API instead of one call per row.
-        for (let offset = 0; offset < ids.length; offset += 25) {
-          if (this._stopped) return;
-          var page = await Zotero.Items.getAsync(
-            ids.slice(offset, offset + 25),
-          );
-          for (var item of page) {
-            if (this._stopped) return;
-            if (Date.now() - sliceStarted >= 6) {
-              await swYield(20);
-              sliceStarted = Date.now();
-            }
-            var target = await this.resolveDocItem(item);
-            if (!target) continue;
-            const key = this.docKey(target);
-            const seen = live.has(key);
-            live.add(key);
-            this._itemKeys.set(item.id, {
-              key: this.docKey(item),
-              parentID: item.parentItemID,
-            });
-            if (!seen && SWPref("backgroundIndexing", true))
-              this.enqueue(target.id);
-          }
-          await swYield(20);
-        }
+      const generation = this._sourceGeneration;
+      const snapshot = await SWLibrarySources.scan(() => this._stopped);
+      if (!snapshot || this._stopped) return;
+      const live = new Set(snapshot.documents.map((doc) => doc.key));
+      for (const [id, identity] of snapshot.items)
+        this._itemKeys.set(id, identity);
+      this._scanSources.clear();
+      for (const { id, key, stamp } of snapshot.documents) {
+        if (this._stopped) return;
+        const valid = generation === this._sourceGeneration;
+        const hash = this.corpus.docs.get(key)?.hash;
+        if (
+          valid &&
+          hash &&
+          this.corpus._sourceStates.get(key) === JSON.stringify([stamp, hash])
+        )
+          continue;
+        if (valid) this._scanSources.set(key, { stamp, generation });
+        if (SWPref("backgroundIndexing", true)) this.enqueue(id);
       }
       this._libraryTotal = live.size;
-      for (var key of oldKeys) {
+      // A notification during the snapshot may have added a new document.
+      for (var key of Array.from(this.corpus.docs.keys())) {
         if (this._stopped) return;
-        if (!live.has(key)) await this.corpus.removeDoc(key);
+        if (generation === this._sourceGeneration && !live.has(key))
+          await this.corpus.removeDoc(key);
       }
       this._libraryScanned = true;
     } catch (e) {
@@ -335,6 +282,7 @@ var SWIndexer = {
     } finally {
       this._draining = false;
       this._reportStatus(true);
+      if (!this._stopped) void this.corpus.saveSearchCache();
     }
   },
 
@@ -423,6 +371,36 @@ var SWIndexer = {
       return;
     }
     var key = this.docKey(item);
+    let source = this._scanSources.get(key);
+    this._scanSources.delete(key);
+    if (source?.generation !== this._sourceGeneration) {
+      const generation = this._sourceGeneration;
+      const snapshot = await SWLibrarySources.scan(
+        () => this._stopped,
+        item.id,
+      );
+      if (this._stopped) return;
+      const doc = snapshot?.documents.find((doc) => doc.key === key);
+      source =
+        doc && generation === this._sourceGeneration
+          ? { stamp: doc.stamp, generation }
+          : null;
+    }
+    if (
+      !foreground &&
+      source &&
+      this.corpus._sourceStates.get(key) ===
+        JSON.stringify([source.stamp, this.corpus.docs.get(key)?.hash])
+    ) {
+      if (typeof SWSemantic !== "undefined") SWSemantic.enqueue(key);
+      return;
+    }
+    const recordSource = () =>
+      this.corpus.recordSource(
+        key,
+        source?.generation === this._sourceGeneration ? source.stamp : "",
+        this.corpus.docs.get(key)?.hash || "",
+      );
     if (item.deleted) {
       return await this.corpus._removeDoc(key);
     }
@@ -435,13 +413,9 @@ var SWIndexer = {
       await this.corpus._removeDoc(key);
       return;
     }
-    await this.corpus.recordSource(
-      key,
-      String(item.getField("dateModified") || ""),
-      info.hash,
-    );
     var prev = this.corpus.docs.get(key);
     if (prev && prev.hash === info.hash) {
+      await recordSource();
       if (typeof SWSemantic !== "undefined") SWSemantic.enqueue(key);
       return;
     }
@@ -461,6 +435,7 @@ var SWIndexer = {
     if (!tf || this._stopped) return;
     var weak = info.weak || tf.size < SWPref("minFulltextTerms", 25);
     await this.corpus._upsertDoc(key, info.hash, weak, tf);
+    await recordSource();
     if (typeof SWSemantic !== "undefined") SWSemantic.enqueue(key);
     return true;
   },
@@ -664,7 +639,6 @@ var SWIndexer = {
   requestStop() {
     if (this._stopped) return;
     this._stopped = true;
-    this.wake();
     if (this.corpus) this.corpus._stopped = true;
     if (this._notifierID) {
       Zotero.Notifier.unregisterObserver(this._notifierID);
@@ -673,6 +647,7 @@ var SWIndexer = {
     this._queue = [];
     this._queued.clear();
     this._tagText.clear();
+    this._scanSources.clear();
     this._reportStatus(true);
   },
 

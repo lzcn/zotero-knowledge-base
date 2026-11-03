@@ -15,11 +15,11 @@ static void reply(NSDictionary *value) {
 
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
-    if (argc < 2 || argc > 3) return 2;
+    if (argc < 3 || argc > 4) return 2;
     setpriority(PRIO_PROCESS, 0, 10);
     Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "knowledge-base");
     std::unique_ptr<Ort::Session> session;
-    bool coreml = argc != 3 || std::string(argv[2]) != "cpu";
+    bool coreml = argc != 4 || std::string(argv[3]) != "cpu";
     auto load = [&](bool accelerated) {
       Ort::SessionOptions options;
       options.SetIntraOpNumThreads(1);
@@ -27,8 +27,10 @@ int main(int argc, const char *argv[]) {
       Ort::ThrowOnError(Ort::GetApi().AddFreeDimensionOverrideByName(options, "batch_size", 1));
       Ort::ThrowOnError(Ort::GetApi().AddFreeDimensionOverrideByName(options, "sequence_length", 256));
       if (accelerated) {
-        NSString *cache = [[@(argv[1]) stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"coreml-cache"];
-        [[NSFileManager defaultManager] createDirectoryAtPath:cache withIntermediateDirectories:YES attributes:nil error:nil];
+        NSString *cache = @(argv[2]);
+        NSError *error = nil;
+        if (![[NSFileManager defaultManager] createDirectoryAtPath:cache withIntermediateDirectories:YES attributes:nil error:&error])
+          throw std::runtime_error(error.localizedDescription.UTF8String);
         options.AppendExecutionProvider("CoreML", {
           {"ModelFormat", "MLProgram"}, {"MLComputeUnits", "ALL"},
           {"RequireStaticInputShapes", "1"}, {"ModelCacheDirectory", cache.UTF8String}

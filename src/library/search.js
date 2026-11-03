@@ -186,8 +186,8 @@ var SWSearch = (() => {
     return bytes;
   }
   function decodeCounts(data) {
-    const bytes = new Uint8Array(data),
-      view = new DataView(bytes.buffer),
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data),
+      view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength),
       counts = new Map();
     if (
       bytes.length >= 8 &&
@@ -202,7 +202,7 @@ var SWSearch = (() => {
         const length = view.getUint32(12 + i * 4, true) * 8;
         if (offset + length > bytes.length)
           throw new Error("Truncated field counts");
-        fields.push(decodeCounts(bytes.slice(offset, offset + length)));
+        fields.push(decodeCounts(bytes.subarray(offset, offset + length)));
         offset += length;
       }
       if (offset !== bytes.length)
@@ -617,18 +617,19 @@ var SWSearch = (() => {
       this.byID.delete(old.id);
       this.changes++;
     }
-    add(key, tf, weak, signature = null, sim = null) {
+    add(key, tf, weak, signature = null, sim = null, storedCounts = null) {
       const old = this.docs.get(key),
         id = old?.id || this.nextID++;
       if (old) this.remove(key);
-      const counts = this.counts(tf);
+      // Loaded counts are already validated, hashed and split into fields.
+      const counts = storedCounts ? tf : this.counts(tf);
       for (const feature of counts.keys())
         this.df.set(feature, (this.df.get(feature) || 0) + 1);
       const doc = {
         key,
         id,
         weak,
-        counts: encodeCounts(counts),
+        counts: storedCounts || encodeCounts(counts),
         length: [...counts.values()].reduce((a, b) => a + b, 0),
         fieldLengths: fieldLengths(counts),
         titleIds: new Set(fieldsOf(counts)[0].keys()),
@@ -810,6 +811,7 @@ var SWSearch = (() => {
   }
   return {
     Index,
+    Vector,
     Heap,
     hash,
     clean,

@@ -28,6 +28,7 @@ var SWCorpus = class {
     this.lastChangedAt = 0;
     this._sourceStates = new Map();
     this._recommendations = new Map();
+    this._storedReads = new Set();
     this._db = null;
     this._dbPath = null;
     this.progress = { phase: "idle", done: 0, total: 0 };
@@ -51,11 +52,7 @@ var SWCorpus = class {
 
   async _openAndLoad() {
     try {
-      var dir = SWStorage.cache();
-      await IOUtils.makeDirectory(dir, {
-        createAncestors: true,
-        ignoreExisting: true,
-      });
+      var dir = await SWStorage.prepareCache(() => !this._stopped);
       if (this._stopped) return;
       this._dbPath = PathUtils.join(dir, "similarity.sqlite");
       var { Sqlite } = ChromeUtils.importESModule(
@@ -71,7 +68,14 @@ var SWCorpus = class {
       await this._db.execute("PRAGMA journal_mode = WAL");
       await this._db.executeTransaction(() => this._ensureSchema());
       this._resolveOpened();
+      // Give cached-result readers a turn before decoding the large IDF model.
+      await swYield(0);
+      if (this._stopped) return;
+      if (await this._loadSearchCache()) return;
+      await this._loadModel();
+      if (this._stopped) return;
       await this._loadAll();
+      if (!this._stopped) void this.saveSearchCache();
     } catch (e) {
       if (this._stopped) return;
       Zotero.logError(
@@ -89,6 +93,127 @@ var SWCorpus = class {
     } finally {
       this._resolveOpened();
     }
+  }
+
+  async _loadSearchCache() {
+    const rows = await this._db.execute(
+      "SELECT v FROM meta WHERE k = 'searchCache'",
+    );
+    if (!rows.length) return false;
+    try {
+      const saved = JSON.parse(rows[0].getResultByName("v"));
+      if (saved.format !== 1 || saved.revision !== this.revision) return false;
+      const path = SWStorage.searchCache();
+      if (!(await IOUtils.exists(path))) return false;
+      if (
+        !/^[a-f0-9]{64}$/.test(saved.digest) ||
+        (await IOUtils.computeHexDigest(path, "sha256")) !== saved.digest
+      )
+        throw new Error("Search cache checksum mismatch");
+      await this._finishStoredReads();
+      if (this._stopped) return false;
+      const restored = await SWSearchCache.decode(
+        await IOUtils.read(path),
+        this.revision,
+        async () => {
+          await swYield(0);
+          await this._finishStoredReads();
+        },
+        () => !this._stopped,
+      );
+      if (!restored || this._stopped) return false;
+      const counts = await this._db.execute("SELECT COUNT(*) AS c FROM docs");
+      if (counts[0]?.getResultByName("c") !== restored.docs.size)
+        throw new Error("Search cache document count mismatch");
+      const sources = await this._db.execute(
+        "SELECT key, itemModifiedAt, sourceHash FROM source_updates",
+      );
+      if (this._stopped) return false;
+      this.search = restored.search;
+      this.docs = restored.docs;
+      this.n = this.docs.size;
+      this.df = this.search.df;
+      for (const row of sources) {
+        const key = row.getResultByName("key"),
+          stamp = row.getResultByName("itemModifiedAt"),
+          hash = row.getResultByName("sourceHash");
+        if (typeof stamp === "string" && this.docs.get(key)?.hash === hash)
+          this._sourceStates.set(key, JSON.stringify([stamp, hash]));
+      }
+      this._searchCacheStamp = JSON.stringify([
+        this.revision,
+        this.search.epoch,
+        this.search.changes,
+      ]);
+      this.restoredSearchCache = true;
+      this.progress = { phase: "ready", done: this.n, total: this.n };
+      void this._maintainEpoch();
+      return true;
+    } catch (error) {
+      if (!this._stopped)
+        Zotero.logError(
+          new Error(
+            "[knowledge-base] search cache rejected; restoring stored fingerprints",
+            { cause: error },
+          ),
+        );
+      return false;
+    }
+  }
+
+  saveSearchCache() {
+    if (!this._dbPath) return Promise.resolve();
+    if (this._searchCacheWork) return this._searchCacheWork;
+    const work = this.runTask(async () => {
+      if (
+        this._stopped ||
+        !this._db ||
+        this.progress.phase !== "ready" ||
+        !this.search.epoch ||
+        this._epochPending
+      )
+        return;
+      const stamp = JSON.stringify([
+        this.revision,
+        this.search.epoch,
+        this.search.changes,
+      ]);
+      if (stamp === this._searchCacheStamp) return;
+      const active = () =>
+        !this._stopped &&
+        stamp ===
+          JSON.stringify([
+            this.revision,
+            this.search.epoch,
+            this.search.changes,
+          ]);
+      const bytes = await SWSearchCache.encode(
+        this,
+        async () => {
+          await swYield(0);
+          await this._finishStoredReads();
+          await this.yieldToForeground();
+        },
+        active,
+      );
+      if (!bytes || !active()) return;
+      const path = SWStorage.searchCache();
+      await IOUtils.write(path, bytes, { tmpPath: path + ".tmp" });
+      const digest = await IOUtils.computeHexDigest(path, "sha256");
+      if (!active()) return;
+      await this._db.execute(
+        "INSERT OR REPLACE INTO meta (k,v) VALUES ('searchCache',?)",
+        [JSON.stringify({ format: 1, revision: this.revision, digest })],
+      );
+      this._searchCacheStamp = stamp;
+    }, -2).catch((error) => {
+      if (!this._stopped) Zotero.logError(error);
+    });
+    this._searchCacheWork = work;
+    void work.finally(() => {
+      if (this._searchCacheWork === work) this._searchCacheWork = null;
+    });
+    return work;
   }
 
   async _ensureSchema() {
@@ -130,9 +255,27 @@ var SWCorpus = class {
     await this._db.execute(
       "CREATE TABLE IF NOT EXISTS embeddings (key TEXT PRIMARY KEY, sourceHash TEXT NOT NULL, model TEXT NOT NULL, vector BLOB NOT NULL, updatedAt INTEGER NOT NULL)",
     );
+    var revisions = await this._db.execute(
+      "SELECT v FROM meta WHERE k = 'corpusRevision'",
+    );
+    this.revision = revisions.length
+      ? Number(revisions[0].getResultByName("v"))
+      : 0;
+    await this._db.execute(
+      "INSERT OR REPLACE INTO meta (k, v) VALUES ('schemaVersion', '" +
+        SW_SCHEMA_VERSION +
+        "')",
+    );
+  }
+
+  async _loadModel() {
+    await this._finishStoredReads();
+    if (this._stopped) return;
     var models = await this._db.execute(
       "SELECT v FROM meta WHERE k = 'signatureModel'",
     );
+    await this._finishStoredReads();
+    if (this._stopped) return;
     if (models.length) {
       try {
         const model = JSON.parse(models[0].getResultByName("v"));
@@ -160,17 +303,6 @@ var SWCorpus = class {
     this._loadedChanges = changes.length
       ? Number(changes[0].getResultByName("v")) || 0
       : 0;
-    var revisions = await this._db.execute(
-      "SELECT v FROM meta WHERE k = 'corpusRevision'",
-    );
-    this.revision = revisions.length
-      ? Number(revisions[0].getResultByName("v"))
-      : 0;
-    await this._db.execute(
-      "INSERT OR REPLACE INTO meta (k, v) VALUES ('schemaVersion', '" +
-        SW_SCHEMA_VERSION +
-        "')",
-    );
   }
 
   async _loadAll() {
@@ -180,11 +312,13 @@ var SWCorpus = class {
     var rebuild = !this.search.epoch;
     var lastKey = "";
     var done = 0;
-    var chunk = 25;
+    var chunk = 100;
     var sliceStarted = Date.now();
     var damaged = [];
     var damagedError = null;
     while (!this._stopped) {
+      await this._finishStoredReads();
+      if (this._stopped) return;
       var rows = await this._db.execute(
         "SELECT d.key, d.hash, d.weak, f.counts, f.signature, f.epoch, f.simhash, s.itemModifiedAt, s.sourceHash FROM docs d LEFT JOIN fingerprints f ON f.key = d.key LEFT JOIN source_updates s ON s.key = d.key WHERE d.key > ? ORDER BY d.key LIMIT ?",
         [lastKey, chunk],
@@ -200,6 +334,7 @@ var SWCorpus = class {
         try {
           counts = row.getResultByName("counts");
           if (!counts) throw new Error("Missing stored feature counts");
+          counts = new Uint8Array(counts);
           var tf = SWSearch.decodeCounts(counts);
           signature =
             row.getResultByName("epoch") === this.search.epoch
@@ -208,8 +343,7 @@ var SWCorpus = class {
           if (signature) SWSearch.decodeSignature(signature);
           var storedSimhash = row.getResultByName("simhash");
           if (storedSimhash) {
-            SWSearch.decodeSimhash(storedSimhash);
-            simhash = storedSimhash;
+            simhash = SWSearch.decodeSimhash(storedSimhash);
           } else simhash = null;
         } catch (e) {
           // The index is rebuildable. Drop this row and let the library scan
@@ -222,11 +356,13 @@ var SWCorpus = class {
           hash: row.getResultByName("hash"),
           weak: !!parseInt(row.getResultByName("weak")),
           tf: tf,
+          counts: counts,
           signature: signature,
           simhash: simhash,
         };
         if (!doc.signature) rebuild = true;
         this._memInsert(key, doc, false);
+        if (!rebuild) this.search.docs.get(key).counts = null;
         const modifiedAt = row.getResultByName("itemModifiedAt");
         if (
           typeof modifiedAt === "string" &&
@@ -290,7 +426,14 @@ var SWCorpus = class {
   }
 
   _memInsert(key, doc, bump) {
-    this.search.add(key, doc.tf, doc.weak, doc.signature, doc.simhash);
+    this.search.add(
+      key,
+      doc.tf,
+      doc.weak,
+      doc.signature,
+      doc.simhash,
+      doc.counts,
+    );
     this.docs.set(key, { hash: doc.hash, weak: doc.weak });
     this.n = this.docs.size;
     this.df = this.search.df;
@@ -308,6 +451,8 @@ var SWCorpus = class {
 
   async _persistFingerprints() {
     if (!this._db) return;
+    await this._db.execute("DELETE FROM meta WHERE k = 'searchCache'");
+    this._searchCacheStamp = null;
     let batch = [];
     const flush = async () => {
       await this._db.executeTransaction(async () => {
@@ -401,6 +546,8 @@ var SWCorpus = class {
           }
         } finally {
           this._epochPending = false;
+          if (!this._stopped && !this.search.needsEpoch())
+            void this.saveSearchCache();
           // A rebuild aborts when documents change; retry once the queue
           // reaches a stable point instead of waiting for the next edit.
           if (!this._stopped && this.search.needsEpoch())
@@ -639,6 +786,30 @@ var SWCorpus = class {
     return cached;
   }
 
+  async readStored(work) {
+    // Foreground reads must never wait for the in-memory index. Background
+    // loading pauses at safe boundaries until these bounded reads finish.
+    const reading = (async () => {
+      await this.opened;
+      if (!this._stopped) return work();
+      return null;
+    })();
+    this._storedReads.add(reading);
+    try {
+      return await reading;
+    } finally {
+      this._storedReads.delete(reading);
+    }
+  }
+
+  async _finishStoredReads() {
+    while (this._storedReads.size && !this._stopped) {
+      await Promise.allSettled([...this._storedReads]);
+      // Let the first rows paint before resuming synchronous model decoding.
+      await swYield(20);
+    }
+  }
+
   _validRecommendations(cached) {
     return (
       cached &&
@@ -671,8 +842,7 @@ var SWCorpus = class {
       cached &&
       cached.epoch === this.search.epoch &&
       !cached.dirty &&
-      cached.queryHash === this.docs.get(queryKey)?.hash &&
-      Date.now() - cached.computedAt < 24 * 60 * 60 * 1000
+      cached.queryHash === this.docs.get(queryKey)?.hash
     );
   }
 

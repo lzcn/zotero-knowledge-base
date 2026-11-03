@@ -83,6 +83,7 @@ function fixture({ terms, failStop = false, failClose = false } = {}) {
   );
   return {
     runtime: context.libraryRuntime,
+    context,
     calls,
     get scope() {
       return scope;
@@ -136,4 +137,39 @@ test("application quit does not wait for a library scan", async () => {
   f.scope.SWIndexer.shutdown = () => new Promise(() => {});
   await f.runtime.close(true);
   assert.ok(f.calls.includes("database.close"));
+});
+
+test("tag suggestions load cached neighbors tags in one batch without opening the full index", async () => {
+  const f = fixture();
+  await f.runtime.start();
+  const target = { id: 1 },
+    neighbor = { id: 2 };
+  let loaded = false,
+    suggested = 0;
+  f.scope.SWIndexer.resolveDocItem = async () => target;
+  f.scope.SWIndexer.docKey = () => "1/ITEM";
+  f.scope.SWIndexer.corpus.getRecommendations = async () => ({
+    matches: [{ key: "1/NEIGHBOR", score: 0.9 }],
+  });
+  Object.defineProperty(f.scope.SWIndexer.corpus, "ready", {
+    get() {
+      throw new Error("Tags must not wait for the index");
+    },
+  });
+  f.scope.SWSection._resolveRows = async () => [{ item: neighbor }];
+  f.context.Zotero.Items = {
+    loadDataTypes: async (items, types) => {
+      assert.deepEqual(Array.from(items), [target, neighbor]);
+      assert.deepEqual(Array.from(types), ["tags"]);
+      loaded = true;
+    },
+  };
+  f.scope.SWTags.suggest = async () => {
+    assert.ok(loaded);
+    suggested++;
+    return ["topic"];
+  };
+  assert.deepEqual(await f.runtime.suggestTags(target, () => true), ["topic"]);
+  assert.equal(suggested, 1);
+  await f.runtime.close();
 });

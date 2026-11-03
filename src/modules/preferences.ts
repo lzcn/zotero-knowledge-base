@@ -148,15 +148,6 @@ export interface GraphGroup {
   tag: string;
   color: string;
 }
-export function getTagInheritance(): boolean {
-  return (
-    Zotero.Prefs?.get(`${config.prefsPrefix}.inheritParentTags`, true) !== false
-  );
-}
-export function setTagInheritance(value: boolean): void {
-  Zotero.Prefs.set(`${config.prefsPrefix}.inheritParentTags`, value, true);
-  notifyDataChange({ all: true, fields: ["tags"] });
-}
 export function getGraphGroups(): GraphGroup[] {
   const value = Zotero.Prefs?.get(`${config.prefsPrefix}.graph.groups`, true);
   if (!value || typeof value !== "string") return [];

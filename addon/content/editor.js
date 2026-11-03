@@ -236,11 +236,9 @@ async function loadEditor() {
   await refreshNoteTags();
   if (args.editTags) await editTags();
   unsubscribe = api.onDataChange((change) => {
-    const inheritedTagsChanged =
-      api.getTagInheritance?.() !== false &&
-      change?.fields.some((field) =>
-        ["hierarchy", "availability"].includes(field),
-      );
+    const inheritedTagsChanged = change?.fields.some((field) =>
+      ["hierarchy", "availability"].includes(field),
+    );
     if (inheritedTagsChanged) run(refreshNoteTags);
     const relevant =
       !change ||

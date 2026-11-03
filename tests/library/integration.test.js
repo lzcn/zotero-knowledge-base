@@ -166,6 +166,38 @@ function harness() {
       context,
     );
   }
+  context.SWLibrarySources = {
+    async scan(_cancelled, documentID = null) {
+      return {
+        items: new Map(
+          [...items.values()].map((i) => [
+            i.id,
+            { key: i.libraryID + "/" + i.key, parentID: i.parentItemID },
+          ]),
+        ),
+        documents: [...items.values()]
+          .filter(
+            (i) =>
+              !i.deleted &&
+              !i.parentItemID &&
+              !i.isNote() &&
+              (documentID === null || documentID === i.id),
+          )
+          .map((i) => ({
+            id: i.id,
+            key: i.libraryID + "/" + i.key,
+            stamp: JSON.stringify([
+              i.getField("title"),
+              i.getField("abstractNote"),
+              i.getCreators(),
+              [...items.values()]
+                .filter((a) => a.parentItemID === i.id && !a.deleted)
+                .map((a) => [a.id, files.get("/cache/" + a.key)]),
+            ]),
+          })),
+      };
+    },
+  };
   const corpus = vm.runInContext("new SWCorpus()", context);
   corpus._ready = Promise.resolve();
   corpus._resolveOpened();
@@ -300,7 +332,7 @@ test("sidebar ranks top K in same library, preserves rows during indexing, and n
   assert.equal(h.body.querySelectorAll(".sw-row").length, 1);
   h.prefs.set("similar-works.allowMetadataOnlyRecommendations", false);
   await h.SWSection.renderBody(props, true);
-  assert.equal(h.body.querySelectorAll(".sw-row").length, 0);
+  assert.equal(h.body.querySelectorAll(".sw-row").length, 1);
   assert.equal(h.errors.length, 0);
 });
 
@@ -443,7 +475,7 @@ test("opening computes once; fresh cache is reused; stale cache stays visible du
   assert.equal(calculations, 2, "reverse update avoids a full recalculation");
   assert.equal(h.body.querySelectorAll(".sw-row").length, 2);
   const cached = await h.corpus.getRecommendations("1/KEY1", true);
-  cached.computedAt -= 25 * 60 * 60 * 1000;
+  cached.dirty = true;
   let release;
   h.corpus.scoreTopKAsync = async (...args) => {
     calculations++;
@@ -466,7 +498,7 @@ test("opening computes once; fresh cache is reused; stale cache stays visible du
   assert.equal(h.body.querySelectorAll(".sw-row").length, 2);
 });
 
-test("database recommendations survive restart; neighbor changes and age invalidate freshness", async () => {
+test("database recommendations survive restart; neighbor changes invalidate freshness but age alone does not", async () => {
   const h = harness(),
     payloads = new Map();
   h.corpus._db = {
@@ -507,7 +539,7 @@ test("database recommendations survive restart; neighbor changes and age invalid
     "filter caches are independent",
   );
   cached.computedAt -= 25 * 60 * 60 * 1000;
-  assert.equal(h.corpus.recommendationsFresh(cached, "1/A"), false);
+  assert.equal(h.corpus.recommendationsFresh(cached, "1/A"), true);
   cached.computedAt = Date.now();
   await h.corpus.upsertDoc("1/C", "c", false, new Map([["unrelated", 1]]));
   assert.equal(h.corpus.recommendationsFresh(cached, "1/A"), true);
@@ -681,6 +713,7 @@ test("embedded module loads Zotero globals and closes SQLite on shutdown", async
       ),
   };
   h.Zotero.DataDirectory = { dir: "/data" };
+  h.Zotero.DB.queryAsync = async () => [];
   h.Zotero.initializationPromise = Promise.resolve();
   h.Zotero.getMainWindows = () => [];
   h.Zotero.Notifier = {
@@ -691,7 +724,10 @@ test("embedded module loads Zotero globals and closes SQLite on shutdown", async
   const env = {
     Zotero: h.Zotero,
     IOUtils: h.IOUtils,
-    PathUtils: { join: (...parts) => parts.join("/") },
+    PathUtils: {
+      join: (...parts) => parts.join("/"),
+      parent: (value) => value.slice(0, value.lastIndexOf("/")),
+    },
     TextDecoder,
     TextEncoder,
     Ci: {},
@@ -1011,13 +1047,15 @@ test("background status distinguishes pending scans, queued work, and idle index
     writes.push([path, JSON.parse(text)]);
   assert.equal(h.SWIndexer.getStatus().state, "waiting");
   h.SWIndexer._libraryScanned = true;
+  h.corpus._dbPath =
+    "/data/knowledge-base/cache/similar-items/similarity.sqlite";
   h.SWIndexer._libraryTotal = 2;
   h.SWIndexer._queue = [2];
   h.SWIndexer._reportStatus(true);
   await h.SWIndexer._statusWrite;
   assert.equal(
     writes[0][0],
-    "/data/knowledge-base/cache/related-papers/index-status.json",
+    "/data/knowledge-base/cache/similar-items/index-status.json",
   );
   assert.equal(writes[0][1].state, "indexing");
   assert.equal(writes[0][1].indexedItems, 1);
@@ -1067,6 +1105,7 @@ test("hybrid is an internal default and ignores obsolete algorithm preferences",
     },
     enqueue() {},
     getRecommendations: () => null,
+    restoreRecommendations: async () => null,
     recommendationsFresh: () => false,
     saveRecommendations() {},
     recommend: async () => ({
@@ -1462,9 +1501,14 @@ test("cached rows are usable before the text index and semantic vectors finish l
   h.context.SWSemantic = {
     version: "minilm",
     _enabled: true,
+    ready: false,
     status: { state: "loading" },
-    start: () => vectors,
+    start: () =>
+      vectors.then(() => {
+        h.context.SWSemantic.ready = true;
+      }),
     getRecommendations: () => null,
+    restoreRecommendations: async () => null,
     enqueue() {},
     saveRecommendations() {},
     recommend: async () => {
@@ -1499,13 +1543,63 @@ test("cached rows are usable before the text index and semantic vectors finish l
     h.body.querySelector(".sw-row").querySelector(".sw-title").textContent,
     "Cached related paper",
   );
+  await pending; // Cached rendering must finish while vectors are still blocked.
+  h.context.SWSemantic.ready = true;
   loadVectors();
-  await pending;
+  await h.body._swRefreshWait;
+  await h.body._swRefreshWait;
   assert.equal(calculations, 1);
   assert.equal(
     h.body.querySelector(".sw-row").querySelector(".sw-title").textContent,
     "Updated related paper",
   );
+});
+
+test("an uncached paper displays a persisted-vector preview while the full index remains blocked", async () => {
+  const h = harness(),
+    query = h.item(1, "Unseen paper"),
+    related = h.item(2, "Persisted neighbor");
+  h.Zotero.isMac = true;
+  h.corpus.progress.phase = "loading";
+  let finish;
+  h.corpus._ready = new Promise((resolve) => {
+    finish = resolve;
+  });
+  let previews = 0;
+  h.context.SWSemantic = {
+    version: "minilm",
+    ready: false,
+    start: () => h.corpus.ready,
+    preview: async (corpus, key, _limit, cancelled) => {
+      previews++;
+      assert.equal(corpus, h.corpus);
+      assert.equal(key, "1/KEY1");
+      assert.equal(cancelled(), false);
+      return {
+        matches: [
+          {
+            key: h.SWIndexer.docKey(related),
+            score: 0.5,
+            lexicalScore: 0,
+            semanticScore: 0.8,
+          },
+        ],
+      };
+    },
+  };
+  await h.SWSection.renderBody({ body: h.body, item: query });
+  assert.equal(previews, 1);
+  assert.equal(
+    h.body.querySelector(".sw-title").textContent,
+    "Persisted neighbor",
+  );
+  assert.equal(h.body.querySelector(".sw-computation-progress").hidden, true);
+  assert.equal(h.body["aria-busy"], "false");
+  await h.SWSection.renderBody({ body: h.body, item: query });
+  assert.equal(previews, 1);
+  h.body.hidden = true;
+  finish();
+  await h.body._swRefreshWait;
 });
 
 test("a failed background index load preserves usable cached recommendations", async () => {
@@ -1531,6 +1625,7 @@ test("a failed background index load preserves usable cached recommendations", a
   h.corpus.progress = { phase: "error", error: "Background restore failed" };
   finish();
   await pending;
+  await h.body._swRefreshWait;
   assert.equal(h.body.querySelectorAll(".sw-row").length, 1);
   assert.match(
     h.body.querySelector(".sw-status").textContent,
@@ -1577,4 +1672,56 @@ test("match evidence stays hidden and dormant while its retained implementation 
   await evidence.listeners.toggle();
   assert.equal(comparisons, 1);
   assert.equal(evidence.querySelectorAll("blockquote").length, 2);
+});
+
+test("unchanged library snapshots skip hydration and extraction; only a new or changed item is queued", async () => {
+  const h = harness();
+  h.item(1, "Graph neural networks");
+  h.item(2, "Temporal graph learning");
+  await h.SWIndexer.enqueueLibrary();
+  await h.SWIndexer._drainPromise;
+  let hydrated = 0,
+    extracted = 0;
+  const get = h.Zotero.Items.getAsync;
+  const extract = h.SWIndexer.extractText;
+  h.Zotero.Items.getAsync = async (...args) => {
+    hydrated++;
+    return get(...args);
+  };
+  h.SWIndexer.extractText = async (...args) => {
+    extracted++;
+    return extract.call(h.SWIndexer, ...args);
+  };
+  await h.SWIndexer.enqueueLibrary();
+  await h.SWIndexer._drainPromise;
+  assert.equal(hydrated, 0);
+  assert.equal(extracted, 0);
+  h.item(3, "New temporal learning paper");
+  await h.SWIndexer.enqueueLibrary();
+  await h.SWIndexer._drainPromise;
+  assert.equal(hydrated, 2); // one target and its empty attachment page
+  assert.equal(extracted, 1);
+  h.item(2, "Updated temporal graph learning");
+  await h.SWIndexer.enqueueLibrary();
+  await h.SWIndexer._drainPromise;
+  assert.equal(extracted, 2);
+});
+
+test("a notification during a source snapshot prevents stale reuse and pruning", async () => {
+  const h = harness();
+  const item = h.item(1, "Graph neural networks");
+  await h.SWIndexer.enqueueLibrary();
+  await h.SWIndexer._drainPromise;
+  const scan = h.context.SWLibrarySources.scan;
+  h.context.SWLibrarySources.scan = async (cancelled, documentID) => {
+    if (documentID) return scan(cancelled, documentID);
+    const snapshot = await scan();
+    h.SWIndexer._onNotify("modify", "item", [item.id]);
+    await h.corpus.upsertDoc("1/NEW", "new", true, new Map([["graph", 1]]));
+    return snapshot;
+  };
+  await h.SWIndexer.enqueueLibrary();
+  await h.SWIndexer._drainPromise;
+  assert.ok(h.corpus.docs.has("1/NEW"));
+  assert.equal(h.SWIndexer._scanSources.size, 0);
 });

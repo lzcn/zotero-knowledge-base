@@ -141,6 +141,7 @@ export default tseslint.config(
           "pref",
           "module",
           "SWSearch",
+          "SWSearchCache",
           "SWCorpus",
           "SWIndexer",
           "SWTokenizer",

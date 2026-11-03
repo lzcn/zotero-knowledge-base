@@ -93,8 +93,6 @@ import {
   setNoteEditorMode,
   getWorkbenchMode,
   setWorkbenchMode,
-  getTagInheritance,
-  setTagInheritance,
   getGraphGroups,
   setGraphGroups,
   getLiteratureTemplateSettings,
@@ -337,8 +335,6 @@ export const api = {
   getPanelWidth,
   setPanelWidth,
   onGraphOptionsChange,
-  getTagInheritance,
-  setTagInheritance,
   getGraphGroups,
   setGraphGroups,
   getGraphTags,
@@ -557,6 +553,23 @@ export const api = {
   openWorkbenchWindow,
   getWorkbenchMode,
   setWorkbenchMode,
+
+  openTemplateManager(): Window {
+    const existing = Services.wm.getMostRecentWindow(
+      "knowledge-base:templates",
+    ) as Window | null;
+    if (existing && !existing.closed) {
+      existing.focus();
+      return existing;
+    }
+    const opened = mainWindow().openDialog(
+      `chrome://${config.addonRef}/content/templates.xhtml`,
+      "knowledge-base:templates",
+      "chrome,centerscreen,resizable=yes,width=880,height=580",
+    );
+    if (!opened) throw new Error("Could not open template manager");
+    return opened;
+  },
 
   openManager(args: ManagerArgs = {}): void {
     if (!args.window)

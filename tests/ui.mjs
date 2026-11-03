@@ -841,12 +841,12 @@ assert.deepEqual(await native_notes.getNoteTags(72), [
   "中文 标签",
 ]);
 assert.deepEqual(await native_notes.getNoteTags(999), []);
-preferences.setTagInheritance(false);
+tagPreferences.set("extensions.zotero.knowledge-base.inheritParentTags", false);
 assert.deepEqual(await native_notes.getNoteTags(72), [
   "Own tag",
   "Machine learning",
+  "中文 标签",
 ]);
-preferences.setTagInheritance(true);
 tagNote.parentItemID = 999;
 assert.deepEqual(await native_notes.getNoteTags(72), [
   "Own tag",
@@ -854,7 +854,7 @@ assert.deepEqual(await native_notes.getNoteTags(72), [
 ]);
 tagNote.parentItemID = 71;
 check("Parent tags inherit live without changing the note's own tags", () => {
-  assert.equal(preferences.getTagInheritance(), true);
+  assert.equal(preferences.getTagInheritance, undefined);
   assert.deepEqual(tagNote.getTags(), [
     { tag: "Own tag" },
     { tag: "Machine learning" },
@@ -999,6 +999,9 @@ prefsWin.Zotero = {
   },
 };
 prefsWin.eval(
+  await readFile(path.join(ROOT, "addon/content/templates.js"), "utf8"),
+);
+prefsWin.eval(
   await readFile(path.join(ROOT, "addon/content/preferences.js"), "utf8"),
 );
 await Promise.all([
@@ -1007,139 +1010,140 @@ await Promise.all([
 ]);
 const prefsCommand = (control) =>
   control.dispatchEvent(new prefsWin.Event("command", { bubbles: true }));
+assert.equal(
+  prefsWin.document.getElementById("knowledge-base-open-data"),
+  null,
+);
+assert.equal(
+  prefsWin.document.getElementById("knowledge-base-literature-template"),
+  null,
+);
+
+const templateDOM = new JSDOM(
+  await readFile(path.join(ROOT, "addon/content/templates.xhtml"), "utf8"),
+  { contentType: "application/xhtml+xml", runScripts: "outside-only" },
+);
+const templateWin = templateDOM.window;
+templateWin.MozXULElement = prefsWin.MozXULElement;
+templateWin.Zotero = prefsWin.Zotero;
+templateWin.document.createXULElement = (tag) =>
+  templateWin.document.createElementNS(
+    "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
+    tag,
+  );
+templateWin.eval(
+  await readFile(path.join(ROOT, "addon/content/templates.js"), "utf8"),
+);
+templateWin.KnowledgeBaseTemplates.bind(
+  templateWin.document,
+  templateWin.Zotero.ZoteroKnowledgeBase.api,
+);
+prefsWin.Zotero.ZoteroKnowledgeBase.api.openTemplateManager = () => templateWin;
+prefsCommand(
+  prefsWin.document.getElementById("knowledge-base-template-manage"),
+);
+assert.equal(
+  prefsWin.document.getElementById("knowledge-base-template-body"),
+  null,
+);
+assert.equal(
+  prefsWin.document.getElementById("knowledge-base-inherit-tags"),
+  null,
+);
+assert.equal(
+  prefsWin.document.querySelector(
+    '[preference$="allowMetadataOnlyRecommendations"]',
+  ),
+  null,
+);
 check(
-  "Named Literature Note templates start empty and support create, rename, select and delete",
+  "Template manager lists editable templates and keeps browsing separate from the new-note default",
   () => {
-    const choice = prefsWin.document.getElementById(
-      "knowledge-base-literature-template",
-    );
-    const editor = prefsWin.document.getElementById(
-      "knowledge-base-template-editor",
-    );
-    const body = prefsWin.document.getElementById(
-      "knowledge-base-template-body",
-    );
-    const name = prefsWin.document.getElementById(
-      "knowledge-base-template-name",
-    );
-    const add = prefsWin.document.getElementById("knowledge-base-template-new");
-    const remove = prefsWin.document.getElementById(
-      "knowledge-base-template-delete",
-    );
-    assert.deepEqual(preferences.getLiteratureTemplateSettings(), {
-      selected: null,
-      templates: [],
-    });
-    assert.equal(choice.value, "");
+    const doc = templateWin.document;
+    const command = (control) =>
+      control.dispatchEvent(new templateWin.Event("command"));
+    const list = doc.getElementById("knowledge-base-literature-templates");
+    const editor = doc.getElementById("knowledge-base-template-editor");
+    const name = doc.getElementById("knowledge-base-template-name");
+    const body = doc.getElementById("knowledge-base-template-body");
+    const use = doc.getElementById("knowledge-base-template-default");
+    const add = doc.getElementById("knowledge-base-template-new");
+    const remove = doc.getElementById("knowledge-base-template-delete");
+    const selected = () =>
+      list.querySelector('[aria-selected="true"]')?.dataset.id;
+    const write = (control, value) => {
+      control.value = value;
+      control.dispatchEvent(new templateWin.Event("input"));
+    };
     assert.equal(editor.hidden, true);
-    assert.equal(preferences.getNewNoteBody(), "");
-    assert.equal(choice.querySelectorAll("menuitem").length, 1);
-    const noTemplateItem = choice.querySelector("menuitem");
-    prefsCommand(add);
-    const first = choice.value;
-    const firstItem = choice.querySelector(`menuitem[value="${first}"]`);
-    assert.ok(first);
-    assert.equal(editor.hidden, false);
-    assert.equal(body.value, "");
-    name.value = "研究记录";
-    name.dispatchEvent(new prefsWin.Event("change"));
-    body.value = "## My questions\n\n- What should I try?";
-    body.dispatchEvent(new prefsWin.Event("input", { bubbles: true }));
-    const firstBody = body.value;
-    assert.equal(preferences.getNewNoteBody(), firstBody);
+    assert.equal(list.children.length, 0);
+    command(add);
+    const first = selected();
+    write(name, "研究记录");
+    write(body, "## Research questions");
+    assert.equal(preferences.getNewNoteBody(), body.value);
+    const firstButton = list.querySelector(`[data-id="${first}"]`);
+    assert.equal(firstButton.textContent, "研究记录");
+    command(add);
+    const second = selected();
+    write(name, "实验规划");
+    write(body, "## Experiments");
+    firstButton.click();
+    assert.equal(name.value, "研究记录");
+    assert.equal(body.value, "## Research questions");
     assert.equal(
-      choice.querySelector(`menuitem[value="${first}"]`).getAttribute("label"),
-      "研究记录",
+      preferences.getLiteratureTemplateSettings().selected,
+      second,
+      "Browsing must not change the default",
     );
-    assert.equal(choice.querySelector(`menuitem[value="${first}"]`), firstItem);
-    assert.equal(choice.querySelector("menuitem"), noTemplateItem);
-    prefsCommand(add);
-    const second = choice.value;
-    assert.notEqual(second, first);
-    assert.equal(body.value, "");
-    name.value = "实验规划";
-    name.dispatchEvent(new prefsWin.Event("change"));
-    body.value = "## Experiments\n\n- Hypothesis";
-    body.dispatchEvent(new prefsWin.Event("input", { bubbles: true }));
-    const secondBody = body.value;
-    const menuItems = [...choice.querySelectorAll("menuitem")];
-    const stored = tagPreferences.get(
+    assert.equal(use.checked, false);
+    use.checked = true;
+    command(use);
+    assert.equal(preferences.getLiteratureTemplateSettings().selected, first);
+    write(name, "更新的研究记录");
+    assert.equal(list.querySelector(`[data-id="${first}"]`), firstButton);
+    assert.equal(firstButton.textContent, "更新的研究记录");
+    use.checked = false;
+    command(use);
+    assert.equal(preferences.getNewNoteBody(), "");
+    assert.equal(editor.hidden, false);
+    const saved = tagPreferences.get(
       "extensions.zotero.knowledge-base.literatureTemplates",
     );
     assert.throws(() =>
-      preferences.updateLiteratureTemplate(second, { name: "   " }),
+      preferences.updateLiteratureTemplate(first, { name: " " }),
     );
     assert.throws(() =>
-      preferences.updateLiteratureTemplate(second, { name: "研究记录" }),
+      preferences.updateLiteratureTemplate(first, { name: "实验规划" }),
     );
     assert.throws(() =>
-      preferences.updateLiteratureTemplate(second, { body: null }),
+      preferences.updateLiteratureTemplate(first, { body: null }),
     );
     assert.throws(() => preferences.setLiteratureTemplate("missing"));
     assert.equal(
       tagPreferences.get(
         "extensions.zotero.knowledge-base.literatureTemplates",
       ),
-      stored,
+      saved,
     );
-    choice.value = "";
-    prefsCommand(choice);
-    assert.deepEqual([...choice.querySelectorAll("menuitem")], menuItems);
-    assert.equal(preferences.getNewNoteBody(), "");
+    templateWin.confirm = () => false;
+    command(remove);
+    assert.equal(list.children.length, 2);
+    templateWin.confirm = () => true;
+    command(remove);
+    assert.equal(list.children.length, 1);
+    assert.equal(body.value, "## Experiments");
+    command(remove);
     assert.equal(editor.hidden, true);
-    choice.value = first;
-    prefsCommand(choice);
-    assert.deepEqual([...choice.querySelectorAll("menuitem")], menuItems);
-    assert.equal(body.value, firstBody);
-    assert.equal(name.value, "研究记录");
-    prefsWin.confirm = () => false;
-    prefsCommand(remove);
-    assert.equal(
-      preferences.getLiteratureTemplateSettings().templates.length,
-      2,
-    );
-    prefsWin.confirm = () => true;
-    prefsCommand(remove);
-    assert.equal(choice.value, "");
-    assert.equal(preferences.getNewNoteBody(), "");
-    assert.equal(
-      preferences.getLiteratureTemplateSettings().templates.length,
-      1,
-    );
-    assert.equal(
-      preferences.getLiteratureTemplateSettings().templates[0].body,
-      secondBody,
-    );
-    choice.value = second;
-    prefsCommand(choice);
-    assert.equal(body.value, secondBody);
-    name.value = "Renamed experiment plan";
-    name.dispatchEvent(new prefsWin.Event("change"));
-    assert.equal(preferences.getLiteratureTemplateSettings().selected, second);
-    assert.equal(preferences.getNewNoteBody(), secondBody);
-    const intact = tagPreferences.get(
-      "extensions.zotero.knowledge-base.literatureTemplates",
-    );
+    assert.equal(list.children.length, 0);
     tagPreferences.set(
       "extensions.zotero.knowledge-base.literatureTemplates",
       '{"templates":[],"selected":"missing"}',
     );
     assert.throws(() => preferences.getLiteratureTemplateSettings());
-    assert.equal(
-      tagPreferences.get(
-        "extensions.zotero.knowledge-base.literatureTemplates",
-      ),
-      '{"templates":[],"selected":"missing"}',
-    );
-    tagPreferences.set(
+    tagPreferences.delete(
       "extensions.zotero.knowledge-base.literatureTemplates",
-      intact,
     );
-    prefsCommand(remove);
-    assert.deepEqual(preferences.getLiteratureTemplateSettings(), {
-      selected: null,
-      templates: [],
-    });
   },
 );
 const groupRows = () => [
@@ -1181,11 +1185,6 @@ for (const invalid of ["0", "81", "12.5", ""]) {
 }
 assert.throws(() => preferences.setGraphLabelLength(0));
 preferences.setGraphLabelLength(20);
-const inheritControl = prefsWin.document.getElementById(
-  "knowledge-base-inherit-tags",
-);
-inheritControl.checked = false;
-prefsCommand(inheritControl);
 check(
   "Native Settings add, reorder, remove and autosave graph groups without duplicate handlers",
   () => {
@@ -1194,7 +1193,10 @@ check(
       { tag: "Machine learning", color: "#aa22cc" },
       { tag: "中文 标签", color: "#117744" },
     ]);
-    assert.equal(preferences.getTagInheritance(), false);
+    assert.equal(
+      prefsWin.document.getElementById("knowledge-base-inherit-tags"),
+      null,
+    );
     assert.equal(
       prefsWin.document.getElementById("knowledge-base-preferences-error")
         .hidden,
@@ -1202,6 +1204,7 @@ check(
     );
   },
 );
+templateWin.close();
 prefsWin.close();
 globalThis.Zotero.Utilities = priorTemplateUtilities;
 if (priorTemplateLocale === undefined) delete globalThis.addon;

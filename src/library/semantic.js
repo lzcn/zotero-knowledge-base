@@ -32,6 +32,7 @@ var SWSemantic = {
   _stopped: false,
   _enabled: false,
   _loaded: null,
+  ready: false,
   _notifiedAt: 0,
   _startupTimer: null,
   _idleWait: null,
@@ -55,7 +56,7 @@ var SWSemantic = {
     while (!this._stopped) {
       const rows =
         (await corpus._db?.execute(
-          "SELECT key, sourceHash, vector FROM embeddings WHERE model = ? AND key > ? ORDER BY key LIMIT 100",
+          "SELECT key, sourceHash, vector FROM embeddings WHERE model = ? AND key > ? ORDER BY key LIMIT 500",
           [this.version, afterKey],
         )) || [];
       if (!rows.length) break;
@@ -74,15 +75,17 @@ var SWSemantic = {
           Zotero.logError(error);
         }
         if (Date.now() - sliceStarted >= 6) {
-          await swYield(20);
+          await swYield(0);
           sliceStarted = Date.now();
         }
       }
       this.status.indexedItems = this.vectors.size;
-      await swYield(20);
+      await swYield(0);
     }
     if (this._stopped) return;
     this.status.indexedItems = this.vectors.size;
+    this._vectorStateRevision = null;
+    this.ready = true;
     if (Zotero.isMac && !this._enabled && !this._startupTimer) {
       this._startupTimer = setTimeout(() => {
         this._startupTimer = null;
@@ -477,13 +480,99 @@ var SWSemantic = {
     return score;
   },
 
+  async preview(corpus, key, k, cancelled = () => false) {
+    // An unseen paper can use persisted vectors without hydrating the text index
+    // or initializing inference. The complete hybrid ranking replaces this preview.
+    const active = () => !this._stopped && !corpus._stopped && !cancelled();
+    await corpus.opened;
+    if (!active() || !corpus._db) return null;
+    const queryRows = await corpus._db.execute(
+      "SELECT e.vector FROM embeddings e JOIN docs d ON d.key = e.key AND d.hash = e.sourceHash WHERE e.key = ? AND e.model = ?",
+      [key, this.version],
+    );
+    if (!active() || !queryRows.length) return null;
+    let query;
+    try {
+      query = this.decode(queryRows[0].getResultByName("vector"));
+    } catch (error) {
+      Zotero.logError(error);
+      return null;
+    }
+    const best = new SWSearch.Heap(k);
+    const library = key.slice(0, key.indexOf("/") + 1);
+    let afterKey = library;
+    while (active()) {
+      const rows = await corpus._db.execute(
+        "SELECT e.key, e.vector, d.weak FROM embeddings e JOIN docs d ON d.key = e.key AND d.hash = e.sourceHash WHERE e.model = ? AND e.key > ? AND e.key LIKE ? ORDER BY e.key LIMIT 250",
+        [this.version, afterKey, library + "%"],
+      );
+      if (!active()) return null;
+      if (!rows.length) break;
+      let sliceStarted = Date.now();
+      for (const row of rows) {
+        if (!active()) return null;
+        const candidate = row.getResultByName("key");
+        afterKey = candidate;
+        if (candidate === key) continue;
+        try {
+          const score = this.dot(
+            query,
+            this.decode(row.getResultByName("vector")),
+          );
+          if (score > 0)
+            best.add([
+              candidate,
+              Math.min(1, score),
+              candidate,
+              !!row.getResultByName("weak"),
+            ]);
+        } catch (error) {
+          Zotero.logError(error);
+        }
+        if (Date.now() - sliceStarted >= 6) {
+          await swYield(0);
+          sliceStarted = Date.now();
+        }
+      }
+      await swYield(0);
+    }
+    if (!active()) return null;
+    const dense = best
+      .sorted()
+      .map(([candidate, score, _tie, weak]) => ({
+        key: candidate,
+        score,
+        weak,
+      }))
+      .sort((a, b) => b.score - a.score || a.key.localeCompare(b.key));
+    return {
+      matches: SWSearch.fuse([[], SWSearch.relevant(dense, "semantic")], k),
+    };
+  },
+
   snapshot(key) {
+    if (this._vectorStateRevision !== this._vectorRevision) {
+      const entries = [...this.vectors].map(([key, value]) => [
+        key,
+        value.hash,
+      ]);
+      entries.sort((a, b) => a[0].localeCompare(b[0]));
+      this._vectorState =
+        this.version +
+        ":" +
+        entries.length +
+        ":" +
+        SWSearch.hash(JSON.stringify(entries));
+      this._vectorStateRevision = this._vectorRevision;
+    }
     return {
       queryHash: this.corpus.docs.get(key)?.hash,
       revision: this.corpus.revision,
       epoch: this.corpus.search.epoch,
       vectorRevision: this._vectorRevision,
       generation: this._generation,
+      vectorState: this._vectorState,
+      minimumSimilarity: Number(SWPref("minimumSimilarity", 0.05)),
     };
   },
 
@@ -538,16 +627,43 @@ var SWSemantic = {
     return cached;
   },
 
+  async restoreRecommendations(key, includeWeak) {
+    const cached = this.getRecommendations(key, includeWeak);
+    if (cached) return cached;
+    const stored = await this.corpus.getRecommendations(
+      key,
+      includeWeak,
+      "hybrid",
+    );
+    const current = this.snapshot(key);
+    if (
+      this._stopped ||
+      !stored ||
+      stored.dirty ||
+      stored.model !== this.version ||
+      ![
+        "queryHash",
+        "revision",
+        "epoch",
+        "vectorState",
+        "minimumSimilarity",
+      ].every((name) => stored[name] === current[name])
+    )
+      return null;
+    const restored = { ...stored, ...current };
+    this._recommendations.set(JSON.stringify([key, includeWeak]), restored);
+    while (this._recommendations.size > 1000)
+      this._recommendations.delete(this._recommendations.keys().next().value);
+    return restored;
+  },
+
   recommendationsFresh(cached, key) {
     const snapshot = this.snapshot(key);
     return (
       !!cached &&
       !cached.dirty &&
       !!snapshot.queryHash &&
-      Object.entries(snapshot).every(
-        ([name, value]) => cached[name] === value,
-      ) &&
-      Date.now() - cached.computedAt < 24 * 60 * 60 * 1000
+      Object.entries(snapshot).every(([name, value]) => cached[name] === value)
     );
   },
 
@@ -751,13 +867,18 @@ var SWSemantic = {
     }
     const command = PathUtils.join(dir, "inference");
     await IOUtils.setPermissions(command, 0o700);
-    await this._modelFile("onnx/model.onnx");
+    await this._modelFile("onnx/model.onnx", false);
     if (this._stopped || !this._enabled || generation !== this._generation)
       throw new Error("Native initialization cancelled");
     const model = PathUtils.join(SWStorage.model(), "model.onnx");
+    const cache = await SWStorage.prepareCompiledModel(
+      () => !this._stopped && this._enabled && generation === this._generation,
+    );
+    if (this._stopped || !this._enabled || generation !== this._generation)
+      throw new Error("Native initialization cancelled");
     const process = await Subprocess.call({
       command,
-      arguments: [model],
+      arguments: [model, cache],
       stderr: "pipe",
     });
     if (this._stopped || !this._enabled || generation !== this._generation) {
@@ -963,17 +1084,17 @@ var SWSemantic = {
     }
   },
 
-  _modelFile(filename) {
-    if (this._assetLoads.has(filename)) return this._assetLoads.get(filename);
-    const work = this._readModelFile(filename).finally(() => {
-      if (this._assetLoads.get(filename) === work)
-        this._assetLoads.delete(filename);
+  _modelFile(filename, readBytes = true) {
+    const key = filename + ":" + readBytes;
+    if (this._assetLoads.has(key)) return this._assetLoads.get(key);
+    const work = this._readModelFile(filename, readBytes).finally(() => {
+      if (this._assetLoads.get(key) === work) this._assetLoads.delete(key);
     });
-    this._assetLoads.set(filename, work);
+    this._assetLoads.set(key, work);
     return work;
   },
 
-  async _readModelFile(filename) {
+  async _readModelFile(filename, readBytes = true) {
     const generation = this._generation;
     if (!Object.hasOwn(this.assets, filename)) {
       // Transformers asks for optional configuration files. They have no model code.
@@ -985,6 +1106,14 @@ var SWSemantic = {
     const file = PathUtils.join(dir, filename.split("/").pop());
     if (await IOUtils.exists(file)) {
       try {
+        if (!readBytes) {
+          if (
+            (await IOUtils.computeHexDigest(file, "sha256")) !==
+            this.assets[filename]
+          )
+            throw new Error("Embedding asset checksum mismatch: " + filename);
+          return file;
+        }
         const bytes = await IOUtils.read(file);
         await this._validateAsset(filename, bytes);
         return bytes;
@@ -996,7 +1125,10 @@ var SWSemantic = {
       throw new Error("Embedding download cancelled");
     this.status.state = "downloading";
     SWIndexer._reportStatus(true);
-    await IOUtils.makeDirectory(dir, { ignoreExisting: true });
+    await IOUtils.makeDirectory(dir, {
+      createAncestors: true,
+      ignoreExisting: true,
+    });
     let error;
     for (const host of ["https://huggingface.co", "https://hf-mirror.com"]) {
       if (this._stopped || !this._enabled || generation !== this._generation)
@@ -1018,7 +1150,7 @@ var SWSemantic = {
         if (this._stopped || !this._enabled || generation !== this._generation)
           throw new Error("Embedding download cancelled");
         await IOUtils.write(file, bytes, { tmpPath: file + ".tmp" });
-        return bytes;
+        return readBytes ? bytes : file;
       } catch (caught) {
         error = caught;
       } finally {

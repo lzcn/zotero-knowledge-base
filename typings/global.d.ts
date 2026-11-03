@@ -25,8 +25,16 @@ declare namespace Zotero {
 declare const libraryRuntime: {
   readonly state: "idle" | "ready" | "stopped";
   start(): Promise<void>;
-  wakeIndex(): void;
   openTagManager(win: Window, libraryID: number): Window;
+  suggestTags(
+    item: Zotero.Item,
+    active: () => boolean,
+  ): Promise<{ name: string; isNew: boolean; count: number }[]>;
+  addSuggestedTags(
+    item: Zotero.Item,
+    suggestions: { name: string; isNew: boolean }[],
+    active: () => boolean,
+  ): Promise<number>;
   getStatus(): Record<string, any> | null;
   getItemPaneCallbacks(): Record<string, (props: any) => any>;
   setItemPaneID(id?: string): void;

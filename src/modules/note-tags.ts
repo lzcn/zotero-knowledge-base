@@ -6,7 +6,6 @@ import {
   transaction,
 } from "./db";
 import { getTagRevision, notifyDataChange } from "./events";
-import { getTagInheritance } from "./preferences";
 
 /** Settings needs the tag vocabulary, without building graph edges or reading note bodies. */
 export async function getGraphTags(): Promise<string[]> {
@@ -17,9 +16,7 @@ const tagIndexes = new Map<
   boolean,
   { version: string; index: Promise<Map<string, string[]>> }
 >();
-async function getTagIndex(
-  inherit = getTagInheritance(),
-): Promise<Map<string, string[]>> {
+async function getTagIndex(inherit = true): Promise<Map<string, string[]>> {
   const version = `${getDatabaseGeneration()}:${getDatabaseRevision()}:${getTagRevision()}`;
   const cached = tagIndexes.get(inherit);
   if (cached?.version === version) return cached.index;
@@ -82,9 +79,7 @@ export async function getTaggedNoteIDs(
   tag: string,
   ownOnly = false,
 ): Promise<string[]> {
-  return (
-    (await getTagIndex(ownOnly ? false : getTagInheritance())).get(tag) || []
-  );
+  return (await getTagIndex(!ownOnly)).get(tag) || [];
 }
 
 /** The tags table holds tags awaiting a native note, including one-time type conversion. */
@@ -260,7 +255,7 @@ export async function getEffectiveNoteTags(
   if (!noteID) return cardID ? getOwnNoteTags(null, cardID) : [];
   const note = await Zotero.Items.getAsync(noteID);
   if (!note || !note.isNote() || note.isInTrash()) return [];
-  const inherit = getTagInheritance();
+  const inherit = true;
   const notes = [note];
   if (inherit && cardID) {
     const mappings = await getAll<{ library_id: number; note_key: string }>(

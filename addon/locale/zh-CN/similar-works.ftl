@@ -9,28 +9,24 @@ similar-works-progress =
 
 similar-works-pref-limit =
     .value = 首批显示数量
-similar-works-pref-metadata =
-    .label = 包含没有全文的文献
-
-similar-works-pref-index-heading = 索引状态
-similar-works-pref-index = 文本索引
-similar-works-pref-error = 准备失败，请重启 Zotero。
+similar-works-pref-index-heading = 缓存
+similar-works-pref-error = 缓存暂不可用
 similar-works-pref-index-value = { $known ->
     [1] { $phase } · { $count } / { $total }
    *[0] { $phase } · { $count }
     }
 similar-works-pref-index-progress =
     .aria-label = 文本索引进度
-similar-works-state-preparing = 正在加载索引
+similar-works-state-preparing = 正在加载
 similar-works-state-waiting = 等待处理
-similar-works-state-scanning = 正在扫描文献库
-similar-works-state-indexing = 正在索引
-similar-works-state-idle = 已完成
+similar-works-state-scanning = 正在检查
+similar-works-state-indexing = 正在更新
+similar-works-state-idle = 已就绪
 similar-works-state-disabled = 已暂停
 similar-works-state-stopped = 已停止
 similar-works-state-error = 处理失败
-similar-works-state-loading = 正在准备匹配
-similar-works-state-downloading = 正在准备所需文件
+similar-works-state-loading = 正在准备
+similar-works-state-downloading = 正在下载
 
 similar-works-tags-menu =
     .label = 标签管理
@@ -109,12 +105,8 @@ similar-works-pref-tag-title =
 similar-works-tags-clear-selection =
     .label = 清除选择
 
-similar-works-pref-vectors = 语义匹配
 
-similar-works-pref-vector-value = { $phase } · { $count } / { $total }
 
-similar-works-pref-vector-progress =
-    .aria-label = 相似条目匹配进度
 
 similar-works-source = 来自
 
@@ -144,3 +136,5 @@ similar-works-evidence-current = 当前论文
 similar-works-evidence-match = 匹配论文
 similar-works-evidence-empty = 尚未在可用文本中定位到共同表述。
 similar-works-evidence-failed = 依据未能加载，请重试。
+
+similar-works-pref-cache-ready = 已就绪 · { $count } 篇

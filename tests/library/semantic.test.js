@@ -72,6 +72,71 @@ test("dense vectors preserve signed values, normalize and reject corruption", ()
   values[0] = NaN;
   assert.throws(() => semantic.pool([values], [1]), /Invalid/);
 });
+
+test("a cold query uses persisted vectors before corpus loading and never starts inference", async () => {
+  const { semantic, put, writes } = fixture();
+  put("1/Q", "q", [1, 0]);
+  put("1/A", "a", [0.9, 0.1]);
+  put("1/B", "b", [0, 1]);
+  const stored = [...semantic.vectors].map(([key, value]) => ({
+    key,
+    vector: semantic.encode(value.vector),
+    weak: key === "1/A" ? 1 : 0,
+  }));
+  const row = (value) => ({ getResultByName: (name) => value[name] });
+  const corpus = semantic.corpus;
+  corpus.ready = new Promise(() => {});
+  corpus.opened = Promise.resolve();
+  corpus.progress.phase = "loading";
+  corpus.docs.clear();
+  semantic.vectors.clear();
+  corpus._db.execute = async (sql, params) => {
+    writes.push([sql, params]);
+    assert.match(sql, /d.hash = e.sourceHash/);
+    assert.ok(!/counts|fingerprints/.test(sql));
+    if (sql.includes("e.key = ?")) return [row(stored[0])];
+    assert.equal(params[0], semantic.version);
+    assert.equal(params[2], "1/%");
+    return params[1] === "1/" ? stored.map(row) : [];
+  };
+  const result = await semantic.preview(corpus, "1/Q", 100);
+  assert.deepEqual(
+    Array.from(result.matches, (m) => m.key),
+    ["1/A"],
+  );
+  assert.equal(result.matches[0].weak, true);
+  assert.equal(result.matches[0].lexicalScore, 0);
+  assert.ok(result.matches[0].semanticScore > 0.9);
+  assert.equal(semantic.ready, false);
+  assert.equal(semantic._enabled, false);
+  assert.equal(semantic._worker, null);
+  assert.ok(writes.every(([sql]) => sql.startsWith("SELECT")));
+  let cancelled = true;
+  const before = writes.length;
+  assert.equal(
+    await semantic.preview(corpus, "1/Q", 100, () => cancelled),
+    null,
+  );
+  assert.equal(writes.length, before);
+  cancelled = false;
+  corpus._db.execute = async () => {
+    cancelled = true;
+    return [row(stored[0])];
+  };
+  assert.equal(
+    await semantic.preview(corpus, "1/Q", 100, () => cancelled),
+    null,
+  );
+});
+
+test("missing or damaged persisted query vectors fall back to normal indexing", async () => {
+  const { semantic } = fixture();
+  const corpus = semantic.corpus;
+  corpus._db.execute = async () => [];
+  assert.equal(await semantic.preview(corpus, "1/Q", 100), null);
+  corpus._db.execute = async () => [{ getResultByName: () => [1] }];
+  assert.equal(await semantic.preview(corpus, "1/Q", 100), null);
+});
 test("native SQLite byte arrays and unaligned views retain cached embeddings", async () => {
   const { semantic } = fixture();
   const vector = new Float32Array(384);
@@ -683,4 +748,59 @@ test("tag embedding cache keeps frequently used topics warm and encodes duplicat
   assert.equal(semantic._tagVectors.has("Topic 0"), false);
   await semantic.tagSimilarity({}, ["Frequent topic", "New topic"]);
   assert.deepEqual(encoded, ["New topic"]);
+});
+
+test("persisted hybrid results are reused across sessions only for the same corpus, vectors and threshold", async () => {
+  const { semantic, put, context } = fixture();
+  put("1/Q", "q", [1, 0]);
+  put("1/A", "a", [1, 0]);
+  const snapshot = semantic.snapshot("1/Q");
+  const stored = {
+    queryKey: "1/Q",
+    model: semantic.version,
+    ...snapshot,
+    vectorRevision: 57,
+    generation: 23,
+    computedAt: 0,
+    matches: [],
+  };
+  semantic.corpus.getRecommendations = async () => stored;
+  const restored = await semantic.restoreRecommendations("1/Q", true);
+  assert.ok(semantic.recommendationsFresh(restored, "1/Q"));
+  semantic._recommendations.clear();
+  semantic.corpus.revision++;
+  assert.equal(await semantic.restoreRecommendations("1/Q", true), null);
+  semantic.corpus.revision--;
+  context.SWPref = () => 0.8;
+  assert.equal(await semantic.restoreRecommendations("1/Q", true), null);
+  context.SWPref = (_key, fallback) => fallback;
+  semantic.forget("1/A");
+  assert.equal(await semantic.restoreRecommendations("1/Q", true), null);
+});
+
+test("native model validation streams the cached file without reading model bytes into JavaScript", async () => {
+  const { semantic, context } = fixture();
+  context.PathUtils = { join: (...parts) => parts.join("/") };
+  context.SWStorage.model = () => "/models";
+  let read = 0,
+    hashed = 0;
+  context.IOUtils = {
+    exists: async () => true,
+    computeHexDigest: async (file, algorithm) => {
+      assert.equal(file, "/models/model.onnx");
+      assert.equal(algorithm, "sha256");
+      hashed++;
+      return semantic.assets["onnx/model.onnx"];
+    },
+    read: async () => {
+      read++;
+      throw new Error("Model bytes should stay on disk");
+    },
+  };
+  assert.equal(
+    await semantic._modelFile("onnx/model.onnx", false),
+    "/models/model.onnx",
+  );
+  assert.equal(hashed, 1);
+  assert.equal(read, 0);
 });

@@ -1,6 +1,6 @@
 import { getAll, type ZettelRow, type LinkRow } from "./db";
 import { getItemSummary } from "./zotero";
-import { getGraphGroups, getTagInheritance } from "./preferences";
+import { getGraphGroups } from "./preferences";
 import { inheritCardTags, loadNativeTags } from "./note-tags";
 
 export interface GraphNode {
@@ -71,10 +71,9 @@ export async function getGraphData(): Promise<GraphData> {
     (entry): entry is typeof entry & { note: Zotero.Item } =>
       !!entry.note && entry.note.isNote() && !entry.note.isInTrash(),
   );
-  const inherit = getTagInheritance();
   const tagsByNote = await loadNativeTags(
     available.map(({ note }) => note),
-    inherit,
+    true,
   );
   let nativeTags = new Map<string, string[]>(rows.map((row) => [row.id, []]));
   for (const { row, note } of available)
@@ -85,7 +84,7 @@ export async function getGraphData(): Promise<GraphData> {
     const tags = nativeTags.get(row.zettel_id);
     if (tags && !tags.includes(row.tag)) tags.push(row.tag);
   }
-  if (inherit) nativeTags = inheritCardTags(nativeTags, parentMap);
+  nativeTags = inheritCardTags(nativeTags, parentMap);
   const groups = getGraphGroups();
   const palette = [
     "#3478f6",

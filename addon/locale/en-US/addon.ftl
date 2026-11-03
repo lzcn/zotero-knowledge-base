@@ -304,8 +304,6 @@ editor-key-invalid = Use an ID without spaces, brackets, | or a leading @.
 editor-key-exists = This ID belongs to another note.
 editor-key-resolve = Use available ID
 
-pref-inherit-tags =
-    .label = Inherit source and parent tags
 pref-groups-heading = Groups
 pref-graph-label-length = Title length
 pref-graph-label-length-unit = characters
@@ -333,7 +331,8 @@ manager-sort-id-desc = ID: Descending
 pref-graph-appearance = Graph
 
 pref-literature-template = Note Templates
-pref-template-choice = Use for new notes
+pref-template-choice =
+    .label = Use for new notes
 template-none = No template
 pref-template-edit = Content (Markdown)
 pref-template-name = Name
@@ -410,8 +409,17 @@ settings-notes = Note System
 
 
 section-notes = Notes
-section-tags = Tags
-section-tags-empty = No tags
+section-tags = Suggested Tags
+section-tags-empty = No suggested tags
 section-tags-manage = Manage tags
 section-similar = Similar Items
 section-similar-refresh = Refresh similar items
+section-tags-add = Add selected tags
+section-tags-new = New
+section-tags-existing = Existing
+section-tags-add-error = Could not add tags. Try again.
+section-tags-load-error = Could not load suggested tags. Select the item again.
+pref-template-manage =
+    .label = Manage Templates…
+
+template-empty = No templates yet

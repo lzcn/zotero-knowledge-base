@@ -529,7 +529,7 @@ test("bulk removal uses the native host operation, preserves protected tags and 
   await api.finishWrites();
 });
 
-test("independent supported topics have no output quota or new-tag quota", async () => {
+test("supported topics remain relevance-ranked and bounded without reserving slots by tag type", async () => {
   const { api, context, item } = fixture();
   const names = [
     "Graph clustering",
@@ -545,7 +545,7 @@ test("independent supported topics have no output quota or new-tag quota", async
   context.Zotero.Tags.getAll = async () => names.map((tag) => ({ tag }));
   item.getField = () => names.join(" and ");
   const existing = await api.suggest(item, []);
-  assert.equal(existing.length, names.length);
+  assert.equal(existing.length, 6);
   assert.ok(existing.every((tag) => !tag.isNew));
   context.Zotero.Tags.getAll = async () => [];
   const rows = [2, 3].map((id) => ({
@@ -558,7 +558,7 @@ test("independent supported topics have no output quota or new-tag quota", async
     },
   }));
   const fresh = await api.suggest(item, rows);
-  assert.equal(fresh.length, names.length);
+  assert.equal(fresh.length, 6);
   assert.ok(fresh.every((tag) => tag.isNew));
   assert.equal(
     (await api.suggest(item, [rows[0], rows[0]])).length,
@@ -570,49 +570,38 @@ test("independent supported topics have no output quota or new-tag quota", async
   assert.ok(item.hasTag(phrase));
 });
 
-test("clear title phrases need no repetition and keep room beside existing tags", async () => {
+test("new title phrases require abstract corroboration and all statuses share one ranking", async () => {
   const { api, context, item } = fixture();
-  const names = [
-    "Combinatorial optimization",
-    "Discrete diffusion",
-    "Diffusion solvers",
-    "Adjoint matching",
-    "Optimization",
-    "Diffusion",
-    "Stochastic control",
-    "Markov chains",
-    "Unsupervised learning",
+  context.Zotero.Tags.getAll = async () => [
+    { tag: "Combinatorial optimization" },
+    { tag: "Discrete diffusion solvers" },
   ];
-  context.Zotero.Tags.getAll = async () => names.map((tag) => ({ tag }));
   item.getField = (field) =>
     field === "title"
       ? "Combinatorial adjoint matching for discrete diffusion solvers in combinatorial optimization"
-      : "We compare " + names.join(" and ") + ".";
-  const rows = [2, 3].map((id) => ({
-    score: 0.99,
-    item: { id, libraryID: 1, getTags: () => names.map((tag) => ({ tag })) },
-  }));
-  const tags = await api.suggest(item, rows);
-  assert.ok(tags.length >= 2);
-  assert.deepEqual(
-    Array.from(
-      tags.filter((tag) => tag.isNew),
-      (tag) => tag.name,
-    ),
-    ["Discrete diffusion solvers", "Combinatorial adjoint matching"],
-  );
-  assert.ok(tags.slice(0, 2).every((tag) => tag.isNew));
-  assert.ok(tags.slice(2).every((tag) => !tag.isNew));
+      : "Combinatorial adjoint matching trains discrete diffusion solvers for combinatorial optimization.";
+  const tags = await api.suggest(item, []);
   assert.ok(
-    tags.slice(2).every((tag, i, all) => !i || all[i - 1].score >= tag.score),
+    tags.some(
+      (tag) => tag.isNew && tag.name === "Combinatorial adjoint matching",
+    ),
   );
+  assert.ok(tags.some((tag) => !tag.isNew));
+  assert.ok(tags.every((tag, i) => !i || tags[i - 1].score >= tag.score));
+  item.getField = (field) =>
+    field === "title"
+      ? "Combinatorial adjoint matching for discrete diffusion solvers in combinatorial optimization"
+      : "We evaluate several unrelated methods.";
+  assert.ok((await api.suggest(item, [])).every((tag) => !tag.isNew));
 });
 
 test("new title topics do not duplicate existing terminology or use single abstract fragments", async () => {
   const { api, context, item } = fixture();
   context.Zotero.Tags.getAll = async () => [{ tag: "Graph Neural Network" }];
   item.getField = (field) =>
-    field === "title" ? "Graph Neural Networks for molecule prediction" : "";
+    field === "title"
+      ? "Graph Neural Networks for molecule prediction"
+      : "Graph neural networks support molecule prediction.";
   const tags = await api.suggest(item, []);
   assert.ok(
     tags.some((tag) => tag.name === "Molecule prediction" && tag.isNew),
@@ -628,14 +617,15 @@ test("new title topics do not duplicate existing terminology or use single abstr
   assert.deepEqual(Array.from(await api.suggest(item, [])), []);
 });
 
-test("new title topics survive the semantic candidate budget in a dense catalog", async () => {
+test("incidental abstract catalogs cannot displace corroborated title topics", async () => {
   const { api, context, item } = fixture();
   const names = Array.from({ length: 30 }, (_, i) => "Existing topic " + i);
   context.Zotero.Tags.getAll = async () => names.map((tag) => ({ tag }));
   item.getField = (field) =>
     field === "title"
       ? "Combinatorial adjoint matching for discrete diffusion solvers"
-      : names.join("; ");
+      : "Combinatorial adjoint matching trains discrete diffusion solvers. " +
+        names.join("; ");
   const rows = [
     {
       score: 0.99,
@@ -646,23 +636,15 @@ test("new title topics survive the semantic candidate budget in a dense catalog"
       },
     },
   ];
-  let semanticNames;
   context.SWSemantic = {
     _enabled: true,
-    tagSimilarity: async (_item, candidates) => {
-      semanticNames = Array.from(candidates);
-      return candidates.map((name) =>
-        name.startsWith("Existing") ? 0.99 : 0.9,
-      );
-    },
+    tagSimilarity: async (_item, candidates) => candidates.map(() => 0.99),
   };
   const tags = await api.suggest(item, rows);
-  assert.equal(semanticNames.length, 24);
-  assert.ok(semanticNames.includes("Combinatorial adjoint matching"));
-  assert.ok(semanticNames.includes("discrete diffusion solvers"));
-  assert.ok(tags.length > 0);
-  assert.ok(tags.filter((tag) => tag.isNew).length >= 2);
-  assert.ok(tags.slice(0, 2).every((tag) => tag.isNew));
+  assert.deepEqual(
+    new Set(tags.map((tag) => tag.name.toLowerCase())),
+    new Set(["combinatorial adjoint matching", "discrete diffusion solvers"]),
+  );
 });
 
 test("duplicate strategies explain plural, explicit abbreviations and spelling without transitive guessing", () => {
@@ -769,12 +751,7 @@ test("a shared diffusion method cannot import neighboring application tags", asy
   );
   assert.ok(result.every((tag) => !unrelated.includes(tag.name)));
   assert.ok(result.length > 0);
-  let seenExisting = false;
-  for (const tag of result) {
-    if (!tag.isNew) seenExisting = true;
-    else
-      assert.equal(seenExisting, false, "New tags must precede existing tags");
-  }
+  assert.ok(result.every((tag, i) => !i || result[i - 1].score >= tag.score));
   assert.ok(result.some((tag) => tag.isNew));
 });
 
@@ -812,11 +789,13 @@ test("terminology aliases preserve task modifiers", () => {
   assert.equal(api.duplicateGroups(["Convolutional Nets", "CNN"])[0].length, 2);
 });
 
-test("repeated full-text topics add new tags while references and isolated mentions cannot", async () => {
+test("tag suggestions do not read full text or promote its peripheral topics", async () => {
   const { api, context, item } = fixture();
   context.Zotero.Tags.getAll = async () => [{ tag: "Image synthesis" }];
   item.getField = (field) =>
-    field === "title" ? "Discrete solvers for combinatorial optimization" : "";
+    field === "title"
+      ? "Discrete solvers for combinatorial optimization"
+      : "Discrete solvers address combinatorial optimization.";
   const body =
     "Lagrangian relaxation coordinates binary decisions.\n" +
     "We employ Lagrangian relaxation to enforce feasible solutions.\n" +
@@ -844,10 +823,8 @@ test("repeated full-text topics add new tags while references and isolated menti
     },
   };
   const tags = await api.suggest(item, []);
-  assert.equal(reads, 1);
-  assert.ok(
-    tags.some((tag) => tag.isNew && tag.name === "Lagrangian relaxation"),
-  );
+  assert.equal(reads, 0);
+  assert.ok(tags.every((tag) => tag.name !== "Lagrangian relaxation"));
   assert.ok(tags.every((tag) => !/image synthesis/i.test(tag.name)));
   assert.ok(tags.some((tag) => /combinatorial optimization/i.test(tag.name)));
 });
@@ -896,9 +873,9 @@ test("core topics displace incidental abstract tags even when semantic scores ar
   assert.ok(
     tags.some((tag) => tag.isNew && tag.name === "Molecule prediction"),
   );
-  assert.ok(tags.some((tag) => tag.name === "Representation learning"));
+  assert.ok(tags.every((tag) => tag.name !== "Representation learning"));
   assert.ok(tags.every((tag) => !incidental.includes(tag.name)));
-  assert.equal(tags.length, 3);
+  assert.equal(tags.length, 2);
 });
 
 test("a diffusion topic remains when it is central in the title", async () => {
@@ -910,7 +887,7 @@ test("a diffusion topic remains when it is central in the title", async () => {
   item.getField = (field) =>
     field === "title"
       ? "Diffusion models for combinatorial optimization"
-      : "We use Markov chains to implement the solver.";
+      : "Diffusion models address combinatorial optimization. We use Markov chains to implement the solver.";
   const tags = await api.suggest(item, []);
   assert.ok(tags.some((tag) => tag.name === "Diffusion Model"));
   assert.ok(
@@ -922,5 +899,130 @@ test("a diffusion topic remains when it is central in the title", async () => {
     tags.every(
       (tag) => tag.name !== "Markov chains" && tag.name !== "Image synthesis",
     ),
+  );
+});
+
+test("suggestions prefer specific technical phrases over single words and generic framework names", async () => {
+  const { api, context, item } = fixture();
+  context.Zotero.Tags.getAll = async () =>
+    [
+      "Optimization",
+      "Framework",
+      "Novel Framework",
+      "Graph Neural Networks",
+      "MIMO",
+      "Channel Estimation",
+    ].map((tag) => ({ tag }));
+  item.getField = (field) =>
+    field === "title"
+      ? "Optimization using a Novel Framework for Graph Neural Networks and MIMO Channel Estimation"
+      : "Graph neural networks support MIMO channel estimation. The novel framework improves optimization.";
+  const before = JSON.stringify(item.getTags());
+  const tags = await api.suggest(item, []);
+  assert.ok(tags.some((tag) => /graph neural networks/i.test(tag.name)));
+  assert.ok(tags.some((tag) => /channel estimation/i.test(tag.name)));
+  assert.ok(
+    tags.every(
+      (tag) =>
+        !["optimization", "framework", "novel framework"].includes(
+          tag.name.toLowerCase(),
+        ),
+    ),
+  );
+  assert.equal(context.SWTagSuggestions.isSpecific("CNN"), true);
+  assert.equal(context.SWTagSuggestions.isSpecific("MIMO"), true);
+  assert.equal(context.SWTagSuggestions.isSpecific("AI"), false);
+  assert.equal(context.SWTagSuggestions.isSpecific("METHOD"), false);
+  assert.equal(context.SWTagSuggestions.isSpecific("LEARNING"), false);
+  assert.equal(JSON.stringify(item.getTags()), before);
+});
+
+test("paper topics exclude the reported PDF fragments and mix New and Existing by relevance", async () => {
+  const { api, context, item } = fixture();
+  context.SWPref = (key, fallback) =>
+    ({ tagNameStyle: "title", tagHashtag: true })[key] ?? fallback;
+  const noise = [
+    "Via Combinatorial Adjoint Matching",
+    "Sanokowski Et Al",
+    "Co Problems",
+    "J T",
+    "Trajectory-level Optimization",
+    "Maximum Independent Set",
+    "Continuous-time Markov",
+    "Transition Rates",
+    "I-th Coordinate",
+    "Er Graphs",
+    "State X",
+    "Stochastic Optimal Control",
+    "Traveling Salesman Problem",
+    "Discrete Generative",
+    "U Θ",
+  ];
+  context.Zotero.Tags.getAll = async () =>
+    ["#Combinatorial Optimization", ...noise].map((tag) => ({ tag }));
+  item.getField = (field) =>
+    field === "title"
+      ? "Unsupervised diffusion solver for combinatorial optimization via combinatorial adjoint matching"
+      : "Combinatorial adjoint matching trains diffusion models for combinatorial optimization. The traveling salesman problem is one benchmark.";
+  context.SWIndexer = {
+    tagText: async () => {
+      throw new Error("Suggestions must not read PDF prose");
+    },
+  };
+  const rows = [
+    {
+      score: 0.99,
+      item: {
+        id: 2,
+        libraryID: 1,
+        getTags: () => [
+          { tag: "#Combinatorial Optimization" },
+          { tag: "Traveling Salesman Problem" },
+        ],
+      },
+    },
+  ];
+  const tags = await api.suggest(item, rows);
+  assert.deepEqual(
+    Array.from(tags, (tag) => [tag.name, tag.isNew]),
+    [
+      ["#Combinatorial Optimization", false],
+      ["#Combinatorial Adjoint Matching", true],
+    ],
+  );
+  assert.ok(tags[0].score > tags[1].score);
+  assert.ok(
+    tags.every(
+      (tag) =>
+        !noise.some(
+          (name) =>
+            context.SWTagSuggestions.text(name) ===
+            context.SWTagSuggestions.text(tag.name),
+        ) || /adjoint matching/i.test(tag.name),
+    ),
+  );
+});
+
+test("weak candidates are omitted instead of padding six results and status never breaks a score tie", () => {
+  const { context } = fixture();
+  const selected = context.SWTagSuggestions.select([
+    { name: "Molecule prediction", score: 0.98, isNew: false },
+    { name: "Graph clustering", score: 0.96, isNew: true },
+    { name: "Object detection", score: 0.8, isNew: true },
+    { name: "Image retrieval", score: 0.7, isNew: false },
+  ]);
+  assert.deepEqual(
+    Array.from(selected, (tag) => tag.name),
+    ["Molecule prediction", "Graph clustering"],
+  );
+  const tied = [
+    { name: "Graph clustering", score: 1, isNew: true },
+    { name: "Molecule prediction", score: 1, isNew: false },
+  ];
+  const names = (list) =>
+    Array.from(context.SWTagSuggestions.select(list), (tag) => tag.name);
+  assert.deepEqual(
+    names(tied),
+    names(tied.map((tag) => ({ ...tag, isNew: !tag.isNew }))),
   );
 });

@@ -53,6 +53,18 @@ globalThis.libraryRuntime = {
   wakeIndex() {
     state.wakes++;
   },
+  async suggestTags(item, active) {
+    if (state.suggest) return state.suggest(item, active);
+    return [
+      { name: "Recommended topic", isNew: true, count: 0 },
+      { name: "Library topic", isNew: false, count: 2 },
+    ];
+  },
+  async addSuggestedTags(item, tags, active) {
+    assert.ok(active());
+    state.appliedTags = { item, tags };
+    return tags.length;
+  },
   openTagManager(_win, libraryID) {
     state.tagManagerLibrary = libraryID;
   },
@@ -287,7 +299,7 @@ check("A title change refreshes only the matching source sidebar", () =>
 );
 body.querySelector('button[data-view="similar"]').click();
 check("Activating Similar Items prioritizes retrieval", () => {
-  assert.equal(state.wakes, 1);
+  assert.equal(state.wakes, 0);
   assert.equal(state.similarities, 1);
   assert.equal(body.querySelector(".knowledge-base-note-body").hidden, true);
   assert.equal(
@@ -304,19 +316,39 @@ check("Leaving similarity cancels its visible work", () => {
 state.tags = [{ tag: "Actual item tag" }];
 state.tagObserver.notify();
 await settle();
-check("Tags show existing item tags and open the native manager", () => {
+check("Tags show recommendations and open the native manager", () => {
   assert.equal(
-    body.querySelector(".knowledge-base-item-tags").textContent,
-    "Actual item tag",
+    body.querySelector(".knowledge-base-tag-option span").textContent,
+    "Recommended topic",
   );
-  assert.equal(body.querySelector(".sw-tags"), null);
+  assert.equal(body.querySelector(".knowledge-base-item-tags"), null);
+  assert.ok(body.querySelector(".knowledge-base-tag-new"));
+  assert.ok(body.querySelector(".knowledge-base-tag-existing"));
+  assert.deepEqual(
+    Array.from(
+      body.querySelectorAll(".knowledge-base-tag-option span"),
+      (node) => node.textContent,
+    ),
+    ["Recommended topic", "Library topic"],
+  );
+
+  const input = body.querySelector(".knowledge-base-tag-option input");
+  input.click();
+  body.querySelector('button[data-view="tags"]').click();
+  assert.equal(body.querySelector(".knowledge-base-tag-option input"), input);
+  assert.equal(input.checked, true);
+  state.tagObserver.notify("add", "item-tag", ["999-1"]);
+  assert.equal(body.querySelector(".knowledge-base-tag-option input"), input);
+  assert.equal(input.checked, true);
+  body.querySelector(".knowledge-base-apply-tags").click();
+  assert.equal(state.appliedTags.tags[0].name, "Recommended topic");
   body.querySelector(".knowledge-base-manage-tags").click();
   assert.equal(state.tagManagerLibrary, 1);
 });
 state.section.onRender({ body, item: item("B") });
 check("Selected view carries across item changes without retrieval", () => {
   assert.equal(body.dataset.view, "tags");
-  assert.equal(state.wakes, 1);
+  assert.equal(state.wakes, 0);
 });
 body.querySelector('button[data-view="tags"]').dispatchEvent(
   new dom.window.KeyboardEvent("keydown", {
@@ -328,6 +360,28 @@ body.querySelector('button[data-view="tags"]').dispatchEvent(
 check("Tabs support keyboard navigation", () =>
   assert.equal(body.dataset.view, "notes"),
 );
+let resolveTags;
+state.suggest = () =>
+  new Promise((resolve) => {
+    resolveTags = resolve;
+  });
+body.querySelector('button[data-view="tags"]').click();
+await settle();
+body.querySelector('button[data-view="notes"]').click();
+resolveTags([{ name: "Stale recommendation", isNew: true, count: 0 }]);
+await settle();
+check(
+  "Leaving recommended tags discards late results without waking retrieval",
+  () => {
+    assert.ok(
+      !body
+        .querySelector(".knowledge-base-tags-body")
+        .textContent.includes("Stale recommendation"),
+    );
+    assert.equal(state.wakes, 0);
+  },
+);
+state.suggest = null;
 state.section.onDestroy({ body });
 check("Closing the section removes its refresh listener", () => {
   assert.equal(state.listeners.size, 0);

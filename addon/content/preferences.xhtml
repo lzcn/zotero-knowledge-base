@@ -5,7 +5,7 @@
   onload="window.KnowledgeBaseCommonPreferences.start(document); window.KnowledgeBasePreferences.start(document)"
   onshowing="window.KnowledgeBaseCommonPreferences.start(document); window.KnowledgeBasePreferences.start(document)"
 >
-  <vbox class="main-section">
+  <vbox class="main-section settings-general">
     <html:h3 data-l10n-id="knowledge-base-settings-common" />
     <hbox class="preference-row" align="center">
       <label
@@ -20,7 +20,7 @@
       </menulist>
     </hbox>
   </vbox>
-  <vbox class="main-section">
+  <vbox class="main-section settings-notes">
     <html:h3 data-l10n-id="knowledge-base-settings-notes" />
     <hbox class="preference-row" align="center">
       <label
@@ -49,57 +49,16 @@
         <menupopup id="knowledge-base-source-styles" />
       </menulist>
     </hbox>
-    <checkbox
-      id="knowledge-base-inherit-tags"
-      native="true"
-      data-l10n-id="knowledge-base-pref-inherit-tags"
-    />
-  </vbox>
-  <vbox class="main-section">
-    <html:h3 data-l10n-id="knowledge-base-pref-literature-template" />
     <hbox class="preference-row" align="center">
       <label
-        control="knowledge-base-literature-template"
-        data-l10n-id="knowledge-base-pref-template-choice"
-      />
-      <menulist id="knowledge-base-literature-template" native="true">
-        <menupopup id="knowledge-base-literature-templates" />
-      </menulist>
-      <button
-        id="knowledge-base-template-new"
-        data-l10n-id="knowledge-base-pref-template-new"
+        control="knowledge-base-template-manage"
+        data-l10n-id="knowledge-base-pref-literature-template"
       />
       <button
-        id="knowledge-base-template-delete"
-        hidden="true"
-        data-l10n-id="knowledge-base-pref-template-delete"
+        id="knowledge-base-template-manage"
+        data-l10n-id="knowledge-base-pref-template-manage"
       />
     </hbox>
-    <vbox id="knowledge-base-template-editor" hidden="true">
-      <hbox class="preference-row" align="center">
-        <label
-          control="knowledge-base-template-name"
-          data-l10n-id="knowledge-base-pref-template-name"
-        />
-        <html:input
-          id="knowledge-base-template-name"
-          type="text"
-          required="required"
-        />
-      </hbox>
-      <html:label
-        for="knowledge-base-template-body"
-        data-l10n-id="knowledge-base-pref-template-edit"
-      />
-      <html:textarea id="knowledge-base-template-body" rows="6" />
-      <description
-        id="knowledge-base-template-error"
-        role="alert"
-        hidden="true"
-      />
-    </vbox>
-  </vbox>
-  <vbox class="main-section">
     <html:details id="knowledge-base-graph-appearance">
       <html:summary data-l10n-id="knowledge-base-pref-graph-appearance" />
       <hbox class="preference-row" align="center">
@@ -150,7 +109,7 @@
       role="alert"
     />
   </vbox>
-  <vbox class="main-section">
+  <vbox class="main-section settings-tags">
     <html:h3 data-l10n-id="knowledge-base-settings-tags" />
     <hbox class="preference-row" align="center">
       <label
@@ -201,7 +160,7 @@
       data-l10n-id="similar-works-pref-excluded-tags-help"
     />
   </vbox>
-  <vbox class="main-section">
+  <vbox class="main-section settings-similar">
     <html:h3 data-l10n-id="knowledge-base-settings-similar" />
     <hbox class="preference-row" align="center">
       <label
@@ -217,32 +176,19 @@
         preference="extensions.zotero.similar-works.maxRecommendations"
       />
     </hbox>
-    <checkbox
-      native="true"
-      data-l10n-id="similar-works-pref-metadata"
-      preference="extensions.zotero.similar-works.allowMetadataOnlyRecommendations"
-    />
-  </vbox>
-  <vbox class="main-section" id="similar-works-diagnostics">
-    <html:h3 data-l10n-id="similar-works-pref-index-heading" />
-    <html:dl class="preference-status">
-      <html:dt data-l10n-id="similar-works-pref-index" /><html:dd
-        ><html:span id="similar-works-index" />
-        <html:progress
-          id="similar-works-index-progress"
-          hidden="hidden"
-          data-l10n-id="similar-works-pref-index-progress"
-        />
-      </html:dd>
-      <html:dt data-l10n-id="similar-works-pref-vectors" /><html:dd
-        ><html:span id="similar-works-vectors" />
-        <html:progress
-          id="similar-works-vector-progress"
-          hidden="hidden"
-          data-l10n-id="similar-works-pref-vector-progress"
-        />
-      </html:dd>
-    </html:dl>
-    <description id="similar-works-diagnostics-error" hidden="true" />
+    <vbox class="settings-cache" id="similar-works-diagnostics">
+      <html:h4 data-l10n-id="similar-works-pref-index-heading" />
+      <description id="similar-works-cache-status" />
+      <html:progress
+        id="similar-works-cache-progress"
+        hidden="hidden"
+        data-l10n-id="similar-works-pref-index-progress"
+      />
+      <description
+        id="similar-works-diagnostics-error"
+        role="alert"
+        hidden="true"
+      />
+    </vbox>
   </vbox>
 </vbox>
