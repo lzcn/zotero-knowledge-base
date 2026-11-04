@@ -873,6 +873,7 @@ startup = async function(data) {
       const selectFormat = async (values) => {
         fd.getElementById('clear-selection').click();
         for (const value of values) {
+          await waitFor(()=>[...fd.querySelectorAll('#tags input')].some(input=>input.value===value),'render format fixture');
           const input=[...fd.querySelectorAll('#tags input')].find(input=>input.value===value);
           if(!input)throw new Error('Missing format fixture: '+value);
           input.click();

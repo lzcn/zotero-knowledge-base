@@ -136,6 +136,7 @@ function harness() {
     },
   };
   const context = vm.createContext({
+    require,
     Zotero,
     SWPlugin: { id: "test" },
     TextDecoder,
@@ -796,6 +797,7 @@ test("embedded module loads Zotero globals and closes SQLite on shutdown", async
     scriptloader: {
       loadSubScript(uri, scope) {
         env.loaded = scope;
+        scope.require = require;
         if (!vm.isContext(scope)) vm.createContext(scope);
         vm.runInContext(
           fs.readFileSync(

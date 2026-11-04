@@ -66,6 +66,8 @@ npm run build
 
 `node scripts/benchmark-search.mjs` 使用固定合成数据测量索引重建、指纹解码和检索，不读取个人文献库。排序摘要用于核对优化前后的结果；耗时不包含 Zotero 存储和原生模型推理。
 
+检索使用 FastPriorityQueue 维护有界候选队列，评分与同分排序规则仍由插件控制。
+
 ## 许可证
 
 Copyright 2026 Zhi Lu. [AGPL-3.0-or-later](LICENSE)。代码借助 ChatGPT 和 DeepSeek 开发。

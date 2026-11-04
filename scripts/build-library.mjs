@@ -16,7 +16,21 @@ export async function buildLibrary(stage, version) {
     if (!name.endsWith(".js")) continue;
     const bytes = await readFile(join(source, name));
     hash.update(name).update(bytes);
-    await writeFile(join(target, "scripts", name), bytes);
+    const output =
+      name === "search.js"
+        ? (
+            await build({
+              entryPoints: [join(source, name)],
+              bundle: true,
+              write: false,
+              platform: "browser",
+              format: "iife",
+              globalName: "SWSearchModule",
+              footer: { js: "var SWSearch = SWSearchModule.SWSearch;" },
+            })
+          ).outputFiles[0].contents
+        : bytes;
+    await writeFile(join(target, "scripts", name), output);
   }
   await mkdir(join(target, "runtime"), { recursive: true });
   const worker = await build({
@@ -35,6 +49,7 @@ export async function buildLibrary(stage, version) {
     worker.outputFiles[0].contents,
   );
   for (const [name, path] of [
+    ["fastpriorityqueue-LICENSE", "node_modules/fastpriorityqueue/LICENSE"],
     ["transformers-LICENSE", "node_modules/@huggingface/transformers/LICENSE"],
     ["jinja-LICENSE", "node_modules/@huggingface/jinja/LICENSE"],
     ["onnxruntime-LICENSE", "addon/content/licenses/onnxruntime.txt"],

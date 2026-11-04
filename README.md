@@ -66,6 +66,8 @@ Inference shares one algorithm for tokenization, chunking, pooling and ranking. 
 
 `node scripts/benchmark-search.mjs` measures deterministic index rebuilding, signature decoding and retrieval without using a personal library. It reports a ranking digest for before/after comparisons; timings exclude Zotero storage and native model inference.
 
+Search uses FastPriorityQueue for bounded candidate selection; scoring and tie-breaking remain plugin policies.
+
 ## License
 
 Copyright 2026 Zhi Lu. [AGPL-3.0-or-later](LICENSE). Developed with ChatGPT and DeepSeek.

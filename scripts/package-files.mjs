@@ -1,4 +1,5 @@
 export const requiredFiles = [
+  "content/library/runtime/fastpriorityqueue-LICENSE",
   "content/graph.css",
   "content/templates.xhtml",
   "content/templates.js",

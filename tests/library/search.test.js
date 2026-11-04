@@ -838,3 +838,20 @@ test("short candidate scoring batches yield once and honor cancellation", async 
     [],
   );
 });
+
+test("upstream priority queue preserves bounded selection and equal-score ties", () => {
+  const pairs = Array.from({ length: 500 }, (_, i) => [i, (i * 37) % 19]);
+  for (const limit of [0, 1, 48, 300, 600]) {
+    const heap = new SWSearch.Heap(limit);
+    for (const pair of [...pairs].reverse()) heap.add(pair);
+    const expected = [...pairs]
+      .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      .slice(0, limit);
+    assert.deepEqual(heap.sorted(), expected);
+    assert.deepEqual(
+      heap.sorted(),
+      expected,
+      "Reading results must not consume the queue",
+    );
+  }
+});

@@ -1,3 +1,5 @@
+/* global require */
+var SWPriorityQueue = require("fastpriorityqueue");
 // Compact document fingerprints and bounded search. No Zotero database access.
 var SWSearch = (() => {
   const SIGNATURE_SIZE = 256,
@@ -221,45 +223,22 @@ var SWSearch = (() => {
   class Heap {
     constructor(limit) {
       this.limit = limit;
-      this.items = [];
+      this.queue = new SWPriorityQueue((a, b) => this.less(a, b));
     }
     get threshold() {
-      return this.items.length < this.limit ? 0 : this.items[0][1];
+      return this.queue.size < this.limit ? 0 : this.queue.peek()[1];
     }
-    // Equal-score ties favor smaller identifiers, consistently with WAND.
+    // Preserve retrieval's score and identifier tie-breaking policy.
     less(a, b) {
       return a[1] < b[1] || (a[1] === b[1] && a[0] > b[0]);
     }
     add(pair) {
       if (!this.limit) return;
-      if (this.items.length < this.limit) {
-        this.items.push(pair);
-        let i = this.items.length - 1;
-        while (i) {
-          const p = (i - 1) >>> 1;
-          if (!this.less(this.items[i], this.items[p])) break;
-          [this.items[i], this.items[p]] = [this.items[p], this.items[i]];
-          i = p;
-        }
-      } else if (this.less(this.items[0], pair)) {
-        this.items[0] = pair;
-        let i = 0;
-        while (true) {
-          let j = i * 2 + 1;
-          if (j >= this.items.length) break;
-          if (
-            j + 1 < this.items.length &&
-            this.less(this.items[j + 1], this.items[j])
-          )
-            j++;
-          if (!this.less(this.items[j], this.items[i])) break;
-          [this.items[i], this.items[j]] = [this.items[j], this.items[i]];
-          i = j;
-        }
-      }
+      if (this.queue.size < this.limit) this.queue.add(pair);
+      else if (this.less(this.queue.peek(), pair)) this.queue.replaceTop(pair);
     }
     sorted() {
-      return [...this.items].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+      return this.queue.kSmallest(this.queue.size).reverse();
     }
   }
   function simhash(counts) {

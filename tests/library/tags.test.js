@@ -70,6 +70,7 @@ function fixture() {
         queryAsync: async () => [],
       },
     },
+    require,
     URL,
     swYield: async () => {},
   });
