@@ -124,8 +124,8 @@ export async function getGraphData(): Promise<GraphData> {
   const bodies = new Map<string, string>();
   const edges: GraphEdge[] = [];
   for (const row of rows) {
-    const tags = visibleNoteTags(nativeTags.get(row.id) || []);
     const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
+    const tags = visibleNoteTags(nativeTags.get(row.id) || [], libraryID);
     const group = groups.find((group) => group.tag && tags.includes(group.tag));
     nodes.set(row.id, {
       id: row.id,

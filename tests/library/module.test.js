@@ -23,6 +23,7 @@ function fixture({ indexStart, failStop = false, failClose = false } = {}) {
         loadSubScript(uri, target) {
           scope = target;
           calls.push("load:" + uri.split("/").pop());
+          target.SWTagTerms = { load: async () => {} };
           target.SWTags = {
             stop() {
               calls.push("tags.stop");
@@ -167,6 +168,7 @@ test("quit during index preparation cannot register late resources", async () =>
     }),
   });
   const starting = f.runtime.start();
+  await new Promise((resolve) => setImmediate(resolve));
   await f.runtime.close(true);
   resolve();
   await starting;
@@ -226,4 +228,65 @@ test("tag suggestions load cached neighbors tags in one batch without opening th
   assert.deepEqual(await f.runtime.suggestTags(target, () => true), ["topic"]);
   assert.equal(suggested, 1);
   await f.runtime.close();
+});
+
+test("uncached tag neighbors search completed fingerprints or vectors without starting document indexing", async () => {
+  for (const dense of [false, true]) {
+    const f = fixture();
+    await f.runtime.start();
+    const target = { id: 1, libraryID: 1 },
+      neighbor = { id: 2, libraryID: 1 };
+    const corpus = f.scope.SWIndexer.corpus;
+    const matches = [{ key: "1/NEIGHBOR", score: 0.8 }];
+    let searches = 0;
+    corpus.getRecommendations = async () => null;
+    corpus.progress = { phase: "ready" };
+    corpus.search = {
+      docs: new Map([["1/ITEM", {}]]),
+      search: async (key, _count, filter, cancelled) => {
+        assert.equal(key, "1/ITEM");
+        assert.ok(filter("1/NEIGHBOR"));
+        assert.ok(!filter("2/FOREIGN"));
+        assert.ok(!cancelled());
+        searches++;
+        return matches;
+      },
+    };
+    Object.defineProperty(corpus, "ready", {
+      get() {
+        throw new Error("Tag requests must not reload the corpus");
+      },
+    });
+    f.scope.SWIndexer.resolveDocItem = async () => target;
+    f.scope.SWIndexer.docKey = () => "1/ITEM";
+    f.scope.SWIndexer.ensureNow = () => {
+      throw new Error("Unexpected paper indexing");
+    };
+    Object.assign(f.scope.SWSemantic, {
+      ready: dense,
+      vectors: new Map([["1/ITEM", {}]]),
+      recommend: async () => {
+        searches++;
+        return { matches };
+      },
+    });
+    f.scope.SWSection._resolveRows = async (result, method) => {
+      assert.equal(result, matches);
+      assert.equal(method, dense ? "hybrid" : "text");
+      return [{ item: neighbor, score: 0.8 }];
+    };
+    f.context.Zotero.Items = {
+      loadDataTypes: async (items) =>
+        assert.deepEqual(Array.from(items), [target, neighbor]),
+    };
+    f.scope.SWTags.suggest = async (_item, rows) => {
+      assert.equal(rows[0].item, neighbor);
+      return ["topic"];
+    };
+    assert.deepEqual(await f.runtime.suggestTags(target, () => true), [
+      "topic",
+    ]);
+    assert.equal(searches, 1);
+    await f.runtime.close();
+  }
 });

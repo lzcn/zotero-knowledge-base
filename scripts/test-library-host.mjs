@@ -135,6 +135,70 @@ startup = async function(data) {
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         return;
       }
+      if (${Boolean(process.env.KNOWLEDGE_BASE_TAGS_PROBE)}) {
+        const indexer=SWScope.SWIndexer, semantic=SWScope.SWSemantic, api=SWScope.SWTags;
+        await indexer.corpus.ready;
+        await semantic.start(indexer.corpus);
+        semantic.pause();
+        const title="Multi-agent reinforcement learning for UAV spectrum allocation";
+        const abstract="Unmanned aerial vehicles use multi-agent reinforcement learning for spectrum allocation. Spectrum allocation coordinates wireless sensor networks and decentralized control. Multi-agent reinforcement learning improves autonomous navigation.";
+        const names=['UAV','MARL','Distributed reinforcement learning','Wireless sensor networks','Channel allocation','Decentralized control','Autonomous navigation','Image synthesis','Personalized marketing'];
+        const papers=[];
+        for(let i=0;i<3;i++){
+          const paper=new Zotero.Item('journalArticle');
+          paper.setField('title',i?title+' with cooperative agents':title);
+          paper.setField('abstractNote',abstract);
+          if(i)for(const name of names)paper.addTag(name);
+          await paper.saveTx({skipSelect:true});papers.push(paper);
+        }
+        const pairNames=['image classification','image categorization','supervised learning','unsupervised learning','GPT-2','GPT-3'];
+        for(const name of pairNames)papers[1].addTag(name);
+        await papers[1].saveTx({skipSelect:true});
+        for(const paper of papers)await indexer.ensureNow(paper);
+        await indexer._drainPromise;
+        const {Subprocess}=ChromeUtils.importESModule('resource://gre/modules/Subprocess.sys.mjs');
+        const call=Subprocess.call;
+        Subprocess.call=options=>call({...options,arguments:options.command.endsWith('/inference')?[...options.arguments,'cpu']:options.arguments});
+        const originalRequest=Zotero.HTTP.request;
+        Zotero.HTTP.request=()=>{throw new Error('Unexpected network request with local tag model');};
+        try {
+          semantic._enabled=true;
+          await semantic.tagEmbeddings(pairNames);
+          if(semantic.status.state!=='idle')throw new Error('Tag-only model initialization left cache progress busy');
+          for(const paper of papers)await semantic._build(indexer.docKey(paper));
+          const forbidden=()=>{throw new Error('Tag request attempted document indexing');};
+          indexer.ensureNow=forbidden;semantic._build=forbidden;
+          const before=JSON.stringify([...semantic.vectors].map(([key,value])=>[key,value.hash]));
+          const suggestions=await api.suggest(papers[0],papers.slice(1).map(item=>({item,score:0.9})));
+          if(suggestions.length<4 || suggestions.length>7 || !suggestions.some(tag=>tag.name==='MARL') || !suggestions.some(tag=>tag.name==='UAV') || suggestions.some(tag=>/image synthesis|marketing/i.test(tag.name)))throw new Error('Native tag suggestions failed topic coverage: '+JSON.stringify(suggestions.map(tag=>tag.name)));
+          if(before!==JSON.stringify([...semantic.vectors].map(([key,value])=>[key,value.hash])))throw new Error('Tag inference changed document vectors');
+          const candidates=await api.potentialDuplicates(pairNames);
+          if(!candidates.groups.some(group=>group.includes(pairNames[0])&&group.includes(pairNames[1])) || candidates.groups.some(group=>group.includes(pairNames[2])&&group.includes(pairNames[3]) || group.includes(pairNames[4])&&group.includes(pairNames[5])))throw new Error('Native semantic tag candidates lost equivalence or qualifiers');
+          const win=api.open(Zotero.getMainWindow(),papers[0].libraryID);
+          for(let n=0;n<400 && (!win.document?.getElementById('match-status')?.hidden || !win.document?.querySelectorAll('#tags input').length);n++)await new Promise(resolve=>setTimeout(resolve,50));
+          const td=win.document;
+          td.getElementById('duplicates').checked=true;
+          td.getElementById('duplicates').dispatchEvent(new win.Event('change',{bubbles:true}));
+          for(let n=0;n<100 && ![...td.querySelectorAll('#tags input')].some(input=>input.value===pairNames[0]);n++)await new Promise(resolve=>setTimeout(resolve,50));
+          if(![...td.querySelectorAll('#tags input')].some(input=>input.value===pairNames[1]))throw new Error('Semantic candidates did not reach Tag Manager');
+          const semanticGroup=[...td.querySelectorAll('.duplicate-group')].find(row=>pairNames.slice(0,2).some(name=>row.querySelector('strong')?.textContent===name));
+          if(!semanticGroup || semanticGroup.querySelector('.duplicate-reason').textContent!==await td.l10n.formatValue('similar-works-tags-review-semantic'))throw new Error('Semantic group has no meaning-review explanation');
+          if(${JSON.stringify(process.env.SW_HOST_SCREENSHOTS || "")}){
+            const snapshot=await win.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,'white');
+            const canvas=td.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=snapshot.width;canvas.height=snapshot.height;
+            canvas.getContext('2d').drawImage(snapshot,0,0);snapshot.close();
+            const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+            await IOUtils.write(PathUtils.join(${JSON.stringify(process.env.SW_HOST_SCREENSHOTS || "")},'tag-semantic-candidates.png'),new Uint8Array(await blob.arrayBuffer()));
+          }
+          if(pairNames.some(name=>!papers[1].hasTag(name)))throw new Error('Candidate matching renamed original tags');
+          result.tagNames=suggestions.map(tag=>tag.name);result.tagGroups=candidates.groups;
+          await Zotero.ZoteroKnowledgeBase.hooks.onShutdown();
+          if(!win.closed || semantic._worker || semantic._native || indexer.corpus._db)throw new Error('Tag semantic probe leaked runtime resources');
+        } finally {Subprocess.call=call;Zotero.HTTP.request=originalRequest;}
+        result.ok=true;
+        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify(result));
+        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
+      }
       if (${Boolean(process.env.KNOWLEDGE_BASE_REUSE_PROBE)}) {
         const indexer = SWScope.SWIndexer;
         await indexer._scanPromise;
@@ -283,6 +347,9 @@ startup = async function(data) {
       await SWScope.SWIndexer.corpus.ready;
       if (SWScope.SWLLM || SWScope.SWCodex) throw new Error("Generative AI runtime was loaded");
       await SWScope.SWSemantic.start(SWScope.SWIndexer.corpus);
+      SWScope.SWSemantic.pause();
+      const enableSemantic=SWScope.SWSemantic.enable;
+      SWScope.SWSemantic.enable=()=>{};
       const registered = SWScope.SWSection._registered;
       await Zotero.ZoteroKnowledgeBase.hooks.onStartup();
       if (SWScope.SWSection._registered !== registered) throw new Error("Duplicate registration");
@@ -565,6 +632,21 @@ startup = async function(data) {
       await waitFor(() => [...td.querySelectorAll('#tags input')].some(input => input.value === "representation-learning"), 'name variant candidates');
       const duplicateNames = [...td.querySelectorAll('#tags input')].map(input => input.value);
       if (!duplicateNames.includes("Representation learning") || duplicateNames.includes("Deep Learning") || !peers[1].hasTag("representation-learning")) throw new Error("Duplicate filtering changed tags or included protected names");
+      td.getElementById('duplicates').dispatchEvent(new tagDialog.Event('change',{bubbles:true}));
+      await waitFor(()=>td.querySelector('.duplicate-group .review-group'),'actionable duplicate group');
+      td.getElementById('search').value='representation-learning';
+      td.getElementById('search').dispatchEvent(new tagDialog.Event('input',{bubbles:true}));
+      await waitFor(()=>td.querySelectorAll('#tags input').length===2,'search keeps complete duplicate group');
+      const groupHeader=td.querySelector('.duplicate-group');
+      if(!groupHeader.textContent.includes('Representation learning') || !groupHeader.querySelector('.duplicate-reason').textContent)throw new Error('Duplicate group lacks names or reasons');
+      groupHeader.querySelector('.review-group').click();
+      await waitFor(()=>!td.getElementById('merge').disabled,'review selected group');
+      if([...td.querySelectorAll('#tags input')].some(input=>!input.checked) || td.getElementById('target').value!=='Representation learning')throw new Error('Review did not select only its members and a retained name');
+      await capture('tag-manager-organize',tagDialog);
+      td.getElementById('merge').click();
+      await waitFor(()=>!td.getElementById('refresh').disabled && !peers[1].hasTag('representation-learning'),'apply reviewed group merge');
+      if(!peers[1].hasTag('Representation learning'))throw new Error('Reviewed group lost its retained name');
+      td.getElementById('search').value='';
       peers[1].removeTag("Representation learning");
       peers[1].removeTag("representation-learning");
       await peers[1].saveTx({skipSelect:true});
@@ -675,13 +757,15 @@ startup = async function(data) {
 
       const settings = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
       await waitFor(() => settings.document.getElementById("knowledge-base-source-style")?.value && settings.document.getElementById("similar-works-limit"), "Unified settings did not load");
+      settings.resizeTo(940,1000);
+      await new Promise(resolve=>setTimeout(resolve,100));
       const panes = Zotero.PreferencePanes.pluginPanes.filter(pane => pane.pluginID === "knowledge-base@lzcn");
       if (panes.length !== 1 || settings.document.querySelector(".settings-pages") || settings.document.getElementById("knowledge-base-data-path")) throw new Error("Settings still have extra navigation or implementation details");
       const menu = settings.document.getElementById("knowledge-base-ui-style");
       if (menu.getBoundingClientRect().width < 280) throw new Error("Native appearance menu was forcibly shortened");
       const groups=[...settings.document.querySelectorAll('.plugin-preferences .main-section')];
       const groupColors=new Set(groups.map(group=>settings.getComputedStyle(group.querySelector(':scope > h3')).color));
-      if(groups.length!==4 || groupColors.size!==4 || groups.some(group=>parseFloat(settings.getComputedStyle(group).borderInlineStartWidth)!==0 || settings.getComputedStyle(group).backgroundColor!=='rgba(0, 0, 0, 0)' || parseFloat(settings.getComputedStyle(group.querySelector(':scope > h3')).borderInlineStartWidth)<3)) throw new Error('Settings accents must be confined to section headings');
+      if(groups.length!==7 || groupColors.size!==1 || groups.some(group=>parseFloat(settings.getComputedStyle(group).borderInlineStartWidth)!==0 || settings.getComputedStyle(group).backgroundColor!=='rgba(0, 0, 0, 0)' || parseFloat(settings.getComputedStyle(group.querySelector(':scope > h3')).borderInlineStartWidth)!==0)) throw new Error('Settings sections must use neutral headings');
       const matchingLabel = settings.document.getElementById("similar-works-cache-status");
       for (let n = 0; n < 100 && !matchingLabel?.textContent.trim(); n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!matchingLabel?.textContent.trim() || settings.document.getElementById("similar-works-model") || settings.document.getElementById("similar-works-build")) throw new Error("Settings did not show simple preparation status without model internals");
@@ -689,9 +773,9 @@ startup = async function(data) {
       const sharedAPI = Zotero.ZoteroKnowledgeBase.api;
       const originalStatus = sharedAPI.getLibraryStatus;
       const snapshot = originalStatus();
-      sharedAPI.getLibraryStatus = () => ({...snapshot, state:"indexing", indexedItems:3, totalItems:10, queuedItems:7, indexProgress:{phase:"ready",done:3,total:10}, vectorTotal:10, semantic:{state:"indexing",indexedItems:2,queuedItems:8,error:null}});
+      sharedAPI.getLibraryStatus = () => ({...snapshot, state:"idle", indexedItems:10, totalItems:10, queuedItems:0, indexProgress:{phase:"ready",done:10,total:10}, vectorTotal:10, semantic:{state:"indexing",indexedItems:2,queuedItems:8,error:null}});
       for (let n = 0; n < 50 && settings.document.getElementById("similar-works-cache-progress").value !== 2; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (settings.document.getElementById("similar-works-cache-progress").value !== 2 || settings.document.getElementById("similar-works-cache-progress").hidden || settings.document.getElementById('knowledge-base-open-data') || settings.document.getElementById('knowledge-base-literature-template')) throw new Error("Settings did not show the compact Cache status");
+      if (settings.document.getElementById("similar-works-cache-progress").value !== 2 || settings.document.getElementById("similar-works-cache-progress").hidden || settings.document.getElementById('knowledge-base-open-data') || !settings.document.getElementById('knowledge-base-literature-template')) throw new Error("Settings did not show the compact Cache status");
       if (${JSON.stringify(process.env.SW_HOST_SCREENSHOT || "")}) {
         const image = await settings.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
         const canvas = settings.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
@@ -712,7 +796,13 @@ startup = async function(data) {
       limit.value = "20";
       limit.dispatchEvent(new settings.Event("change", { bubbles: true }));
       await capture('settings-similar',settings);
-      if (["similar-works-tag-style","similar-works-tag-hashtag","similar-works-exclude-colored-tags"].some(id=>settings.document.getElementById(id)) || tagAPI.planFormat || tagAPI.applyFormat || tagAPI.formatName) throw new Error("Bulk naming controls or APIs are still exposed");
+      const formatStyle = settings.document.getElementById("similar-works-tag-style");
+      const formatHash = settings.document.getElementById("similar-works-tag-hashtag");
+      if (!formatStyle || !formatHash || settings.document.getElementById("similar-works-exclude-colored-tags")) throw new Error("Tag format settings did not load");
+      formatStyle.value = "title";
+      formatStyle.dispatchEvent(new settings.Event("command", {bubbles:true}));
+      if (!formatHash.checked) formatHash.click();
+      await waitFor(() => Zotero.Prefs.get("extensions.zotero.similar-works.tagNameStyle",true) === "title" && Zotero.Prefs.get("extensions.zotero.similar-works.tagHashtag",true) === true, "save tag format settings");
       const excludedTags = settings.document.getElementById("similar-works-excluded-tags");
       if (!excludedTags || excludedTags.localName !== "textarea") throw new Error("Comma-separated exclusion input did not load");
       excludedTags.value = ["Deep Learning", "Graph Neural Networks", "Special Status"].join(", ");
@@ -735,6 +825,25 @@ startup = async function(data) {
       if(!(await noteAPI.getOwnNoteTags(nativeID,exclusionNoteID)).includes('#DeepLearning') || (await noteAPI.getGraph()).nodes.find(node=>node.id===exclusionNoteID).tags.includes('#DeepLearning'))throw new Error('Exclusion deleted an original or leaked into the graph');
       excludedTags.value="";excludedTags.dispatchEvent(new settings.Event("input",{bubbles:true}));excludedTags.dispatchEvent(new settings.Event("change",{bubbles:true}));
       await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===2,'restore unexcluded note tag without reopening');
+      const colorDialog=tagAPI.open(doc.defaultView,item.libraryID);
+      await waitFor(()=>[...colorDialog.document?.querySelectorAll('#tags input') || []].some(input=>input.value==='Deep Learning'),'unexcluded colored tag');
+      excludedTags.value='@colored, Visible*';
+      excludedTags.dispatchEvent(new settings.Event('input',{bubbles:true}));
+      excludedTags.dispatchEvent(new settings.Event('change',{bubbles:true}));
+      await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===0,'colored and wildcard note visibility');
+      await waitFor(()=>![...colorDialog.document.querySelectorAll('#tags input')].some(input=>input.value==='Deep Learning'),'colored manager visibility');
+      if((await tagAPI.catalog(item.libraryID,true)).includes('Deep Learning') || (await noteAPI.getGraphTags()).some(tag=>['#DeepLearning','Visible Label'].includes(tag)))throw new Error('Colored or wildcard rule leaked into the graph vocabulary');
+      try { await tagAPI.preview(item.libraryID,['Deep Learning']); throw new Error('Colored flag allowed a protected operation'); }
+      catch(error) { if(error.message!=='similar-works-tags-protected')throw error; }
+      await Zotero.DB.executeTransaction(()=>Zotero.Tags.setColor(item.libraryID,'Deep Learning'));
+      await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===1,'uncolored tag becomes visible');
+      await waitFor(()=>[...colorDialog.document.querySelectorAll('#tags input')].some(input=>input.value==='Deep Learning'),'manager follows removed color');
+      await Zotero.DB.executeTransaction(()=>Zotero.Tags.setColor(item.libraryID,'Deep Learning','#336699',0));
+      await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===0,'recolored tag is hidden again');
+      await waitFor(()=>![...colorDialog.document.querySelectorAll('#tags input')].some(input=>input.value==='Deep Learning'),'manager follows restored color');
+      if(!(await noteAPI.getOwnNoteTags(nativeID,exclusionNoteID)).includes('#DeepLearning') || (await noteAPI.getGraph()).nodes.find(node=>node.id===exclusionNoteID).tags.length)throw new Error('Colored exclusion changed native tags or leaked into graph nodes');
+      await capture('settings-tag-rules',settings);
+      colorDialog.close();
       excludedTags.value="Deep Learning, Graph Neural Networks, Special Status";excludedTags.dispatchEvent(new settings.Event("input",{bubbles:true}));excludedTags.dispatchEvent(new settings.Event("change",{bubbles:true}));
       await waitFor(()=>exclusionEditor.document.querySelectorAll('#knowledge-base-note-tags .note-tag').length===1,'reapply note exclusions');
       if(!(await exclusionEditor.save(false)))throw new Error('Exclusion note did not settle');
@@ -745,10 +854,73 @@ startup = async function(data) {
       settings.document.getElementById("similar-works-diagnostics").scrollIntoView({block:"center"});
       await capture("settings-cache",settings);
       settings.close();
+      // Exercise the restored format action entirely in this disposable library.
+      const formatItem = new Zotero.Item("journalArticle");
+      formatItem.setField("title", "Tag formatting fixture");
+      const fixedTag = "pytorch customThing LLM C++ pH β2";
+      for (const name of [fixedTag,"format collision","Format Collision","topic/reading","cancel first","cancel second"])
+        formatItem.addTag(name);
+      await formatItem.saveTx({skipSelect:true});
+      await Zotero.DB.executeTransaction(() => Zotero.Tags.setColor(item.libraryID,fixedTag,"#117755",3));
+      for (const win of [...tagAPI._dialogs]) win.close();
+      const formatDialog = tagAPI.open(doc.defaultView,item.libraryID);
+      await waitFor(() => formatDialog.document?.querySelectorAll('#tags input').length, "format dialog");
+      const fd = formatDialog.document;
+      await chooseAction(formatDialog,"format");
+      const selectFormat = async (values) => {
+        fd.getElementById('clear-selection').click();
+        for (const value of values) {
+          const input=[...fd.querySelectorAll('#tags input')].find(input=>input.value===value);
+          if(!input)throw new Error('Missing format fixture: '+value);
+          input.click();
+        }
+        await waitFor(()=>fd.querySelectorAll('.format-cell[data-status]').length===values.length,'format preview rows');
+      };
+      await selectFormat([fixedTag,"format collision","Format Collision","topic/reading"]);
+      await waitFor(()=>!fd.getElementById('merge').disabled,'enable format application');
+      if(!formatItem.hasTag(fixedTag) || !fd.getElementById('tag-table').querySelector('.format-cell[data-status]'))throw new Error('Preview wrote tags or is hidden');
+      if(![...fd.querySelectorAll('.format-name')].map(node=>node.textContent).join(' ').includes('#PyTorch customThing LLM C++ pH β2'))throw new Error('Fixed spelling was lost in format preview');
+      fd.querySelector('.format-cell[data-status]').scrollIntoView({block:'center'});
+      if(fd.querySelector('.format-cell[data-status]').getBoundingClientRect().bottom > fd.querySelector('footer').getBoundingClientRect().top)throw new Error('Format preview is below the tag list');
+      const formatLabel=fd.getElementById('mode').querySelector('menuitem[value="format"]').getAttribute('label');
+      if(formatLabel!==${JSON.stringify(process.env.SW_HOST_LOCALE === "zh-CN" ? "格式化" : "Format")})throw new Error('Format action label is not concise: '+formatLabel);
+      await capture('tag-manager-format',formatDialog);
+      fd.getElementById('merge').click();
+      const titleTag='#PyTorch customThing LLM C++ pH β2';
+      await waitFor(()=>formatItem.hasTag(titleTag) && !fd.getElementById('refresh').disabled,'apply tag format');
+      if(formatItem.hasTag(fixedTag) || !formatItem.hasTag('format collision') || !formatItem.hasTag('Format Collision') || !formatItem.hasTag('topic/reading') || Zotero.Tags.getColor(item.libraryID,titleTag)?.color!=='#117755')throw new Error('Formatting merged conflicts, changed structures or lost color');
+      // A settings change refreshes the open preview and can remove a hash.
+      await selectFormat([titleTag]);
+      Zotero.Prefs.set("extensions.zotero.similar-works.tagNameStyle","sentence",true);
+      Zotero.Prefs.set("extensions.zotero.similar-works.tagHashtag",false,true);
+      await waitFor(()=>[...fd.querySelectorAll('.format-name')].map(node=>node.textContent).join(' ').includes('PyTorch customThing LLM C++ pH β2') && !fd.getElementById('merge').disabled,'refresh format after settings change');
+      fd.getElementById('merge').click();
+      await waitFor(()=>formatItem.hasTag('PyTorch customThing LLM C++ pH β2') && !fd.getElementById('refresh').disabled,'switch format without losing fixed spellings');
+      await selectFormat(['cancel first','cancel second']);
+      await waitFor(()=>!fd.getElementById('merge').disabled,'prepare format cancellation');
+      const nativeRename=Zotero.Tags.rename;
+      try {
+        Zotero.Tags.rename=async function(library,from,to){
+          await nativeRename.call(this,library,from,to);
+          if(from==='cancel first')formatDialog.close();
+        };
+        fd.getElementById('merge').click();
+        await waitFor(()=>formatDialog.closed && !tagAPI._formatting.has(item.libraryID),'close during tag formatting');
+        await tagAPI.finishWrites();
+        if(!formatItem.hasTag('Cancel first') || !formatItem.hasTag('cancel second') || formatItem.hasTag('Cancel second'))throw new Error('Closing Tag Manager allowed later writes');
+      } finally {Zotero.Tags.rename=nativeRename;}
+      // Reusing a plan after membership changes must not write anything.
+      const stalePlan = await tagAPI.planFormat(item.libraryID,['format collision']);
+      peers[0].addTag('format collision');
+      await peers[0].saveTx({skipSelect:true});
+      try {await tagAPI.applyFormat(item.libraryID,stalePlan);throw new Error('Stale format plan accepted');}
+      catch(error){if(error.message!=='similar-works-tags-changed')throw error;}
+      Zotero.Prefs.set("extensions.zotero.similar-works.excludedTags","Deep Learning, Graph Neural Networks, Special Status",true);
       for (let index = 0; index < 230; index++) peers[0].addTag("BulkTag"+index);
       await peers[0].saveTx({skipSelect:true});
       const bulkDialog = tagAPI.open(doc.defaultView,item.libraryID);
       await waitFor(() => bulkDialog.document?.querySelectorAll('#tags input').length > 230, 'display all tags without a cutoff');
+      testTagWindows.push(bulkDialog);
       const bd = bulkDialog.document;
       if (bd.documentElement.namespaceURI !== "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul" || bd.getElementById("merge").namespaceURI !== bd.documentElement.namespaceURI) throw new Error("Tag Manager is not using native window and buttons");
       if (bd.querySelector('#tags input').getBoundingClientRect().width > 20) throw new Error("Tag checkbox has stretched beyond native control size");
@@ -760,7 +932,7 @@ startup = async function(data) {
         if (bd.activeElement !== bd.getElementById("search")) throw new Error("Command-F did not focus tag search");
       }
       if (bd.getElementById("mode").value !== "merge") throw new Error("Wrong default tag action");
-      if(bd.getElementById('mode').querySelector('menuitem[value="format"]'))throw new Error('Bulk format remains in Tag Manager');
+      if(!bd.getElementById('mode').querySelector('menuitem[value="format"]'))throw new Error('Format action is missing from Tag Manager');
       await chooseAction(bulkDialog,"delete");
       if ([...bd.querySelectorAll('#tags input')].some(input=>['Deep Learning','Graph Neural Networks'].includes(input.value))) throw new Error('Protected tags were visible');
       bd.getElementById('search').value = "BulkTag";
@@ -791,12 +963,18 @@ startup = async function(data) {
       const removedNames = deletionInputs.slice(0,2).map(input=>input.value);
       deletionInputs[0].click(); deletionInputs[1].click();
       await waitFor(() => !bd.getElementById("merge").disabled && bd.getElementById("target").hidden, "preview delete selection");
+      const matchDuplicates=tagAPI.potentialDuplicates;
+      let releaseDuplicates;
+      const matchingPause=new Promise(resolve=>{releaseDuplicates=resolve;});
+      tagAPI.potentialDuplicates=async(...args)=>{await matchingPause;return matchDuplicates.apply(tagAPI,args);};
+      try {
       bd.getElementById("merge").click();
       await waitFor(() => !bd.getElementById("refresh").disabled, "finish delete");
       if (removedNames.some(name=>peers[0].hasTag(name)) || peers[0].getTags().filter(tag=>tag.tag.startsWith("BulkTag")).length !== 228) throw new Error("Bulk deletion did not preserve unselected tags");
       if (!peers[0].hasTag("Deep Learning") || taggedNote.getNote() !== noteBeforeMerge || peers[0].deleted) throw new Error("Deletion changed protected tags or items");
       const deletedText=await bd.l10n.formatValue('similar-works-tags-deleted',{count:2});
       await waitFor(()=>!bd.getElementById('mode').disabled && bd.getElementById('preview').textContent===deletedText,'restore action picker after deletion');
+      } finally {releaseDuplicates();tagAPI.potentialDuplicates=matchDuplicates;}
       for(const width of [680,440]) {
         bulkDialog.resizeTo(width,560);await new Promise(resolve=>setTimeout(resolve,100));
         checkActionControl(bulkDialog,'delete');
@@ -821,6 +999,7 @@ startup = async function(data) {
       graphBody.remove();
 
       const semantic = SWScope.SWSemantic;
+      semantic.enable=enableSemantic;
       const storedVector = new Float32Array(384); storedVector[0] = 1;
       corpus.docs.set("1/HOST-VECTOR", {hash: "host-vector", weak: false});
       await corpus._db.execute("INSERT OR REPLACE INTO embeddings (key, sourceHash, model, vector, updatedAt) VALUES (?, ?, ?, ?, ?)",
@@ -1055,6 +1234,13 @@ try {
           " persisted vectors; full model blocked; no inference; clean shutdown."
       : "PASS Knowledge Base: local text and semantic retrieval, no generative AI runtime/settings, tag filtering and native operations, indexing progress and shutdown cleanup.",
   );
+  if (process.env.KNOWLEDGE_BASE_TAGS_PROBE)
+    console.log(
+      JSON.stringify({
+        tagNames: result.tagNames,
+        tagGroups: result.tagGroups,
+      }),
+    );
   if (process.env.KNOWLEDGE_BASE_STORAGE_PROBE)
     console.log(
       "PASS Cached native inference twice offline; compiled cache relocated; model reads into JS: " +

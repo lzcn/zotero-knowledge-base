@@ -861,6 +861,39 @@ check("Parent tags inherit live without changing the note's own tags", () => {
   ]);
 });
 check(
+  "Colored and wildcard visibility follows each library without changing native tags",
+  () => {
+    const prior = globalThis.Zotero.Tags;
+    const colors = new Map([["Machine learning", {}]]);
+    globalThis.Zotero.Tags = {
+      ...prior,
+      getColors: (library) => (library === 1 ? colors : new Map()),
+    };
+    tagPreferences.set(
+      "extensions.zotero.similar-works.excludedTags",
+      "@colored, Own*",
+    );
+    const names = ["Machine learning", "Own tag", "中文 标签"];
+    assert.deepEqual(note_tags.visibleNoteTags(names, 1), ["中文 标签"]);
+    assert.deepEqual(note_tags.visibleNoteTags(names, 2), [
+      "Machine learning",
+      "中文 标签",
+    ]);
+    colors.clear();
+    assert.deepEqual(note_tags.visibleNoteTags(names, 1), [
+      "Machine learning",
+      "中文 标签",
+    ]);
+    assert.deepEqual(tagNote.getTags(), [
+      { tag: "Own tag" },
+      { tag: "Machine learning" },
+    ]);
+    tagPreferences.delete("extensions.zotero.similar-works.excludedTags");
+    globalThis.Zotero.Tags = prior;
+  },
+);
+
+check(
   "Deep card hierarchies inherit tags without recursion or duplicated names",
   () => {
     const tags = new Map(
@@ -971,6 +1004,20 @@ prefsWin.document.createXULElement = (tag) =>
     "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
     tag,
   );
+const templateObservers = new Map();
+let templateObserverID = 0;
+globalThis.Zotero.Prefs.registerObserver = (key, callback) => {
+  const id = ++templateObserverID;
+  templateObservers.set(id, { key, callback });
+  return id;
+};
+globalThis.Zotero.Prefs.unregisterObserver = (id) =>
+  templateObservers.delete(id);
+globalThis.Zotero.Prefs.set = (key, value) => {
+  tagPreferences.set(key, value);
+  for (const observer of templateObservers.values())
+    if (observer.key === key) observer.callback();
+};
 prefsWin.MozXULElement = { insertFTLIfNeeded() {} };
 prefsWin.ZoteroPluginUI = {
   select(value) {
@@ -1015,8 +1062,57 @@ assert.equal(
   null,
 );
 assert.equal(
-  prefsWin.document.getElementById("knowledge-base-literature-template"),
-  null,
+  prefsWin.document.getElementById("knowledge-base-literature-template")
+    ?.localName,
+  "menulist",
+);
+
+check(
+  "Every note type has an independent, synchronized template selector",
+  () => {
+    const api = prefsWin.Zotero.ZoteroKnowledgeBase.api;
+    const assignments = new Map();
+    for (const type of ["literature", "zettel", "thinking", "entity"]) {
+      const menu = prefsWin.document.getElementById(
+        `knowledge-base-${type}-template`,
+      );
+      assert.equal(menu.localName, "menulist");
+      assert.equal(menu.value, "");
+      const id = api.createLiteratureTemplate(type);
+      api.updateLiteratureTemplate(id, { name: type, body: `## ${type}` });
+      assert.equal(menu.value, id, "Manager changes must update Settings");
+      menu.value = "";
+      prefsCommand(menu);
+      assert.equal(api.getNoteTemplate(type), null);
+      menu.value = id;
+      prefsCommand(menu);
+      assignments.set(type, id);
+      for (const [assignedType, assignedID] of assignments)
+        assert.equal(api.getNoteTemplate(assignedType), assignedID);
+      api.updateLiteratureTemplate(id, { name: `${type} revised` });
+      assert.equal(
+        menu.querySelector(`[value="${id}"]`).getAttribute("label"),
+        `${type} revised`,
+      );
+    }
+    api.setNoteTemplate("entity", assignments.get("zettel"));
+    assert.equal(
+      prefsWin.document.getElementById("knowledge-base-entity-template").value,
+      assignments.get("zettel"),
+    );
+    api.deleteLiteratureTemplate(assignments.get("zettel"));
+    assert.equal(
+      prefsWin.document.getElementById("knowledge-base-zettel-template").value,
+      "",
+    );
+    assert.equal(
+      prefsWin.document.getElementById("knowledge-base-entity-template").value,
+      "",
+    );
+    for (const [type, id] of assignments) {
+      if (type !== "zettel") api.deleteLiteratureTemplate(id);
+    }
+  },
 );
 
 const templateDOM = new JSDOM(
@@ -1120,6 +1216,13 @@ check(
       preferences.updateLiteratureTemplate(first, { body: null }),
     );
     assert.throws(() => preferences.setLiteratureTemplate("missing"));
+    preferences.setNoteTemplate("entity", first);
+    assert.equal(preferences.getNewNoteBody("entity"), "## Research questions");
+    assert.equal(preferences.getNewNoteBody("literature"), "");
+    assert.equal(preferences.getNewNoteBody("thinking"), "");
+    preferences.setNoteTemplate("entity", null);
+    assert.throws(() => preferences.setNoteTemplate("thinking", "missing"));
+
     assert.equal(
       tagPreferences.get(
         "extensions.zotero.knowledge-base.literatureTemplates",

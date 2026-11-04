@@ -46,6 +46,7 @@ type="text/css"?>
         data-l10n-id="similar-works-tags-clear-selection"
       ></xul:button>
     </div>
+    <p id="match-status" hidden="hidden" role="status"></p>
     <main tabindex="0" id="tag-table">
       <table
         ><thead
@@ -87,6 +88,10 @@ type="text/css"?>
           <xul:menuitem
             value="rename"
             data-l10n-id="similar-works-tags-rename-action"
+          />
+          <xul:menuitem
+            value="format"
+            data-l10n-id="similar-works-tags-format-action"
           />
           <xul:menuitem
             value="delete"

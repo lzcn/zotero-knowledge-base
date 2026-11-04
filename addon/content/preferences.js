@@ -202,6 +202,63 @@ window.KnowledgeBasePreferences = (() => {
       const popup = doc.getElementById("knowledge-base-source-styles");
       const error = doc.getElementById("knowledge-base-preferences-error");
       try {
+        const types =
+          /** @type {import("../../src/modules/note-types").NoteType[]} */ ([
+            "literature",
+            "zettel",
+            "thinking",
+            "entity",
+          ]);
+        const templates = types.map((type) => ({
+          type,
+          menu: getMenu(doc, "knowledge-base-" + type + "-template"),
+        }));
+        const refreshTemplates = () => {
+          const settings = api.getLiteratureTemplateSettings();
+          for (const { type, menu } of templates) {
+            const popup = menu.querySelector("menupopup");
+            popup.replaceChildren();
+            for (const entry of [
+              { id: "", name: api.loc("template-none") },
+              ...settings.templates,
+            ]) {
+              const option = doc.createXULElement("menuitem");
+              option.setAttribute("value", entry.id);
+              option.setAttribute("label", entry.name);
+              popup.append(option);
+            }
+            menu.value = api.getNoteTemplate(type) || "";
+          }
+        };
+        refreshTemplates();
+        for (const { type, menu } of templates)
+          bindMenu(menu, menu.value, (value) =>
+            api.setNoteTemplate(type, value || null),
+          );
+        const container = doc.querySelector(".settings-templates");
+        if (!menus.has(container)) {
+          menus.add(container);
+          const observers = [
+            "literatureTemplates",
+            ...types
+              .filter((type) => type !== "literature")
+              .map((type) => "templates." + type),
+          ].map((key) =>
+            Zotero.Prefs.registerObserver(
+              "extensions.zotero.knowledge-base." + key,
+              refreshTemplates,
+              true,
+            ),
+          );
+          doc.defaultView.addEventListener(
+            "unload",
+            () => {
+              for (const observer of observers)
+                Zotero.Prefs.unregisterObserver(observer);
+            },
+            { once: true },
+          );
+        }
         const manage = doc.getElementById("knowledge-base-template-manage");
         if (!menus.has(manage)) {
           menus.add(manage);
@@ -216,12 +273,6 @@ window.KnowledgeBasePreferences = (() => {
           });
         }
         bindGraphControls(doc, api);
-        const addGroup = doc.getElementById("knowledge-base-add-group");
-        if (!menus.has(addGroup)) {
-          const tags = await api.getGraphTags();
-          if (!addGroup.isConnected || menus.has(addGroup)) return;
-          bindGraphGroups(doc, api, error, addGroup, tags);
-        }
         const mode = getMenu(doc, "knowledge-base-workbench-mode");
         bindMenu(mode, api.getWorkbenchMode(), (value) =>
           api.setWorkbenchMode(value),
@@ -229,6 +280,12 @@ window.KnowledgeBasePreferences = (() => {
         const styles = await api.getSourceStyles();
         if (!menu.isConnected) return;
         bindSourceStyle(doc, api, menu, popup, error, styles);
+        const addGroup = doc.getElementById("knowledge-base-add-group");
+        if (!menus.has(addGroup)) {
+          const tags = await api.getGraphTags();
+          if (!addGroup.isConnected || menus.has(addGroup)) return;
+          bindGraphGroups(doc, api, error, addGroup, tags);
+        }
         error.hidden = true;
       } catch (failure) {
         error.textContent = String(failure.message || failure);

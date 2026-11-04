@@ -17,56 +17,84 @@ type="text/css"?>
 >
   <script src="chrome://zotero/content/include.js" />
   <script src="chrome://knowledge-base/content/templates.js" />
-  <hbox class="template-manager" flex="1">
-    <vbox class="template-sidebar">
-      <html:div id="knowledge-base-literature-templates" role="listbox" />
-      <hbox>
-        <button
-          id="knowledge-base-template-new"
-          data-l10n-id="knowledge-base-pref-template-new"
-        />
-        <button
-          id="knowledge-base-template-delete"
-          disabled="true"
-          data-l10n-id="knowledge-base-pref-template-delete"
-        />
-      </hbox>
-    </vbox>
-    <vbox class="template-content" flex="1">
-      <description
-        id="knowledge-base-template-empty"
-        data-l10n-id="knowledge-base-template-empty"
+  <vbox class="template-window" flex="1">
+    <hbox class="template-type-row" align="center">
+      <label
+        control="knowledge-base-template-type"
+        data-l10n-id="knowledge-base-pref-template-type"
       />
-      <vbox id="knowledge-base-template-editor" hidden="true" flex="1">
-        <html:label
-          for="knowledge-base-template-name"
-          data-l10n-id="knowledge-base-pref-template-name"
+      <menulist id="knowledge-base-template-type" native="true">
+        <menupopup>
+          <menuitem
+            value="literature"
+            data-l10n-id="knowledge-base-pref-template-literature-option"
+          />
+          <menuitem
+            value="zettel"
+            data-l10n-id="knowledge-base-pref-template-zettel-option"
+          />
+          <menuitem
+            value="thinking"
+            data-l10n-id="knowledge-base-pref-template-thinking-option"
+          />
+          <menuitem
+            value="entity"
+            data-l10n-id="knowledge-base-pref-template-entity-option"
+          />
+        </menupopup>
+      </menulist>
+    </hbox>
+    <hbox class="template-manager" flex="1">
+      <vbox class="template-sidebar">
+        <html:div id="knowledge-base-literature-templates" role="listbox" />
+        <hbox>
+          <button
+            id="knowledge-base-template-new"
+            data-l10n-id="knowledge-base-pref-template-new"
+          />
+          <button
+            id="knowledge-base-template-delete"
+            disabled="true"
+            data-l10n-id="knowledge-base-pref-template-delete"
+          />
+        </hbox>
+      </vbox>
+      <vbox class="template-content" flex="1">
+        <description
+          id="knowledge-base-template-empty"
+          data-l10n-id="knowledge-base-template-empty"
         />
-        <html:input
-          id="knowledge-base-template-name"
-          type="text"
-          required="required"
-        />
-        <checkbox
-          id="knowledge-base-template-default"
-          native="true"
-          data-l10n-id="knowledge-base-pref-template-choice"
-        />
-        <html:label
-          for="knowledge-base-template-body"
-          data-l10n-id="knowledge-base-pref-template-edit"
-        />
-        <html:textarea
-          id="knowledge-base-template-body"
-          rows="6"
-          spellcheck="false"
+        <vbox id="knowledge-base-template-editor" hidden="true" flex="1">
+          <html:label
+            for="knowledge-base-template-name"
+            data-l10n-id="knowledge-base-pref-template-name"
+          />
+          <html:input
+            id="knowledge-base-template-name"
+            type="text"
+            required="required"
+          />
+          <checkbox
+            id="knowledge-base-template-default"
+            native="true"
+            data-l10n-id="knowledge-base-pref-template-choice"
+          />
+          <html:label
+            for="knowledge-base-template-body"
+            data-l10n-id="knowledge-base-pref-template-edit"
+          />
+          <html:textarea
+            id="knowledge-base-template-body"
+            rows="6"
+            spellcheck="false"
+          />
+        </vbox>
+        <description
+          id="knowledge-base-template-error"
+          role="alert"
+          hidden="true"
         />
       </vbox>
-      <description
-        id="knowledge-base-template-error"
-        role="alert"
-        hidden="true"
-      />
-    </vbox>
-  </hbox>
+    </hbox>
+  </vbox>
 </window>

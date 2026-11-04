@@ -2,6 +2,7 @@ import { noteSortOrder, type NoteSort } from "./note-sort";
 import { config } from "../../package.json";
 import { notifyDataChange } from "./events";
 import { getString } from "../utils/locale";
+import { NOTE_TYPES, requireNoteType, type NoteType } from "./note-types";
 
 const literatureTemplatesKey = `${config.prefsPrefix}.literatureTemplates`;
 
@@ -71,7 +72,10 @@ export function setLiteratureTemplate(id: string | null): void {
   saveLiteratureTemplates({ ...settings, selected: id });
 }
 
-export function createLiteratureTemplate(): string {
+export function createLiteratureTemplate(
+  type: NoteType = "literature",
+): string {
+  requireNoteType(type);
   const settings = getLiteratureTemplateSettings();
   const base = getString("template-untitled");
   let name = base;
@@ -87,8 +91,9 @@ export function createLiteratureTemplate(): string {
     id = Zotero.Utilities.randomString(12);
   } while (settings.templates.some((template) => template.id === id));
   settings.templates.push({ id, name, body: "" });
-  settings.selected = id;
+  if (type === "literature") settings.selected = id;
   saveLiteratureTemplates(settings);
+  if (type !== "literature") setNoteTemplate(type, id);
   return id;
 }
 
@@ -134,12 +139,38 @@ export function deleteLiteratureTemplate(id: string): void {
   );
   if (settings.selected === id) settings.selected = null;
   saveLiteratureTemplates(settings);
+  for (const type of NOTE_TYPES)
+    if (type !== "literature" && getNoteTemplate(type) === id)
+      setNoteTemplate(type, null);
 }
 
-export function getNewNoteBody(): string {
+export function getNoteTemplate(type: NoteType): string | null {
+  requireNoteType(type);
+  if (type === "literature") return getLiteratureTemplateSettings().selected;
+  const value = Zotero.Prefs.get(
+    `${config.prefsPrefix}.templates.${type}`,
+    true,
+  );
+  return typeof value === "string" && value ? value : null;
+}
+
+export function setNoteTemplate(type: NoteType, id: string | null): void {
+  requireNoteType(type);
+  if (type === "literature") return setLiteratureTemplate(id);
+  if (
+    id !== null &&
+    !getLiteratureTemplateSettings().templates.some(
+      (template) => template.id === id,
+    )
+  )
+    throw new Error(getString("literature-template-invalid"));
+  Zotero.Prefs.set(`${config.prefsPrefix}.templates.${type}`, id || "", true);
+}
+
+export function getNewNoteBody(type: NoteType = "literature"): string {
   const settings = getLiteratureTemplateSettings();
   return (
-    settings.templates.find((template) => template.id === settings.selected)
+    settings.templates.find((template) => template.id === getNoteTemplate(type))
       ?.body ?? ""
   );
 }

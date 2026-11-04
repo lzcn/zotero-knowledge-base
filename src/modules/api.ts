@@ -1,4 +1,6 @@
+import { getAll } from "./db";
 import { getNewNoteBody } from "./preferences";
+import { getNoteTemplate, setNoteTemplate } from "./preferences";
 import { compareNoteSummaries } from "./note-sort";
 import { getDOMWindow } from "../utils/dom";
 import { getGraphTags, getOwnNoteTags, visibleNoteTags } from "./note-tags";
@@ -188,6 +190,25 @@ function mainWindow(): Window {
 const editorWindows = new Map<string, Window>();
 
 export const api = {
+  getNoteTemplate,
+  setNoteTemplate,
+  async getNoteCounts(): Promise<Record<string, number>> {
+    const rows = await getAll<{ note_type: string; count: number }>(
+      "SELECT note_type, COUNT(*) AS count FROM zettels z WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id=z.id) GROUP BY note_type",
+    );
+    const counts: Record<string, number> = {
+      literature: 0,
+      zettel: 0,
+      thinking: 0,
+      entity: 0,
+      total: 0,
+    };
+    for (const row of rows) {
+      counts[row.note_type] = row.count;
+      counts.total += row.count;
+    }
+    return counts;
+  },
   getLibraryState: () => libraryRuntime.state,
   getLibraryStatus: () => libraryRuntime.getStatus(),
   checkNoteKey,

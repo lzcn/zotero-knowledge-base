@@ -33,9 +33,9 @@ similar-works-tags-menu =
 similar-works-tags-search =
     .placeholder = Search existing tags…
     .aria-label = Search existing tags
-similar-works-tags-duplicates = Possible duplicates
-similar-works-tags-keep = Name
-similar-works-tags-preview = { $tags } selected tags · { $count } affected items
+similar-works-tags-duplicates = Organize similar tags
+similar-works-tags-keep = Keep name
+similar-works-tags-preview = { $tags } tags → 1 · { $count } items
 similar-works-tags-close =
     .label = Close
 similar-works-tags-merged = Updated { $count } tags to “{ $name }”.
@@ -50,7 +50,6 @@ similar-works-tags-invalid-name = Enter a valid name (up to 255 characters).
 
 similar-works-pref-excluded-tags =
     .value = Excluded tags
-similar-works-pref-excluded-tags-help = Comma-separated; shared with notes and tag suggestions.
 similar-works-tags-protected = Tag excluded. Check Settings.
 
 similar-works-tags-select-all = Select all
@@ -101,7 +100,7 @@ similar-works-tags-window =
 
 similar-works-tags-name-column = Name
 similar-works-tags-count-column = Items
-similar-works-tags-group-column = Match
+similar-works-tags-group-column = Similar tag
 similar-works-tags-match-name = Name
 similar-works-tags-match-plural = Plural
 similar-works-tags-match-abbreviation = Abbreviation
@@ -118,3 +117,38 @@ similar-works-evidence-empty = No shared wording was located in the available te
 similar-works-evidence-failed = Could not load the evidence. Try again.
 
 similar-works-pref-cache-ready = Ready · { $count } items
+
+similar-works-pref-tag-style =
+    .value = Tag format
+similar-works-pref-tag-sentence =
+    .label = Sentence case
+similar-works-pref-tag-title =
+    .label = Title Case
+similar-works-pref-tag-hashtag =
+    .label = Add a # prefix
+similar-works-tags-format-action =
+    .label = Format
+similar-works-tags-format-button =
+    .label = Format
+similar-works-tags-format-to = Formatted
+similar-works-tags-format-preview = Change { $tags } tags on { $count } items · Skip { $skipped }
+similar-works-tags-format-change = Rename
+similar-works-tags-format-unchanged = Unchanged
+similar-works-tags-format-structured = Keep structure
+similar-works-tags-format-invalid = Invalid name
+similar-works-tags-format-protected = Excluded
+similar-works-tags-format-collision = Name conflict; merge separately
+similar-works-tags-invalid-format = Choose Sentence case or Title Case in Settings.
+similar-works-tags-formatted = Formatted { $count } tags.
+
+similar-works-tags-match-semantic = Semantically similar
+similar-works-tags-semantic-preparing = Finding similar tags…
+similar-works-tags-semantic-unavailable = Name matches only
+similar-works-tags-semantic-error = Semantic matching unavailable: { $message }
+
+similar-works-tags-review-group =
+    .label = Review group
+    .aria-label = Review tags around { $name }
+similar-works-tags-review-semantic = Similar meaning; review before merging
+
+similar-works-tags-new-name = New name

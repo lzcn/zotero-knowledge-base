@@ -49,18 +49,71 @@
         <menupopup id="knowledge-base-source-styles" />
       </menulist>
     </hbox>
+  </vbox>
+  <vbox class="main-section settings-templates">
+    <html:h3 data-l10n-id="knowledge-base-settings-templates" />
     <hbox class="preference-row" align="center">
       <label
-        control="knowledge-base-template-manage"
-        data-l10n-id="knowledge-base-pref-literature-template"
+        control="knowledge-base-literature-template"
+        data-l10n-id="knowledge-base-pref-template-literature"
       />
+      <menulist
+        native="true"
+        id="knowledge-base-literature-template"
+        data-template-type="literature"
+      >
+        <menupopup />
+      </menulist>
+    </hbox>
+    <hbox class="preference-row" align="center">
+      <label
+        control="knowledge-base-zettel-template"
+        data-l10n-id="knowledge-base-pref-template-zettel"
+      />
+      <menulist
+        native="true"
+        id="knowledge-base-zettel-template"
+        data-template-type="zettel"
+      >
+        <menupopup />
+      </menulist>
+    </hbox>
+    <hbox class="preference-row" align="center">
+      <label
+        control="knowledge-base-thinking-template"
+        data-l10n-id="knowledge-base-pref-template-thinking"
+      />
+      <menulist
+        native="true"
+        id="knowledge-base-thinking-template"
+        data-template-type="thinking"
+      >
+        <menupopup />
+      </menulist>
+    </hbox>
+    <hbox class="preference-row" align="center">
+      <label
+        control="knowledge-base-entity-template"
+        data-l10n-id="knowledge-base-pref-template-entity"
+      />
+      <menulist
+        native="true"
+        id="knowledge-base-entity-template"
+        data-template-type="entity"
+      >
+        <menupopup />
+      </menulist>
+    </hbox>
+    <hbox class="template-actions">
       <button
         id="knowledge-base-template-manage"
         data-l10n-id="knowledge-base-pref-template-manage"
       />
     </hbox>
-    <html:details id="knowledge-base-graph-appearance">
-      <html:summary data-l10n-id="knowledge-base-pref-graph-appearance" />
+  </vbox>
+  <vbox class="main-section settings-graph">
+    <html:h3 data-l10n-id="knowledge-base-pref-graph-appearance" />
+    <vbox id="knowledge-base-graph-appearance">
       <hbox class="preference-row" align="center">
         <label
           id="knowledge-base-graph-label-length-label"
@@ -94,15 +147,14 @@
           aria-labelledby="knowledge-base-graph-local-depth-label"
         />
       </hbox>
-      <html:h3 data-l10n-id="knowledge-base-pref-groups-heading" />
-      <description data-l10n-id="knowledge-base-pref-groups-help" />
+      <html:h4 data-l10n-id="knowledge-base-pref-groups-heading" />
       <vbox id="knowledge-base-graph-groups" />
       <hbox
         ><button
           id="knowledge-base-add-group"
           data-l10n-id="knowledge-base-pref-add-group"
       /></hbox>
-    </html:details>
+    </vbox>
     <description
       id="knowledge-base-preferences-error"
       hidden="true"
@@ -111,6 +163,32 @@
   </vbox>
   <vbox class="main-section settings-tags">
     <html:h3 data-l10n-id="knowledge-base-settings-tags" />
+    <hbox class="preference-row" align="center">
+      <label
+        control="similar-works-tag-style"
+        data-l10n-id="similar-works-pref-tag-style"
+      />
+      <menulist
+        native="true"
+        id="similar-works-tag-style"
+        preference="extensions.zotero.similar-works.tagNameStyle"
+      >
+        <menupopup>
+          <menuitem
+            value="sentence"
+            data-l10n-id="similar-works-pref-tag-sentence"
+          />
+          <menuitem value="title" data-l10n-id="similar-works-pref-tag-title" />
+        </menupopup>
+      </menulist>
+    </hbox>
+    <checkbox
+      native="true"
+      id="similar-works-tag-hashtag"
+      data-l10n-id="similar-works-pref-tag-hashtag"
+      preference="extensions.zotero.similar-works.tagHashtag"
+    />
+
     <hbox class="preference-row" align="start">
       <label
         control="similar-works-excluded-tags"
@@ -120,14 +198,9 @@
         id="similar-works-excluded-tags"
         rows="2"
         preference="extensions.zotero.similar-works.excludedTags"
-        aria-describedby="similar-works-excluded-tags-help"
+        data-l10n-id="knowledge-base-excluded-placeholder"
       />
     </hbox>
-    <description
-      id="similar-works-excluded-tags-help"
-      class="preference-help"
-      data-l10n-id="similar-works-pref-excluded-tags-help"
-    />
   </vbox>
   <vbox class="main-section settings-similar">
     <html:h3 data-l10n-id="knowledge-base-settings-similar" />
@@ -145,19 +218,18 @@
         preference="extensions.zotero.similar-works.maxRecommendations"
       />
     </hbox>
+  </vbox>
+  <vbox class="main-section settings-status">
+    <html:h3 data-l10n-id="knowledge-base-status-heading" />
     <vbox class="settings-cache" id="similar-works-diagnostics">
-      <html:h4 data-l10n-id="similar-works-pref-index-heading" />
+      <html:span data-l10n-id="knowledge-base-vectors-label" />
       <description id="similar-works-cache-status" />
       <html:progress
         id="similar-works-cache-progress"
         hidden="hidden"
-        data-l10n-id="similar-works-pref-index-progress"
-      />
-      <description
-        id="similar-works-diagnostics-error"
-        role="alert"
-        hidden="true"
+        data-l10n-id="knowledge-base-cache-progress"
       />
     </vbox>
+    <description id="knowledge-base-note-counts" role="status" />
   </vbox>
 </vbox>

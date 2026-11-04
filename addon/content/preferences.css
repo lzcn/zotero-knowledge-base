@@ -1,38 +1,13 @@
-/* Native rows with accents confined to section headings. */
+/* Neutral section boundaries follow native Settings typography. */
 .plugin-preferences {
   min-width: 0;
   --settings-border: var(--color-border, #d8dce1);
-  --settings-general: #5f6c7b;
-  --settings-notes: #3768ad;
-  --settings-tags: #2d7855;
-  --settings-similar: #8251a3;
-}
-@media (prefers-color-scheme: dark) {
-  .plugin-preferences {
-    --settings-border: var(--color-border, #52565d);
-    --settings-general: #b0bac7;
-    --settings-notes: #a0bdec;
-    --settings-tags: #8ec4ab;
-    --settings-similar: #c1a5dc;
-  }
-}
-.plugin-preferences .settings-general {
-  --section-accent: var(--settings-general);
-}
-.plugin-preferences .settings-notes {
-  --section-accent: var(--settings-notes);
-}
-.plugin-preferences .settings-tags {
-  --section-accent: var(--settings-tags);
-}
-.plugin-preferences .settings-similar {
-  --section-accent: var(--settings-similar);
 }
 .plugin-preferences .main-section,
 .plugin-preferences
   .main-section:not([hidden]):not(.hidden-by-search)
   ~ .main-section {
-  margin: 0 0 20px;
+  margin: 0 0 12px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -43,21 +18,20 @@
   font-size: 1em;
 }
 .plugin-preferences .main-section > h3 {
-  color: var(--section-accent);
+  color: inherit;
   font-weight: 600;
-  border-inline-start: 3px solid var(--section-accent);
-  padding-inline-start: 8px;
 }
-.plugin-preferences .settings-cache,
-.plugin-preferences #knowledge-base-graph-appearance {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px solid var(--settings-border);
-}
-.plugin-preferences .settings-cache h4 {
-  margin: 0 0 4px;
+.plugin-preferences h4 {
+  margin: 10px 0 6px;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
+}
+.plugin-preferences .main-section + .main-section,
+.plugin-preferences
+  .main-section:not([hidden]):not(.hidden-by-search)
+  ~ .main-section {
+  border-top: 1px solid var(--settings-border);
+  padding-top: 12px;
 }
 .plugin-preferences hbox {
   flex-wrap: wrap;
@@ -99,24 +73,42 @@
   resize: vertical;
 }
 
-.plugin-preferences summary {
-  cursor: pointer;
-  margin-block: 4px 8px;
+.plugin-preferences .template-actions {
+  margin-top: 4px;
+  padding-inline-start: calc(10em + 8px);
 }
-.plugin-preferences details h3 {
-  margin-top: 12px;
-}
-.plugin-preferences #knowledge-base-template-body {
-  width: 100%;
-  font-family: monospace;
+.plugin-preferences .template-actions > button {
+  margin-inline: 0;
 }
 
-.plugin-preferences .preference-help {
-  margin-inline-start: calc(10em + 8px);
-}
 .plugin-preferences progress:not([hidden]) {
   display: block;
   width: 100%;
   max-width: 28em;
   margin-top: 4px;
+}
+
+.plugin-preferences textarea::placeholder {
+  color: var(--fill-secondary, #808080);
+  opacity: 1;
+}
+.plugin-preferences .settings-status description {
+  font-size: 12px;
+}
+
+.plugin-preferences .settings-cache {
+  display: grid;
+  grid-template-columns: auto auto minmax(80px, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+.plugin-preferences .settings-cache progress {
+  margin: 0;
+  max-width: 220px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .plugin-preferences {
+    --settings-border: var(--color-border, #52565d);
+  }
 }

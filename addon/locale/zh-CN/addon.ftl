@@ -274,7 +274,6 @@ editor-key-resolve = 使用可用 ID
 pref-groups-heading = 分组
 pref-graph-label-length = 标题长度
 pref-graph-label-length-unit = 个字符
-pref-groups-help = 首个匹配的分组优先。
 pref-add-group =
     .label = 新建分组
 graph-group-tag = 选择标签
@@ -284,7 +283,7 @@ graph-group-remove = 移除分组
 
 graph-global = 全局图谱
 graph-local = 局部图谱
-pref-graph-local-depth = 局部图深度
+pref-graph-local-depth = 深度
 
 manager-sort = 笔记排序
 manager-sort-updated-desc = 最近修改
@@ -299,7 +298,7 @@ pref-graph-appearance = 图谱
 
 pref-literature-template = 笔记模板
 pref-template-choice =
-    .label = 用于新笔记
+    .label = 用于此类型
 template-none = 不使用模板
 pref-template-edit = 正文（Markdown）
 pref-template-name = 名称
@@ -345,7 +344,7 @@ manager-open-note = 打开笔记
 manager-open-note-window = 在新窗口打开
 manager-copy-note-link = 复制笔记链接
 
-pref-ui-style = 界面风格
+pref-ui-style = 外观
 
 text-tools-normalize = 整理格式
 text-tools-find = 查找
@@ -373,7 +372,7 @@ text-search-replaced-count = 已替换 $ 处
 settings-common = 通用
 settings-tags = 标签
 settings-similar = 相似条目
-settings-notes = 笔记系统
+settings-notes = 笔记
 
 
 section-notes = 笔记
@@ -388,7 +387,7 @@ section-tags-existing = 库内标签
 section-tags-add-error = 添加标签失败，请重试。
 section-tags-load-error = 推荐标签加载失败，请重新选择条目。
 pref-template-manage =
-    .label = 管理模板…
+    .label = 管理…
 
 template-empty = 暂无模板
 
@@ -412,3 +411,37 @@ graph-items-empty = 暂无高相关度的父条目
 graph-cache-loading = 正在读取相似度缓存…
 graph-item-stats = { $cards } 个条目 · { $links } 条连接
 graph-cache-unavailable = 相似度缓存暂不可用
+
+excluded-placeholder =
+    .placeholder = @colored, 待读*
+    .title = @colored 排除彩色标签，* 匹配任意文字
+status-heading = 状态
+vectors-label = 缓存
+vector-ready = 就绪
+vector-updating = 更新中
+vector-error = 出错
+note-counts = 笔记 { $total } · 文献 { $literature } · 原子 { $zettel } · 思考 { $thinking } · 实体 { $entity }
+pref-template-type =
+    .value = 笔记类型
+pref-template-literature-option =
+    .label = 文献笔记
+pref-template-zettel-option =
+    .label = 原子笔记
+pref-template-thinking-option =
+    .label = 思考笔记
+pref-template-entity-option =
+    .label = 实体
+
+
+settings-templates = 模板
+pref-template-literature =
+    .value = 文献笔记
+pref-template-zettel =
+    .value = 原子笔记
+pref-template-thinking =
+    .value = 思考笔记
+pref-template-entity =
+    .value = 实体
+
+cache-progress =
+    .aria-label = 缓存进度

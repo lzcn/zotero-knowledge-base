@@ -1,27 +1,6 @@
-/* global SWTagPolicy */
+/* global SWTagPolicy, SWTagFormat, SWTagTerms */
 function swTagAliasKey(key) {
-  const expansions = {
-    cnn: "convolutional neural network",
-    gan: "generative adversarial network",
-    gnn: "graph neural network",
-    rnn: "recurrent neural network",
-    gcn: "graph convolutional network",
-    mlp: "multilayer perceptron",
-    svm: "support vector machine",
-    vqa: "visual question answering",
-    nlp: "natural language processing",
-    llm: "large language model",
-  };
-  return key
-    .replace(/\b(networks|nets|models|machines|perceptrons)\b/g, (word) =>
-      word.slice(0, -1),
-    )
-    .replace(
-      /\b(cnn|gan|gnn|rnn|gcn|mlp|svm|vqa|nlp|llm)s?\b/g,
-      (_, word) => expansions[word],
-    )
-    .replace(/\bconvolutional net\b/g, "convolutional neural network")
-    .replace(/\bneural net\b/g, "neural network");
+  return SWTagTerms.aliasKey(key);
 }
 
 function swTagDuplicateReason(left, right) {
@@ -82,10 +61,19 @@ var SWTags = {
   _stopped: false,
   _dialogs: new Set(),
   _writes: new Set(),
+  _formatting: new Set(),
+  _duplicateCache: new Map(),
 
-  recommend(target, rows, limit = 6, excluded = new Set()) {
+  recommend(
+    target,
+    rows,
+    limit = 6,
+    excluded = this.exclusions(target.libraryID),
+  ) {
     const existing = new Set(
-      (target.getTags?.() || []).map((tag) => SWTagPolicy.key(tag.tag)),
+      (target.getTags?.() || []).map((tag) =>
+        swTagAliasKey(SWTagPolicy.key(tag.tag)),
+      ),
     );
     const candidates = new Map();
     const seenItems = new Set();
@@ -102,8 +90,14 @@ var SWTags = {
       seenItems.add(row.item.id);
       const seen = new Set();
       for (const { tag } of row.item.getTags?.() || []) {
-        const key = SWTagPolicy.key(tag);
-        if (!key || seen.has(key) || existing.has(key) || excluded.has(key))
+        const rawKey = SWTagPolicy.key(tag),
+          key = swTagAliasKey(rawKey);
+        if (
+          !key ||
+          seen.has(key) ||
+          existing.has(key) ||
+          SWTagPolicy.excludes(tag, excluded)
+        )
           continue;
         seen.add(key);
         const candidate = candidates.get(key) || {
@@ -133,15 +127,33 @@ var SWTags = {
   // Split naming boundaries without stemming or guessing unbroken words.
   words: SWTagPolicy.words,
 
-  protectedKeys() {
-    return SWTagPolicy.excludedKeys(
-      typeof SWPref === "undefined" ? "" : SWPref("excludedTags", ""),
+  namingOptions() {
+    return {
+      style:
+        typeof SWPref === "undefined"
+          ? "sentence"
+          : SWPref("tagNameStyle", "sentence"),
+      hashtag:
+        typeof SWPref === "undefined" ? false : SWPref("tagHashtag", false),
+    };
+  },
+
+  formatName(name, options = this.namingOptions()) {
+    return SWTagFormat.format(name, options);
+  },
+
+  exclusions(libraryID) {
+    const value =
+      typeof SWPref === "undefined" ? "" : SWPref("excludedTags", "");
+    return SWTagPolicy.exclusions(
+      value,
+      Zotero.Tags.getColors(libraryID).keys(),
     );
   },
 
-  _assertAllowed(names) {
-    const protectedKeys = this.protectedKeys();
-    if (names.some((name) => protectedKeys.has(SWTagPolicy.key(name))))
+  _assertAllowed(libraryID, names) {
+    const rules = this.exclusions(libraryID);
+    if (names.some((name) => SWTagPolicy.excludes(name, rules)))
       throw new Error("similar-works-tags-protected");
   },
 
@@ -151,6 +163,90 @@ var SWTags = {
 
   duplicateReason(a, b) {
     return swTagDuplicateReason(SWTagPolicy.key(a), SWTagPolicy.key(b));
+  },
+
+  semanticCompatible(a, b) {
+    const left = SWTagPolicy.key(a),
+      right = SWTagPolicy.key(b);
+    if (SWTagFormat.structured(a) || SWTagFormat.structured(b)) return false;
+    const numbers = (value) =>
+      [...value.matchAll(/\d+/g)]
+        .map((match) => match[0])
+        .sort()
+        .join(",");
+    if (numbers(left) !== numbers(right)) return false;
+    if (/[+#]/u.test(left + right) && left !== right) return false;
+    // Closely related opposites and task qualifiers must not become synonyms.
+    const qualifiers = (value) =>
+      (
+        value
+          .replace(/\bcategorization\b/g, "classification")
+          .replace(/\bforecasting\b/g, "prediction")
+          .match(
+            /\b(?:non\w*|un\w*|semi\w*|self|supervised|online|offline|centralized|decentralized|distributed|detection|classification|segmentation|prediction|tracking|retrieval)\b/g,
+          ) || []
+      )
+        .sort()
+        .join(" ");
+    return qualifiers(left) === qualifiers(right);
+  },
+
+  async potentialDuplicates(names, active = () => true) {
+    const lexical = this.duplicateGroups(names);
+    if (typeof SWSemantic === "undefined" || !SWSemantic._enabled)
+      return { groups: lexical, semantic: false };
+    const valid = () => !this._stopped && active();
+    const key = JSON.stringify([
+      SWSemantic.version,
+      SWSemantic._generation,
+      names,
+    ]);
+    if (valid() && this._duplicateCache.has(key))
+      return this._duplicateCache.get(key);
+    const edges = await SWSemantic.tagRelations(names, valid);
+    if (!valid()) return { groups: [], semantic: false };
+    if (!SWSemantic._enabled) return { groups: lexical, semantic: false };
+    const links = new Set(
+      edges
+        .filter((edge) => this.semanticCompatible(edge.left, edge.right))
+        .map((edge) => JSON.stringify([edge.left, edge.right].sort())),
+    );
+    const groups = new Set(lexical),
+      owners = new Map();
+    for (const group of lexical)
+      for (const name of group) owners.set(name, group);
+    for (const edge of edges) {
+      const a = owners.get(edge.left) || [edge.left],
+        b = owners.get(edge.right) || [edge.right];
+      if (
+        a === b ||
+        !a.every((left) =>
+          b.every(
+            (right) =>
+              this.duplicateReason(left, right) ||
+              links.has(JSON.stringify([left, right].sort())),
+          ),
+        )
+      )
+        continue;
+      groups.delete(a);
+      groups.delete(b);
+      const merged = [...a, ...b];
+      groups.add(merged);
+      for (const name of merged) owners.set(name, merged);
+    }
+    const result = { groups: [...groups], semantic: true };
+    this._duplicateCache.set(key, result);
+    while (this._duplicateCache.size > 4)
+      this._duplicateCache.delete(this._duplicateCache.keys().next().value);
+    return result;
+  },
+
+  refreshSemantic() {
+    if (this._stopped) return;
+    for (const win of this._dialogs)
+      if (!win.closed)
+        win.dispatchEvent(new win.Event("knowledge-base-tags-semantic-ready"));
   },
 
   duplicateGroups(names) {
@@ -257,7 +353,7 @@ var SWTags = {
     )
       throw new Error("similar-works-tags-invalid-name");
     this._check(libraryID, active);
-    this._assertAllowed(names);
+    this._assertAllowed(libraryID, names);
     const item = await Zotero.Items.getAsync(itemID);
     this._check(libraryID, active);
     if (
@@ -278,14 +374,14 @@ var SWTags = {
       await this._write(() =>
         Zotero.DB.executeTransaction(async () => {
           this._check(libraryID, active);
-          this._assertAllowed(names);
+          this._assertAllowed(libraryID, names);
           if (item.deleted || !item.isEditable())
             throw new Error("similar-works-tags-readonly");
           for (const name of new Set(names))
             if (!item.hasTag(name) && item.addTag(name, 0)) added++;
           if (added) await item.save();
           this._check(libraryID, active);
-          this._assertAllowed(names);
+          this._assertAllowed(libraryID, names);
         }),
       );
     } catch (error) {
@@ -297,9 +393,11 @@ var SWTags = {
 
   async catalog(libraryID, managed = false) {
     const tags = await Zotero.Tags.getAll(libraryID);
-    const protectedKeys = managed ? this.protectedKeys() : new Set();
+    const rules = managed
+      ? this.exclusions(libraryID)
+      : SWTagPolicy.exclusions("");
     return [...new Set(tags.map((tag) => tag.tag))]
-      .filter((name) => !protectedKeys.has(SWTagPolicy.key(name)))
+      .filter((name) => !SWTagPolicy.excludes(name, rules))
       .sort((a, b) => a.localeCompare(b));
   },
 
@@ -317,7 +415,7 @@ var SWTags = {
 
   async preview(libraryID, names, active = () => true) {
     this._check(libraryID, active);
-    this._assertAllowed(names);
+    this._assertAllowed(libraryID, names);
     const existing = new Set(await this.catalog(libraryID));
     if (new Set(names).size < 1 || names.some((name) => !existing.has(name)))
       throw new Error("similar-works-tags-changed");
@@ -343,7 +441,7 @@ var SWTags = {
       )
     )
       throw new Error("similar-works-tags-invalid-name");
-    this._assertAllowed([...names, target]);
+    this._assertAllowed(libraryID, [...names, target]);
     await this.preview(libraryID, names, active);
     let merged = 0;
     for (const name of new Set(names)) {
@@ -366,7 +464,7 @@ var SWTags = {
     for (let offset = 0; offset < sources.length; offset += 50) {
       const chunk = sources.slice(offset, offset + 50);
       this._check(libraryID, active);
-      this._assertAllowed(chunk);
+      this._assertAllowed(libraryID, chunk);
       const ids = chunk.map((name) => {
         const id = Zotero.Tags.getID(name);
         if (!id) throw new Error("similar-works-tags-changed");
@@ -384,7 +482,7 @@ var SWTags = {
 
   async _rename(libraryID, name, target, active) {
     this._check(libraryID, active);
-    this._assertAllowed([name, target]);
+    this._assertAllowed(libraryID, [name, target]);
     // The host returns color/position; zotero-types declares a tag object.
     const color = /** @type {{color: string, position: number} | false} */ (
       /** @type {unknown} */ (
@@ -394,20 +492,102 @@ var SWTags = {
     );
     // Finish the current native write before releasing resources on close.
     await this._write(async () => {
-      try {
-        await Zotero.Tags.rename(libraryID, name, target);
-      } finally {
-        if (color)
-          await Zotero.DB.executeTransaction(() =>
-            Zotero.Tags.setColor(
-              libraryID,
-              target,
-              color.color,
-              color.position,
-            ),
-          );
-      }
+      await Zotero.Tags.rename(libraryID, name, target);
+      if (color)
+        await Zotero.DB.executeTransaction(() =>
+          Zotero.Tags.setColor(libraryID, target, color.color, color.position),
+        );
     });
+  },
+
+  async planFormat(libraryID, names, active = () => true) {
+    this._check(libraryID, active);
+    const sources = [...new Set(names)];
+    this._assertAllowed(libraryID, sources);
+    const existing = new Set(await this.catalog(libraryID));
+    this._check(libraryID, active);
+    if (!sources.length || sources.some((name) => !existing.has(name)))
+      throw new Error("similar-works-tags-changed");
+    const options = this.namingOptions();
+    const rows = sources.map((from) => ({
+      from,
+      to: this.formatName(from, options),
+      status: "unchanged",
+      itemIDs: [],
+    }));
+    const destinations = new Map();
+    for (const row of rows)
+      destinations.set(row.to, (destinations.get(row.to) || 0) + 1);
+    const items = new Set();
+    const rules = this.exclusions(libraryID);
+    for (const row of rows) {
+      if (SWTagFormat.structured(row.from)) row.status = "structured";
+      else if (row.from === row.to) continue;
+      else if (
+        !row.to ||
+        row.to.length > 255 ||
+        [...row.to].some(
+          (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+        )
+      )
+        row.status = "invalid";
+      else if (SWTagPolicy.excludes(row.to, rules)) row.status = "protected";
+      else if (existing.has(row.to) || destinations.get(row.to) > 1)
+        row.status = "collision";
+      else {
+        row.status = "change";
+        const id = Zotero.Tags.getID(row.from);
+        if (!id) throw new Error("similar-works-tags-changed");
+        row.itemIDs = [...(await Zotero.Tags.getTagItems(libraryID, id))].sort(
+          (a, b) => a - b,
+        );
+        for (const id of row.itemIDs) items.add(id);
+      }
+      this._check(libraryID, active);
+    }
+    this._assertAllowed(libraryID, sources);
+    return { sources, options, rows, itemCount: items.size };
+  },
+
+  async applyFormat(
+    libraryID,
+    plan,
+    active = () => true,
+    progress = (_done, _total) => {},
+  ) {
+    if (this._formatting.has(libraryID))
+      throw new Error("similar-works-tags-changed");
+    this._formatting.add(libraryID);
+    try {
+      const current = await this.planFormat(libraryID, plan.sources, active);
+      if (JSON.stringify(current) !== JSON.stringify(plan))
+        throw new Error("similar-works-tags-changed");
+      const changes = current.rows.filter((row) => row.status === "change");
+      let done = 0;
+      for (const row of changes) {
+        const id = Zotero.Tags.getID(row.from);
+        if (!id) throw new Error("similar-works-tags-changed");
+        const itemIDs = [
+          ...(await Zotero.Tags.getTagItems(libraryID, id)),
+        ].sort((a, b) => a - b);
+        const existing = new Set(await this.catalog(libraryID));
+        this._check(libraryID, active);
+        this._assertAllowed(libraryID, [row.from, row.to]);
+        if (
+          !existing.has(row.from) ||
+          existing.has(row.to) ||
+          JSON.stringify(this.namingOptions()) !==
+            JSON.stringify(current.options) ||
+          JSON.stringify(itemIDs) !== JSON.stringify(row.itemIDs)
+        )
+          throw new Error("similar-works-tags-changed");
+        await this._rename(libraryID, row.from, row.to, active);
+        progress(++done, changes.length);
+      }
+      return done;
+    } finally {
+      this._formatting.delete(libraryID);
+    }
   },
 
   open(win, libraryID) {
@@ -450,6 +630,7 @@ var SWTags = {
 
   stop() {
     this._stopped = true;
+    this._duplicateCache.clear();
     for (const dialog of this._dialogs) if (!dialog.closed) dialog.close();
     this._dialogs.clear();
   },

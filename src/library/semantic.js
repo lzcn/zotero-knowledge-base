@@ -96,6 +96,7 @@ var SWSemantic = {
 
   enable() {
     if (this._stopped) return;
+    const wasEnabled = this._enabled;
     clearTimeout(this._startupTimer);
     this._startupTimer = null;
     this._enabled = true;
@@ -105,6 +106,7 @@ var SWSemantic = {
     for (const key of this.corpus.docs.keys()) this.enqueue(key);
     if (!this._running && this._queue.length) this._pump();
     if (!this._running && !this._queue.length) this.status.state = "idle";
+    if (!wasEnabled && typeof SWTags !== "undefined") SWTags.refreshSemantic();
   },
 
   pause() {
@@ -310,52 +312,146 @@ var SWSemantic = {
   _tagVectors: new Map(),
   _tagRunning: Promise.resolve(),
 
-  tagSimilarity(item, names, active = () => true) {
+  tagEmbeddings(names, active = () => true) {
     const work = async () => {
-      const query = this.vectors.get(SWIndexer.docKey(item));
-      if (
-        !query ||
-        this.corpus.docs.get(SWIndexer.docKey(item))?.hash !== query.hash ||
-        !this._worker ||
-        this.status.state === "loading" ||
-        !this._enabled ||
-        this._stopped ||
-        !active()
-      )
-        return null;
+      if (!this._enabled || this._stopped || !active()) return null;
       const generation = this._generation;
-      const uniqueNames = [...new Set(names)];
-      // Keep frequently reused topics warm while browsing different papers.
-      for (const name of uniqueNames) {
+      const valid = () =>
+        !this._stopped &&
+        this._enabled &&
+        generation === this._generation &&
+        active();
+      const unique = [...new Set(names)];
+      const vectors = new Map();
+      const missing = [];
+      for (const name of unique) {
         const cached = this._tagVectors.get(name);
-        if (!cached) continue;
-        this._tagVectors.delete(name);
-        this._tagVectors.set(name, cached);
+        if (!cached) missing.push(name);
+        else {
+          vectors.set(name, cached);
+          this._tagVectors.delete(name);
+          this._tagVectors.set(name, cached);
+        }
       }
-      const missing = uniqueNames.filter((name) => !this._tagVectors.has(name));
       if (missing.length) {
-        const result = await this._encode(missing, active);
-        if (generation !== this._generation || this._stopped || !active())
-          return null;
-        missing.forEach((name, i) =>
-          this._tagVectors.set(name, result.vectors[i]),
-        );
-        // This is a bounded, rebuildable session cache, never another document index.
-        while (this._tagVectors.size > 512)
-          this._tagVectors.delete(this._tagVectors.keys().next().value);
+        // Initialize the shared engine, never enqueue or rebuild a paper.
+        if (!this._worker) {
+          const ownsStatus = () =>
+            generation === this._generation &&
+            this._enabled &&
+            !this._stopped &&
+            !this._running;
+          try {
+            await this._init();
+          } catch (error) {
+            if (ownsStatus()) {
+              this.status.state = "error";
+              this.status.error = String(error.message || error);
+              SWIndexer._reportStatus();
+            }
+            throw error;
+          }
+          if (ownsStatus()) {
+            this.status.state = "idle";
+            SWIndexer._reportStatus();
+          }
+        }
+        if (!valid()) return null;
+        for (let offset = 0; offset < missing.length; offset += 32) {
+          const batch = missing.slice(offset, offset + 32);
+          const result = await this._encode(
+            batch.map((name) => name.replace(/^#\s*/u, "")),
+            valid,
+          );
+          if (!valid()) return null;
+          batch.forEach((name, i) => {
+            vectors.set(name, result.vectors[i]);
+            this._tagVectors.set(name, result.vectors[i]);
+          });
+          while (this._tagVectors.size > 512)
+            this._tagVectors.delete(this._tagVectors.keys().next().value);
+          await swYield(0);
+          if (!valid()) return null;
+        }
       }
-      if (
-        !active() ||
-        this.corpus.docs.get(SWIndexer.docKey(item))?.hash !== query.hash
-      )
-        return null;
-      return names.map((name) =>
-        this.dot(query.vector, this._tagVectors.get(name)),
-      );
+      return valid() ? vectors : null;
     };
     const pending = this._tagRunning.then(work);
     this._tagRunning = pending.catch(() => null);
     return pending;
+  },
+
+  async tagSimilarity(item, names, active = () => true) {
+    const key = SWIndexer.docKey(item);
+    const query = this.vectors.get(key);
+    if (!query || this.corpus.docs.get(key)?.hash !== query.hash || !active())
+      return null;
+    const vectors = await this.tagEmbeddings(names, active);
+    if (!vectors || !active() || this.corpus.docs.get(key)?.hash !== query.hash)
+      return null;
+    return names.map((name) => this.dot(query.vector, vectors.get(name)));
+  },
+
+  tagAffinity(left, right) {
+    const a = this._tagVectors.get(left),
+      b = this._tagVectors.get(right);
+    return a && b ? this.dot(a, b) : null;
+  },
+
+  async tagRelations(names, active = () => true) {
+    const vectors = await this.tagEmbeddings(names, active);
+    if (!vectors || !active()) return [];
+    const postings = new Map(),
+      features = new Map();
+    let started = Date.now();
+    // Sparse dimension postings retrieve candidates; only a bounded shortlist
+    // receives an exact cosine. This avoids an all-pairs library scan.
+    for (const [name, vector] of vectors) {
+      const dimensions = [...vector]
+        .map((value, i) => [i * 2 + Number(value < 0), Math.abs(value)])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 24);
+      features.set(name, dimensions);
+      for (const [id, weight] of dimensions) {
+        if (!postings.has(id)) postings.set(id, []);
+        postings.get(id).push([name, weight]);
+      }
+      if (Date.now() - started > 6) {
+        await swYield(0);
+        started = Date.now();
+        if (!active() || this._stopped) return [];
+      }
+    }
+    const edges = [],
+      seen = new Set();
+    for (const [name, dimensions] of features) {
+      const scores = new Map();
+      for (const [id, weight] of dimensions)
+        for (const [other, value] of postings.get(id))
+          if (other !== name)
+            scores.set(other, (scores.get(other) || 0) + weight * value);
+      const shortlist = [...scores].sort((a, b) => b[1] - a[1]).slice(0, 48);
+      for (const [other] of shortlist) {
+        const pair = JSON.stringify([name, other].sort());
+        if (seen.has(pair)) continue;
+        seen.add(pair);
+        const score = this.dot(vectors.get(name), vectors.get(other));
+        if (score >= 0.84) edges.push({ left: name, right: other, score });
+      }
+      if (Date.now() - started > 6) {
+        await swYield(0);
+        started = Date.now();
+        if (!active() || this._stopped) return [];
+      }
+    }
+    return active() && !this._stopped
+      ? edges.sort(
+          (a, b) =>
+            b.score - a.score ||
+            a.left.localeCompare(b.left) ||
+            a.right.localeCompare(b.right),
+        )
+      : [];
   },
 
   chunks(title, abstract, body) {

@@ -15,10 +15,26 @@
     --template-control: var(--material-control, #282828);
   }
 }
-.template-manager {
+.template-window {
   background: var(--template-background);
   color: var(--template-foreground);
   padding: 16px;
+  min-height: 0;
+  gap: 12px;
+}
+.template-type-row {
+  gap: 8px;
+}
+.template-type-row > label {
+  margin-inline: 0;
+}
+.template-type-row menulist {
+  min-width: 10em;
+  margin-inline: 0;
+}
+.template-manager {
+  background: var(--template-background);
+  color: var(--template-foreground);
   gap: 16px;
   min-height: 0;
 }

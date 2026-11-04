@@ -300,7 +300,6 @@ editor-key-resolve = Use available ID
 pref-groups-heading = Groups
 pref-graph-label-length = Title length
 pref-graph-label-length-unit = characters
-pref-groups-help = First match wins.
 pref-add-group =
     .label = New group
 graph-group-tag = Choose tag
@@ -310,7 +309,7 @@ graph-group-remove = Remove group
 
 graph-global = Global Graph
 graph-local = Local Graph
-pref-graph-local-depth = Local graph depth
+pref-graph-local-depth = Depth
 
 manager-sort = Sort notes
 manager-sort-updated-desc = Recently modified
@@ -325,7 +324,7 @@ pref-graph-appearance = Graph
 
 pref-literature-template = Note Templates
 pref-template-choice =
-    .label = Use for new notes
+    .label = Use for this type
 template-none = No template
 pref-template-edit = Content (Markdown)
 pref-template-name = Name
@@ -371,7 +370,7 @@ manager-open-note = Open note
 manager-open-note-window = Open in New Window
 manager-copy-note-link = Copy Note Link
 
-pref-ui-style = Interface style
+pref-ui-style = Appearance
 
 text-tools-normalize = Normalize
 text-tools-find = Find
@@ -399,7 +398,7 @@ text-search-replaced-count = replaced $ matches
 settings-common = General
 settings-tags = Tags
 settings-similar = Similar Items
-settings-notes = Note System
+settings-notes = Notes
 
 
 section-notes = Notes
@@ -414,7 +413,7 @@ section-tags-existing = Existing
 section-tags-add-error = Could not add tags. Try again.
 section-tags-load-error = Could not load suggested tags. Select the item again.
 pref-template-manage =
-    .label = Manage Templates…
+    .label = Manage…
 
 template-empty = No templates yet
 
@@ -438,3 +437,37 @@ graph-items-empty = No strongly related parent items
 graph-cache-loading = Loading cached similarities…
 graph-item-stats = { $cards } items · { $links } connections
 graph-cache-unavailable = Cached similarities are unavailable
+
+excluded-placeholder =
+    .placeholder = @colored, reading*
+    .title = @colored excludes colored tags and * matches any text
+status-heading = Status
+vectors-label = Cache
+vector-ready = Ready
+vector-updating = Updating
+vector-error = Error
+note-counts = Notes { $total } · Literature { $literature } · Zettel { $zettel } · Thinking { $thinking } · Entity { $entity }
+pref-template-type =
+    .value = Note type
+pref-template-literature-option =
+    .label = Literature
+pref-template-zettel-option =
+    .label = Zettel
+pref-template-thinking-option =
+    .label = Thinking
+pref-template-entity-option =
+    .label = Entity
+
+
+settings-templates = Templates
+pref-template-literature =
+    .value = Literature
+pref-template-zettel =
+    .value = Zettel
+pref-template-thinking =
+    .value = Thinking
+pref-template-entity =
+    .value = Entity
+
+cache-progress =
+    .aria-label = Cache progress

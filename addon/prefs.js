@@ -29,3 +29,5 @@ pref("extensions.zotero.similar-works.indexDelayMs", 2000);
 pref("extensions.zotero.similar-works.minFulltextTerms", 25);
 pref("extensions.zotero.similar-works.requestMissingFulltext", false);
 pref("extensions.zotero.similar-works.excludedTags", "");
+pref("extensions.zotero.similar-works.tagNameStyle", "sentence");
+pref("extensions.zotero.similar-works.tagHashtag", false);

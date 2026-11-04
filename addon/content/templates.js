@@ -13,6 +13,8 @@ window.KnowledgeBaseTemplates = (() => {
     const error = doc.getElementById("knowledge-base-template-error");
     const remove = doc.getElementById("knowledge-base-template-delete");
     const use = doc.getElementById("knowledge-base-template-default");
+    const type = doc.getElementById("knowledge-base-template-type");
+    type.value = "literature";
     let selected = null;
     list.setAttribute("aria-label", api.loc("pref-literature-template"));
     const change = (run) => {
@@ -67,13 +69,13 @@ window.KnowledgeBaseTemplates = (() => {
       remove.disabled = !entry;
       name.value = entry?.name || "";
       body.value = entry?.body || "";
-      use.checked = !!entry && settings.selected === entry.id;
+      use.checked = !!entry && api.getNoteTemplate(type.value) === entry.id;
     };
     doc
       .getElementById("knowledge-base-template-new")
       .addEventListener("command", () =>
         change(() => {
-          selected = api.createLiteratureTemplate();
+          selected = api.createLiteratureTemplate(type.value);
           render();
           name.focus();
           name.select();
@@ -91,7 +93,15 @@ window.KnowledgeBaseTemplates = (() => {
       ),
     );
     use.addEventListener("command", () =>
-      change(() => api.setLiteratureTemplate(use.checked ? selected : null)),
+      change(() =>
+        api.setNoteTemplate(type.value, use.checked ? selected : null),
+      ),
+    );
+    type.addEventListener("command", () =>
+      change(() => {
+        selected = api.getNoteTemplate(type.value) || selected;
+        render();
+      }),
     );
     remove.addEventListener("command", () =>
       change(() => {
@@ -135,6 +145,34 @@ window.KnowledgeBaseTemplates = (() => {
       selected = api.getLiteratureTemplateSettings().selected;
       render();
     });
+    // Synchronize assignments without replacing an editor's active text field.
+    const observers = [
+      "literatureTemplates",
+      ...Array.from(type.querySelectorAll("menuitem"), (option) =>
+        option.getAttribute("value"),
+      )
+        .filter((value) => value !== "literature")
+        .map((value) => "templates." + value),
+    ].map((key) =>
+      Zotero.Prefs.registerObserver(
+        "extensions.zotero.knowledge-base." + key,
+        () =>
+          change(() => {
+            renderList();
+            use.checked =
+              !!selected && api.getNoteTemplate(type.value) === selected;
+          }),
+        true,
+      ),
+    );
+    doc.defaultView.addEventListener(
+      "unload",
+      () => {
+        for (const observer of observers)
+          Zotero.Prefs.unregisterObserver(observer);
+      },
+      { once: true },
+    );
   }
   return { bind };
 })();

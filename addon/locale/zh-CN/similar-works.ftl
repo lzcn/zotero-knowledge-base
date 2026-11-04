@@ -33,9 +33,9 @@ similar-works-tags-menu =
 similar-works-tags-search =
     .placeholder = 搜索已有标签…
     .aria-label = 搜索已有标签
-similar-works-tags-duplicates = 可能重复
-similar-works-tags-keep = 名称
-similar-works-tags-preview = 已选 { $tags } 个标签，涉及 { $count } 个条目
+similar-works-tags-duplicates = 整理相近标签
+similar-works-tags-keep = 保留名称
+similar-works-tags-preview = { $tags } 个标签 → 1 个 · { $count } 个条目
 similar-works-tags-close =
     .label = 关闭
 similar-works-tags-merged = 已将 { $count } 个标签统一为“{ $name }”。
@@ -50,7 +50,6 @@ similar-works-tags-invalid-name = 请输入有效名称（最多 255 字符）�
 
 similar-works-pref-excluded-tags =
     .value = 排除标签
-similar-works-pref-excluded-tags-help = 以逗号分隔，同时用于笔记和推荐标签。
 similar-works-tags-protected = 标签已被排除，请检查设置。
 
 similar-works-tags-select-all = 全选
@@ -101,7 +100,7 @@ similar-works-tags-window =
 
 similar-works-tags-name-column = 名称
 similar-works-tags-count-column = 条目数
-similar-works-tags-group-column = 匹配
+similar-works-tags-group-column = 相近标签
 similar-works-tags-match-name = 名称变体
 similar-works-tags-match-plural = 单复数
 similar-works-tags-match-abbreviation = 缩写
@@ -118,3 +117,38 @@ similar-works-evidence-empty = 尚未在可用文本中定位到共同表述。
 similar-works-evidence-failed = 依据未能加载，请重试。
 
 similar-works-pref-cache-ready = 已就绪 · { $count } 篇
+
+similar-works-pref-tag-style =
+    .value = 标签格式
+similar-works-pref-tag-sentence =
+    .label = 句首大写
+similar-works-pref-tag-title =
+    .label = 标题式
+similar-works-pref-tag-hashtag =
+    .label = 添加 # 前缀
+similar-works-tags-format-action =
+    .label = 格式化
+similar-works-tags-format-button =
+    .label = 格式化
+similar-works-tags-format-to = 格式化后
+similar-works-tags-format-preview = 修改 { $tags } 个标签，涉及 { $count } 个条目 · 跳过 { $skipped } 个
+similar-works-tags-format-change = 重命名
+similar-works-tags-format-unchanged = 无需修改
+similar-works-tags-format-structured = 保留结构
+similar-works-tags-format-invalid = 名称无效
+similar-works-tags-format-protected = 已排除
+similar-works-tags-format-collision = 名称冲突，请单独合并
+similar-works-tags-invalid-format = 请在设置中选择句首大写或标题式。
+similar-works-tags-formatted = 已格式化 { $count } 个标签。
+
+similar-works-tags-match-semantic = 语义相近
+similar-works-tags-semantic-preparing = 正在查找相近标签…
+similar-works-tags-semantic-unavailable = 当前仅匹配名称
+similar-works-tags-semantic-error = 语义匹配暂不可用：{ $message }
+
+similar-works-tags-review-group =
+    .label = 整理这组
+    .aria-label = 整理“{ $name }”这组标签
+similar-works-tags-review-semantic = 语义相近，请核对含义
+
+similar-works-tags-new-name = 新名称

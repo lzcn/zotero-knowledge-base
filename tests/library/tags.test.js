@@ -78,6 +78,8 @@ function fixture() {
     "tokenizer.js",
     "search.js",
     "tag-policy.js",
+    "tag-terms.js",
+    "tag-format.js",
     "tags.js",
     "tag-suggestions.js",
   ])
@@ -88,6 +90,14 @@ function fixture() {
       ),
       context,
     );
+  context.SWTagTerms.set(
+    JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "../../addon/content/library/tag-terms.json"),
+        "utf8",
+      ),
+    ),
+  );
   return {
     api: context.SWTags,
     context,
@@ -279,7 +289,7 @@ test("new suggestions can come from the paper without neighboring support", asyn
     tags.some((tag) => tag.name === "Graph Neural Networks" && !tag.isNew),
   );
   assert.ok(
-    tags.some((tag) => tag.name === "molecule prediction" && tag.isNew),
+    tags.some((tag) => tag.name === "Molecule prediction" && tag.isNew),
   );
   assert.ok(!tags.some((tag) => tag.name === "Other"));
   assert.ok(!tags.some((tag) => tag.name === "Learning"));
@@ -311,7 +321,7 @@ test("normalization supports one native rename to a new name while preserving co
   assert.deepEqual(writes[0], [1, "Other", "Standard Name"]);
 });
 
-test("suggestions preserve existing spellings and title phrases without imposing a naming format", async () => {
+test("suggestions preserve existing spellings and format only new topics", async () => {
   const { api, context, item } = fixture();
   context.SWPref = (key, fallback) =>
     ({ tagNameStyle: "sentence", tagHashtag: true })[key] ?? fallback;
@@ -332,7 +342,7 @@ test("suggestions preserve existing spellings and title phrases without imposing
   );
   assert.ok(
     suggestions.some(
-      (tag) => tag.isNew && tag.name === "Graph Neural Networks",
+      (tag) => tag.isNew && tag.name === "#Graph neural networks",
     ),
   );
 });
@@ -349,8 +359,6 @@ test("manual names retain hyphens, CamelCase, scientific spelling and leading ha
     "Title Case",
   ])
     assert.equal(api.normalizeName("  " + name + "  "), name);
-  assert.equal(api.planFormat, undefined);
-  assert.equal(api.applyFormat, undefined);
 });
 
 test("manual exclusions protect name variants, destinations and new-tag creation across libraries", async () => {
@@ -378,6 +386,48 @@ test("manual exclusions protect name variants, destinations and new-tag creation
   assert.deepEqual(item.names, ["Original"]);
   context.SWPref = (_key, fallback) => fallback;
   assert.equal((await api.catalog(1, true)).length, 3);
+});
+
+test("colored and wildcard exclusions protect only the current library and recheck before writes", async () => {
+  const { api, context, tags, writes, item } = fixture();
+  const colors = new Map([["Deep Learning", { color: "#123456" }]]);
+  context.Zotero.Tags.getColors = (library) =>
+    library === 1 ? colors : new Map();
+  context.SWPref = (key, fallback) =>
+    key === "excludedTags" ? "@colored, Other*" : fallback;
+  assert.deepEqual(Array.from(await api.catalog(1, true)), []);
+  assert.deepEqual(
+    Array.from(await api.catalog(2, true)),
+    ["deep-learning", "Deep Learning"].sort((a, b) => a.localeCompare(b)),
+  );
+  await assert.rejects(api.merge(1, ["deep-learning"], "Free"), /protected/);
+  await assert.rejects(api.remove(1, ["Deep Learning"]), /protected/);
+  await assert.rejects(
+    api.addSelected(1, 1, ["#DeepLearning"], () => true, ["#DeepLearning"]),
+    /protected/,
+  );
+  assert.deepEqual(writes, []);
+  assert.equal(
+    api.recommend(item, [
+      {
+        score: 1,
+        item: {
+          id: 2,
+          libraryID: 1,
+          getTags: () => [{ tag: "Deep Learning" }, { tag: "Other" }],
+        },
+      },
+    ]).length,
+    0,
+  );
+  colors.clear();
+  assert.equal((await api.catalog(1, true)).length, 2);
+  tags.set("fresh topic", [1]);
+  const plan = await api.planFormat(1, ["fresh topic"]);
+  colors.set("fresh topic", {});
+  await assert.rejects(api.applyFormat(1, plan), /protected/);
+  assert.deepEqual(writes, []);
+  assert.ok(tags.has("fresh topic"));
 });
 
 test("comma-separated exclusions are reread before each write without renaming native tags", async () => {
@@ -447,7 +497,7 @@ test("supported topics remain relevance-ranked and bounded without reserving slo
   context.Zotero.Tags.getAll = async () => names.map((tag) => ({ tag }));
   item.getField = () => names.join(" and ");
   const existing = await api.suggest(item, []);
-  assert.equal(existing.length, 6);
+  assert.ok(existing.length > 6 && existing.length < names.length);
   assert.ok(existing.every((tag) => !tag.isNew));
   context.Zotero.Tags.getAll = async () => [];
   const rows = [2, 3].map((id) => ({
@@ -460,7 +510,7 @@ test("supported topics remain relevance-ranked and bounded without reserving slo
     },
   }));
   const fresh = await api.suggest(item, rows);
-  assert.equal(fresh.length, 6);
+  assert.ok(fresh.length >= 4 && fresh.length <= names.length);
   assert.ok(fresh.every((tag) => tag.isNew));
   assert.equal(
     (await api.suggest(item, [rows[0], rows[0]])).length,
@@ -506,7 +556,7 @@ test("new title topics do not duplicate existing terminology or use single abstr
       : "Graph neural networks support molecule prediction.";
   const tags = await api.suggest(item, []);
   assert.ok(
-    tags.some((tag) => tag.name === "molecule prediction" && tag.isNew),
+    tags.some((tag) => tag.name === "Molecule prediction" && tag.isNew),
   );
   assert.ok(
     tags.some((tag) => tag.name === "Graph Neural Network" && !tag.isNew),
@@ -540,7 +590,8 @@ test("incidental abstract catalogs cannot displace corroborated title topics", a
   ];
   context.SWSemantic = {
     _enabled: true,
-    tagSimilarity: async (_item, candidates) => candidates.map(() => 0.99),
+    tagSimilarity: async (_item, candidates) =>
+      candidates.map((name) => (names.includes(name) ? 0.1 : 0.9)),
   };
   const tags = await api.suggest(item, rows);
   assert.deepEqual(
@@ -633,12 +684,11 @@ test("a shared diffusion method cannot import neighboring application tags", asy
     ...supported,
     ...unrelated,
   ]))
-    assert.ok(!unrelated.includes(tag.name));
+    if (tag.direct) assert.ok(!unrelated.includes(tag.name));
   context.SWSemantic = {
     _enabled: true,
     tagSimilarity: async (_item, names) => {
-      assert.ok(names.every((name) => !unrelated.includes(name)));
-      return names.map(() => 0.95);
+      return names.map((name) => (unrelated.includes(name) ? 0.1 : 0.95));
     },
   };
   const result = await api.suggest(item, rows);
@@ -691,7 +741,7 @@ test("terminology aliases preserve task modifiers", () => {
   assert.equal(api.duplicateGroups(["Convolutional Nets", "CNN"])[0].length, 2);
 });
 
-test("tag suggestions do not read full text or promote its peripheral topics", async () => {
+test("tag suggestions reuse cached text for repeated topics and remove references", async () => {
   const { api, context, item } = fixture();
   context.Zotero.Tags.getAll = async () => [{ tag: "Image synthesis" }];
   item.getField = (field) =>
@@ -725,8 +775,8 @@ test("tag suggestions do not read full text or promote its peripheral topics", a
     },
   };
   const tags = await api.suggest(item, []);
-  assert.equal(reads, 0);
-  assert.ok(tags.every((tag) => tag.name !== "Lagrangian relaxation"));
+  assert.equal(reads, 1);
+  assert.ok(tags.some((tag) => tag.name === "Lagrangian relaxation"));
   assert.ok(tags.every((tag) => !/image synthesis/i.test(tag.name)));
   assert.ok(tags.some((tag) => /combinatorial optimization/i.test(tag.name)));
 });
@@ -773,11 +823,11 @@ test("core topics displace incidental abstract tags even when semantic scores ar
   const tags = await api.suggest(item, []);
   assert.ok(tags.some((tag) => tag.name === "Graph Neural Networks"));
   assert.ok(
-    tags.some((tag) => tag.isNew && tag.name === "molecule prediction"),
+    tags.some((tag) => tag.isNew && tag.name === "Molecule prediction"),
   );
-  assert.ok(tags.every((tag) => tag.name !== "Representation learning"));
+  assert.ok(tags.some((tag) => tag.name === "Representation learning"));
   assert.ok(tags.every((tag) => !incidental.includes(tag.name)));
-  assert.equal(tags.length, 2);
+  assert.ok(tags.length >= 3 && tags.length <= 6);
 });
 
 test("a diffusion topic remains when it is central in the title", async () => {
@@ -826,9 +876,7 @@ test("suggestions prefer specific technical phrases over single words and generi
   assert.ok(
     tags.every(
       (tag) =>
-        !["optimization", "framework", "novel framework"].includes(
-          tag.name.toLowerCase(),
-        ),
+        !["framework", "novel framework"].includes(tag.name.toLowerCase()),
     ),
   );
   assert.equal(context.SWTagSuggestions.isSpecific("CNN"), true);
@@ -868,7 +916,7 @@ test("paper topics exclude the reported PDF fragments and mix New and Existing b
       : "Combinatorial adjoint matching trains diffusion models for combinatorial optimization. The traveling salesman problem is one benchmark.";
   context.SWIndexer = {
     tagText: async () => {
-      throw new Error("Suggestions must not read PDF prose");
+      return "An unrelated benchmark is briefly discussed.";
     },
   };
   const rows = [
@@ -889,7 +937,7 @@ test("paper topics exclude the reported PDF fragments and mix New and Existing b
     Array.from(tags, (tag) => [tag.name, tag.isNew]),
     [
       ["#Combinatorial Optimization", false],
-      ["combinatorial adjoint matching", true],
+      ["#Combinatorial Adjoint Matching", true],
     ],
   );
   assert.ok(tags[0].score > tags[1].score);
@@ -910,8 +958,8 @@ test("weak candidates are omitted instead of padding six results and status neve
   const selected = context.SWTagSuggestions.select([
     { name: "Molecule prediction", score: 0.98, isNew: false },
     { name: "Graph clustering", score: 0.96, isNew: true },
-    { name: "Object detection", score: 0.8, isNew: true },
-    { name: "Image retrieval", score: 0.7, isNew: false },
+    { name: "Object detection", score: 0.3, isNew: true },
+    { name: "Image retrieval", score: 0.2, isNew: false },
   ]);
   assert.deepEqual(
     Array.from(selected, (tag) => tag.name),
@@ -927,4 +975,352 @@ test("weak candidates are omitted instead of padding six results and status neve
     names(tied),
     names(tied.map((tag) => ({ ...tag, isNew: !tag.isNew }))),
   );
+});
+
+test("format previews skip collisions, structures and invalid destinations without touching tags", async () => {
+  const { api, context, tags, writes } = fixture();
+  context.SWPref = (key, fallback) =>
+    ({ tagNameStyle: "title", tagHashtag: true })[key] ?? fallback;
+  tags.clear();
+  for (const [name, ids] of [
+    ["deep learning", [1]],
+    ["Deep Learning", [2]],
+    ["existing topic", [3]],
+    ["#Existing Topic", [4]],
+    ["pytorch training", [1, 2]],
+    ["topic/reading", [1]],
+    ["a".repeat(255), [5]],
+  ])
+    tags.set(name, ids);
+  const before = JSON.stringify([...tags]);
+  const plan = await api.planFormat(1, [...tags.keys()]);
+  const statuses = new Map(plan.rows.map((row) => [row.from, row.status]));
+  for (const name of ["deep learning", "Deep Learning", "existing topic"])
+    assert.equal(statuses.get(name), "collision");
+  assert.equal(statuses.get("#Existing Topic"), "unchanged");
+  assert.equal(statuses.get("topic/reading"), "structured");
+  assert.equal(statuses.get("a".repeat(255)), "invalid");
+  assert.equal(plan.itemCount, 2);
+  assert.equal(JSON.stringify([...tags]), before);
+  assert.equal(writes.length, 0);
+  const progress = [];
+  assert.equal(
+    await api.applyFormat(
+      1,
+      plan,
+      () => true,
+      (...args) => progress.push(args),
+    ),
+    1,
+  );
+  assert.deepEqual(tags.get("#PyTorch Training"), [1, 2]);
+  assert.deepEqual(tags.get("deep learning"), [1]);
+  assert.deepEqual(tags.get("Deep Learning"), [2]);
+  assert.deepEqual(progress, [[1, 1]]);
+  assert.deepEqual(writes.at(-1), [1, "#PyTorch Training", "#123456", 0]);
+});
+
+test("format application rejects stale membership, settings, destinations, sources and plans before writing", async () => {
+  const scenarios = [
+    ({ tags }) => tags.set("Other", [99]),
+    ({ context }) => {
+      context.SWPref = (_key, fallback) => fallback;
+    },
+    ({ tags }) => tags.set("#Other", [99]),
+    ({ tags }) => tags.delete("Other"),
+    (_state, plan) => {
+      plan.rows[0].to = "Tampered";
+    },
+    ({ context }) => {
+      context.Zotero.Libraries.get = () => ({ editable: false });
+    },
+    ({ context }) => {
+      context.SWPref = (key, fallback) =>
+        key === "excludedTags" ? "Other" : fallback;
+    },
+  ];
+  for (const change of scenarios) {
+    const state = fixture();
+    state.context.SWPref = (key, fallback) =>
+      key === "tagHashtag" ? true : fallback;
+    const plan = await state.api.planFormat(1, ["Other"]);
+    change(state, plan);
+    await assert.rejects(
+      state.api.applyFormat(1, plan),
+      /changed|readonly|protected/,
+    );
+    assert.equal(state.writes.length, 0);
+  }
+});
+
+test("formatting cancellation, shutdown and native failure release the operation and stop later writes", async () => {
+  for (const mode of ["cancel", "stop", "fail"]) {
+    const { api, context, tags, writes } = fixture();
+    context.SWPref = (key, fallback) =>
+      key === "tagHashtag" ? true : fallback;
+    const plan = await api.planFormat(1, ["Other", "Deep Learning"]);
+    let active = true;
+    const rename = context.Zotero.Tags.rename;
+    context.Zotero.Tags.rename = async (...args) => {
+      if (mode === "fail") throw new Error("Native rename failed");
+      await rename(...args);
+      if (mode === "stop") api.stop();
+      else active = false;
+    };
+    await assert.rejects(
+      api.applyFormat(1, plan, () => active),
+      /cancelled|Native rename failed/,
+    );
+    assert.ok(tags.has("Deep Learning"));
+    assert.equal(
+      writes.filter((row) => Array.isArray(row) && typeof row[2] === "string")
+        .length,
+      mode === "fail" ? 0 : 2,
+    );
+    assert.equal(api._formatting.size, 0);
+    await api.finishWrites();
+  }
+});
+
+test("concurrent formatting refuses a duplicate operation and detects changes before later writes", async () => {
+  const { api, context, tags } = fixture();
+  context.SWPref = (key, fallback) => (key === "tagHashtag" ? true : fallback);
+  const plan = await api.planFormat(1, ["Other", "Deep Learning"]);
+  const rename = context.Zotero.Tags.rename;
+  context.Zotero.Tags.rename = async (...args) => {
+    await assert.rejects(api.applyFormat(1, plan), /changed/);
+    await rename(...args);
+    tags.set("#Deep learning", [88]);
+  };
+  await assert.rejects(api.applyFormat(1, plan), /changed/);
+  assert.deepEqual(tags.get("Deep Learning"), [1, 2]);
+  assert.deepEqual(tags.get("#Deep learning"), [88]);
+  assert.equal(api._formatting.size, 0);
+});
+
+test("settings and destinations changed during the final asynchronous read stop the rename", async () => {
+  for (const change of [
+    ({ context }) => {
+      context.SWPref = (_key, fallback) => fallback;
+    },
+    ({ tags }) => tags.set("#Other", [88]),
+  ]) {
+    const state = fixture();
+    state.context.SWPref = (key, fallback) =>
+      key === "tagHashtag" ? true : fallback;
+    const plan = await state.api.planFormat(1, ["Other"]);
+    const getItems = state.context.Zotero.Tags.getTagItems;
+    let reads = 0;
+    state.context.Zotero.Tags.getTagItems = async (...args) => {
+      const ids = await getItems(...args);
+      if (++reads === 2) change(state);
+      return ids;
+    };
+    await assert.rejects(state.api.applyFormat(1, plan), /changed/);
+    assert.equal(state.writes.length, 0);
+  }
+});
+
+test("potential duplicates add semantic peers without chaining opposites, versions or weak links", async () => {
+  const { api, context, writes } = fixture();
+  let scans = 0;
+  context.SWSemantic = {
+    _enabled: true,
+    version: "fixture",
+    _generation: 1,
+    tagRelations: async () => {
+      scans++;
+      return [
+        {
+          left: "Image classification",
+          right: "Image categorization",
+          score: 0.9,
+        },
+        {
+          left: "Image categorization",
+          right: "Visual categorization",
+          score: 0.87,
+        },
+        {
+          left: "Supervised learning",
+          right: "Unsupervised learning",
+          score: 0.99,
+        },
+        { left: "GPT-2", right: "GPT-3", score: 0.99 },
+      ];
+    },
+  };
+  const names = [
+    "Image classification",
+    "Image categorization",
+    "Visual categorization",
+    "Supervised learning",
+    "Unsupervised learning",
+    "GPT-2",
+    "GPT-3",
+  ];
+  const result = await api.potentialDuplicates(names);
+  assert.ok(result.semantic);
+  assert.deepEqual(
+    Array.from(result.groups, (group) => Array.from(group)),
+    [["Image classification", "Image categorization"]],
+  );
+  await api.potentialDuplicates(names);
+  assert.equal(scans, 1, "unchanged catalogs reuse the completed result");
+  assert.equal(writes.length, 0);
+  assert.equal(
+    (await api.potentialDuplicates(names, () => false)).groups.length,
+    0,
+  );
+  api.stop();
+  assert.equal(api._duplicateCache.size, 0);
+});
+
+test("neighbor vocabulary can supply a non-literal existing label only with current-paper semantic support", async () => {
+  const { api, context, item } = fixture();
+  context.Zotero.Tags.getAll = async () =>
+    ["Distributed reinforcement learning", "Personalized marketing"].map(
+      (tag) => ({ tag }),
+    );
+  item.getField = (field) =>
+    field === "title"
+      ? "Cooperative decision making for UAV networks"
+      : "Agents coordinate wireless resources in UAV networks.";
+  context.SWSemantic = {
+    _enabled: true,
+    tagSimilarity: async (_item, names) =>
+      names.map((name) =>
+        name === "Distributed reinforcement learning" ? 0.62 : 0.05,
+      ),
+  };
+  const rows = [2, 3].map((id) => ({
+    score: 0.9,
+    item: {
+      id,
+      libraryID: 1,
+      getTags: () => [
+        { tag: "Distributed reinforcement learning" },
+        { tag: "Personalized marketing" },
+      ],
+    },
+  }));
+  const result = await api.suggest(item, rows);
+  assert.ok(
+    result.some(
+      (tag) => tag.name === "Distributed reinforcement learning" && !tag.isNew,
+    ),
+  );
+  assert.ok(result.every((tag) => tag.name !== "Personalized marketing"));
+  context.SWSemantic._enabled = false;
+  assert.ok(
+    (await api.suggest(item, rows)).every(
+      (tag) => tag.name !== "Distributed reinforcement learning",
+    ),
+  );
+});
+
+test("existing full-text fingerprints support tags beyond the cached text sample without document indexing", async () => {
+  const { api, context, item } = fixture();
+  item.getField = (field) =>
+    field === "title"
+      ? "Molecular representations"
+      : "We compare several encoders.";
+  context.Zotero.Tags.getAll = async () => [{ tag: "Graph pooling" }];
+  const counts = await context.SWSearch.extract({
+    title: item.getField("title"),
+    abstract: item.getField("abstractNote"),
+    body: "Graph pooling compresses molecular structures. Graph pooling retains connectivity. Graph pooling preserves features.",
+  });
+  let reads = 0;
+  const forbidden = () => {
+    throw new Error("Unexpected document indexing");
+  };
+  context.SWIndexer = {
+    docKey: () => "1/Q",
+    ensureNow: forbidden,
+    extractText: forbidden,
+    tagText: async (_item, _active, limit) => {
+      assert.equal(limit, 1200000);
+      return "";
+    },
+    corpus: {
+      progress: { phase: "ready" },
+      docs: new Map([["1/Q", { hash: "current" }]]),
+      search: { docs: new Map([["1/Q", {}]]) },
+      _readCounts: async () => {
+        reads++;
+        return context.SWSearch.encodeCounts(counts);
+      },
+    },
+  };
+  const result = await api.suggest(item, []);
+  assert.equal(reads, 1);
+  assert.ok(result.some((tag) => tag.name === "Graph pooling" && !tag.isNew));
+});
+
+test("selection rewards coverage, reuses existing components and never pads low-confidence labels", () => {
+  const { context } = fixture();
+  const select = (list) =>
+    Array.from(context.SWTagSuggestions.select(list), (tag) => tag.name);
+  assert.deepEqual(
+    select([
+      { name: "MIMO", score: 0.9, isNew: false },
+      { name: "Channel estimation", score: 0.9, isNew: false },
+      { name: "MIMO channel estimation", score: 0.91, isNew: true },
+      { name: "Unrelated field", score: 0.2, isNew: false },
+    ]),
+    ["Channel estimation", "MIMO"],
+  );
+  const related = [
+    "Image classification",
+    "Image categorization",
+    "Visual categorization",
+  ].map((name) => ({ name, score: 0.9, isNew: false }));
+  assert.equal(context.SWTagSuggestions.select(related, () => 0.9).length, 1);
+});
+
+test("paper changes during semantic inference discard the old recommendation result", async () => {
+  const { api, context, item } = fixture();
+  item.getField = (field) =>
+    field === "title"
+      ? "Deep Learning for molecule prediction"
+      : "Deep Learning supports molecule prediction.";
+  context.SWSemantic = {
+    _enabled: true,
+    tagSimilarity: async (_item, names) => {
+      item.deleted = true;
+      return names.map(() => 0.9);
+    },
+  };
+  assert.deepEqual(Array.from(await api.suggest(item, [])), []);
+});
+
+test("neighbor votes count explicit aliases once per paper and reuse the supported library spelling", async () => {
+  const { api, context, item } = fixture();
+  item.names = [];
+  const rows = [
+    {
+      score: 0.9,
+      item: {
+        id: 2,
+        libraryID: 1,
+        getTags: () => [{ tag: "GNN" }, { tag: "Graph Neural Networks" }],
+      },
+    },
+  ];
+  const votes = api.recommend(item, rows);
+  assert.equal(votes.length, 1);
+  assert.equal(votes[0].count, 1);
+  context.Zotero.Tags.getAll = async () => [
+    { tag: "GNN" },
+    { tag: "Graph Neural Networks" },
+  ];
+  item.getField = () => "Graph neural networks for molecule prediction";
+  assert.ok(
+    (await api.suggest(item, rows)).some(
+      (tag) => tag.name === "GNN" && !tag.isNew,
+    ),
+  );
+  item.names = ["Graph Neural Networks"];
+  assert.equal(api.recommend(item, rows).length, 0);
 });

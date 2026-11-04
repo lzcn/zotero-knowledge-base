@@ -53,6 +53,8 @@ var libraryRuntime = (() => {
         "indexer",
         "semantic",
         "tag-policy",
+        "tag-terms",
+        "tag-format",
         "tags",
         "tag-suggestions",
         "retrieval-evidence",
@@ -68,6 +70,8 @@ var libraryRuntime = (() => {
       chrome = service.registerChrome(Services.io.newURI(SWHost.manifestURI), [
         ["content", "similar-works", SWHost.rootURI],
       ]);
+      if (stopped) return;
+      await scope.SWTagTerms.load(SWHost.rootURI);
       if (stopped) return;
       await scope.SWIndexer.start();
       if (stopped) return;
@@ -168,16 +172,48 @@ var libraryRuntime = (() => {
       if (!target || stopped || !active()) return [];
       const corpus = scope.SWIndexer.corpus;
       const key = scope.SWIndexer.docKey(target);
-      const method = Zotero.isMac ? "hybrid" : "text";
-      // Optional neighbor votes reuse saved results; tags never wait for a
-      // full-library index load or start model downloads.
-      const cached = await corpus.getRecommendations(key, true, method);
-      if (stopped || !active()) return [];
+      let method = Zotero.isMac ? "hybrid" : "text";
+      // Reuse saved results first. A cache miss searches existing fingerprints
+      // and document vectors; this path never calls ensureNow, enqueue or _build.
+      let cached = await corpus.getRecommendations(key, true, method);
+      if (!cached && method === "hybrid") {
+        cached = await corpus.getRecommendations(key, true, "text");
+        if (cached) method = "text";
+      }
+      const valid = () => !stopped && active();
+      if (!valid()) return [];
+      if (
+        !cached &&
+        corpus.progress?.phase === "ready" &&
+        corpus.search.docs.has(key)
+      ) {
+        const filter = (candidate) =>
+          candidate.startsWith(target.libraryID + "/");
+        if (scope.SWSemantic.ready && scope.SWSemantic.vectors.has(key)) {
+          cached = await scope.SWSemantic.recommend(
+            key,
+            100,
+            filter,
+            () => !valid(),
+          );
+          method = "hybrid";
+        } else {
+          cached = {
+            matches: await corpus.search.search(
+              key,
+              100,
+              filter,
+              () => !valid(),
+              () => scope.swYield(0),
+              () => {},
+            ),
+          };
+          method = "text";
+        }
+      }
+      if (!valid()) return [];
       const rows = cached
-        ? await scope.SWSection._resolveRows(
-            cached.matches.slice(0, 12),
-            method,
-          )
+        ? await scope.SWSection._resolveRows(cached.matches, method, valid)
         : [];
       await Zotero.Items.loadDataTypes(
         [target, ...rows.map((row) => row.item)],

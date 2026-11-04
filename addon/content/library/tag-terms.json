@@ -1,0 +1,142 @@
+{
+  "spellings": [
+    "PyTorch",
+    "TensorFlow",
+    "ImageNet",
+    "NumPy",
+    "SciPy",
+    "OpenCV",
+    "Python",
+    "MATLAB",
+    "Linux",
+    "Zotero",
+    "JavaScript",
+    "TypeScript",
+    "GitHub",
+    "OpenAI",
+    "LaTeX",
+    "BibTeX",
+    "macOS",
+    "iOS",
+    "arXiv",
+    "ResNet",
+    "DenseNet",
+    "EfficientNet",
+    "MobileNet",
+    "AlexNet",
+    "Bayesian",
+    "Gaussian",
+    "Markov",
+    "Fourier",
+    "Kalman",
+    "Poisson",
+    "Shannon",
+    "Lyapunov",
+    "BERT",
+    "GPT",
+    "LLM",
+    "LLMs",
+    "CNN",
+    "CNNs",
+    "GNN",
+    "GNNs",
+    "RNN",
+    "RNNs",
+    "LSTM",
+    "GRU",
+    "NLP",
+    "MIMO",
+    "OFDM",
+    "UAV",
+    "UAVs",
+    "Monte Carlo",
+    "kNN",
+    "mAP",
+    "mIoU",
+    "LoRa",
+    "LoRaWAN",
+    "pH",
+    "C++",
+    "C#"
+  ],
+  "aliases": [
+    {
+      "name": "convolutional neural network",
+      "forms": [
+        "cnn",
+        "cnns",
+        "convolutional neural networks",
+        "convolutional net",
+        "convolutional nets"
+      ]
+    },
+    {
+      "name": "generative adversarial network",
+      "forms": ["gan", "gans", "generative adversarial networks"]
+    },
+    {
+      "name": "graph neural network",
+      "forms": ["gnn", "gnns", "graph neural networks"]
+    },
+    {
+      "name": "recurrent neural network",
+      "forms": ["rnn", "rnns", "recurrent neural networks"]
+    },
+    {
+      "name": "graph convolutional network",
+      "forms": ["gcn", "gcns", "graph convolutional networks"]
+    },
+    {
+      "name": "multilayer perceptron",
+      "forms": ["mlp", "mlps", "multilayer perceptrons"]
+    },
+    {
+      "name": "support vector machine",
+      "forms": ["svm", "svms", "support vector machines"]
+    },
+    {
+      "name": "visual question answering",
+      "forms": ["vqa"]
+    },
+    {
+      "name": "natural language processing",
+      "forms": ["nlp"]
+    },
+    {
+      "name": "large language model",
+      "forms": ["llm", "llms", "large language models"]
+    },
+    {
+      "name": "deep reinforcement learning",
+      "forms": ["drl"]
+    },
+    {
+      "name": "multi agent reinforcement learning",
+      "forms": ["marl"]
+    },
+    {
+      "name": "wireless sensor network",
+      "forms": ["wsn", "wsns", "wireless sensor networks"]
+    },
+    {
+      "name": "unmanned aerial vehicle",
+      "forms": ["uav", "uavs", "unmanned aerial vehicles"]
+    },
+    {
+      "name": "neural network",
+      "forms": ["neural net", "neural networks"]
+    },
+    {
+      "name": "model",
+      "forms": ["models"]
+    },
+    {
+      "name": "machine",
+      "forms": ["machines"]
+    },
+    {
+      "name": "perceptron",
+      "forms": ["perceptrons"]
+    }
+  ]
+}

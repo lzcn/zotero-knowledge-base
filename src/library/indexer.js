@@ -466,7 +466,7 @@ var SWIndexer = {
   },
 
   /** @param {Zotero.Item} item */
-  async extractText(item, readCached = false) {
+  async extractText(item, readCached = false, maxBytes = 24000) {
     if (item.isRegularItem()) {
       var atts = [];
       try {
@@ -485,7 +485,7 @@ var SWIndexer = {
         }
       } catch (e) {}
       for (var att of atts.slice(0, 5)) {
-        var t = await this.attachmentText(att, readCached);
+        var t = await this.attachmentText(att, readCached, maxBytes);
         if (t) {
           return t;
         }
@@ -494,7 +494,8 @@ var SWIndexer = {
     }
     if (item.isAttachment()) {
       return (
-        (await this.attachmentText(item, readCached)) || this.metadataText(item)
+        (await this.attachmentText(item, readCached, maxBytes)) ||
+        this.metadataText(item)
       );
     }
     return null;
@@ -502,12 +503,13 @@ var SWIndexer = {
 
   // Read only the selected paper's existing Zotero cache, never index or OCR
   // on demand. Reuse the bounded sample until its indexed source changes.
-  async tagText(item, active = () => true) {
+  async tagText(item, active = () => true, maxBytes = 24000) {
     if (this._stopped || !active()) return "";
     const key = this.docKey(item);
     const source = this.corpus?.docs.get(key)?.hash;
     const version = JSON.stringify([
       source,
+      maxBytes,
       item.getField("title"),
       item.getField("abstractNote"),
     ]);
@@ -516,7 +518,7 @@ var SWIndexer = {
     const pendingKey = key + version;
     let work = this._tagTextPending.get(pendingKey);
     if (!work) {
-      work = this.extractText(item, true)
+      work = this.extractText(item, true, maxBytes)
         .then((info) => {
           const text = info && !info.weak ? info.content : "";
           if (
@@ -542,7 +544,7 @@ var SWIndexer = {
       : "";
   },
 
-  async attachmentText(att, readCached = false) {
+  async attachmentText(att, readCached = false, maxBytes = 24000) {
     try {
       if (att.deleted) return null;
       this._itemKeys.set(att.id, {
@@ -592,7 +594,7 @@ var SWIndexer = {
         return { content: "", hash, weak: false };
       }
       var buf = await IOUtils.read(path, {
-        maxBytes: readCached ? 24000 : SWPref("maxTextChars", 1200000),
+        maxBytes: readCached ? maxBytes : SWPref("maxTextChars", 1200000),
       });
       var content = new TextDecoder("utf-8").decode(buf);
       if (!content || content.trim().length < 40) {

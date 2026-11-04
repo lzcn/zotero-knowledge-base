@@ -148,7 +148,7 @@ async function loadEditor() {
     setDirty();
   }
   if (!zettelId) {
-    const body = args.prefillBody ?? api.getNewNoteBody();
+    const body = args.prefillBody ?? api.getNewNoteBody(noteType);
     $("knowledge-base-editor-body").value = body;
     if (body) setDirty();
   }
@@ -2354,7 +2354,7 @@ async function refreshNoteTags() {
   input.disabled = disabled;
   const list = document.getElementById("knowledge-base-own-tags");
   list.replaceChildren();
-  for (const tag of api.visibleNoteTags(own)) {
+  for (const tag of own.filter((tag) => tags.includes(tag))) {
     const button = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
       "button",

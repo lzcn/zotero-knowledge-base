@@ -804,3 +804,81 @@ test("native model validation streams the cached file without reading model byte
   assert.equal(hashed, 1);
   assert.equal(read, 0);
 });
+
+test("tag-only inference initializes the shared engine and preserves all requested vectors across cache eviction", async () => {
+  const { semantic } = fixture();
+  semantic._enabled = true;
+  let initialized = 0,
+    encoded = 0;
+  semantic._init = async () => {
+    initialized++;
+    semantic.status.state = "loading";
+    semantic._worker = {};
+  };
+  semantic.enqueue = () => {
+    throw new Error("Tag inference must not enqueue papers");
+  };
+  semantic._build = () => {
+    throw new Error("Tag inference must not rebuild papers");
+  };
+  const vector = new Float32Array(384);
+  vector[0] = 1;
+  semantic._encode = async (names) => {
+    encoded += names.length;
+    assert.ok(names.length <= 32);
+    return { vectors: names.map(() => vector) };
+  };
+  const names = Array.from({ length: 530 }, (_, i) => "Topic " + i);
+  const result = await semantic.tagEmbeddings(names);
+  assert.equal(initialized, 1);
+  assert.equal(
+    semantic.status.state,
+    "idle",
+    "Tag-only loading must not leave cache status busy",
+  );
+  assert.equal(result.size, 530);
+  assert.equal(semantic._tagVectors.size, 512);
+  await semantic.tagEmbeddings(names.slice(-4));
+  assert.equal(encoded, 530);
+  assert.equal(await semantic.tagEmbeddings(["Cancelled"], () => false), null);
+});
+
+test("semantic tag neighbors yield bounded candidate scans and cancel without producing stale groups", async () => {
+  const { semantic } = fixture();
+  const a = new Float32Array(384),
+    b = new Float32Array(384),
+    c = new Float32Array(384);
+  a[0] = 1;
+  b[0] = 0.95;
+  b[1] = Math.sqrt(1 - 0.95 ** 2);
+  c[2] = 1;
+  semantic.tagEmbeddings = async () =>
+    new Map([
+      ["Image classification", a],
+      ["Image categorization", b],
+      ["Wireless resources", c],
+    ]);
+  const result = await semantic.tagRelations([
+    "Image classification",
+    "Image categorization",
+    "Wireless resources",
+  ]);
+  assert.equal(result.length, 1);
+  assert.ok(result[0].score > 0.9);
+  assert.deepEqual(
+    Array.from(await semantic.tagRelations([], () => false)),
+    [],
+  );
+});
+
+test("tag-only initialization failure reports an error instead of indefinite cache loading", async () => {
+  const { semantic } = fixture();
+  semantic._enabled = true;
+  semantic._init = async () => {
+    semantic.status.state = "loading";
+    throw new Error("Model unavailable");
+  };
+  await assert.rejects(semantic.tagEmbeddings(["Topic"]), /Model unavailable/);
+  assert.equal(semantic.status.state, "error");
+  assert.equal(semantic.status.error, "Model unavailable");
+});

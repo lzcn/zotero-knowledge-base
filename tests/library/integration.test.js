@@ -155,6 +155,8 @@ function harness() {
     "corpus",
     "indexer",
     "tag-policy",
+    "tag-terms",
+    "tag-format",
     "tags",
     "tag-suggestions",
     "section",
@@ -167,6 +169,14 @@ function harness() {
       context,
     );
   }
+  context.SWTagTerms.set(
+    JSON.parse(
+      fs.readFileSync(
+        path.join(__dirname, "../../addon/content/library/tag-terms.json"),
+        "utf8",
+      ),
+    ),
+  );
   context.SWLibrarySources = {
     async scan(_cancelled, documentID = null) {
       return {
@@ -706,6 +716,13 @@ test("embedded module loads Zotero globals and closes SQLite on shutdown", async
   h.prefs.set("similar-works.backgroundIndexing", false);
   let closed = false;
   const blockers = new Set();
+  h.Zotero.File = {
+    getResourceAsync: async () =>
+      fs.readFileSync(
+        path.join(__dirname, "../../addon/content/library/tag-terms.json"),
+        "utf8",
+      ),
+  };
   h.Zotero.DataDirectory = { dir: "/data" };
   h.Zotero.DB.queryAsync = async () => [];
   h.Zotero.initializationPromise = Promise.resolve();
@@ -1034,6 +1051,13 @@ test("background status distinguishes pending scans, queued work, and idle index
   const h = harness();
   await h.SWIndexer.processItem(h.item(1, "spectral hashing"));
   const writes = [];
+  h.Zotero.File = {
+    getResourceAsync: async () =>
+      fs.readFileSync(
+        path.join(__dirname, "../../addon/content/library/tag-terms.json"),
+        "utf8",
+      ),
+  };
   h.Zotero.DataDirectory = { dir: "/data" };
   h.context.PathUtils = { join: (...parts) => parts.join("/") };
   h.IOUtils.makeDirectory = async () => {};
@@ -1251,7 +1275,7 @@ test("tag text reads a bounded existing cache once and invalidates with the sour
   let reads = 0;
   h.context.IOUtils.read = async (_path, options) => {
     reads++;
-    assert.equal(options.maxBytes, 24000);
+    assert.ok([24000, 1200000].includes(options.maxBytes));
     return new TextEncoder()
       .encode(h.files.get("/cache/" + attachment.key))
       .slice(0, options.maxBytes);
@@ -1265,9 +1289,18 @@ test("tag text reads a bounded existing cache once and invalidates with the sour
   assert.ok(a.length <= 24000);
   await h.SWIndexer.tagText(parent);
   assert.equal(reads, 1);
+  const full = await h.SWIndexer.tagText(parent, () => true, 1200000);
+  assert.ok(full.length > 24000);
+  assert.equal(
+    reads,
+    2,
+    "a prefix cache must not masquerade as full cached text",
+  );
+  await h.SWIndexer.tagText(parent, () => true, 1200000);
+  assert.equal(reads, 2);
   h.corpus.docs.set("1/KEY1", { hash: "v2", weak: false });
   await h.SWIndexer.tagText(parent);
-  assert.equal(reads, 2);
+  assert.equal(reads, 3);
   h.prefs.set("similar-works.requestMissingFulltext", true);
   h.files.clear();
   h.corpus.docs.set("1/KEY1", { hash: "v3", weak: true });

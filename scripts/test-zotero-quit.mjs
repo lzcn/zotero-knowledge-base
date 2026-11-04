@@ -19,6 +19,7 @@ const binary =
   process.env.ZOTERO_BINARY || "/Applications/Zotero.app/Contents/MacOS/zotero";
 await access(binary);
 const args = process.argv.slice(2);
+const settingsOnly = args.includes("--settings");
 const graphViewsOnly = args.includes("--graph-views");
 const noteTypesOnly = args.includes("--note-types");
 const readerToolbarOnly = args.includes("--reader-toolbar");
@@ -28,6 +29,7 @@ const metadataOnly = args.includes("--metadata");
 const viewsOnly = args.includes("--views");
 const retiredOnly = args.includes("--retired-features");
 const editingHost =
+  settingsOnly ||
   graphViewsOnly ||
   noteTypesOnly ||
   textToolsOnly ||
@@ -38,19 +40,21 @@ const editingHost =
     ? (
         await readFile(
           new URL(
-            graphViewsOnly
-              ? "./graph-views-host.mjs"
-              : noteTypesOnly
-                ? "./note-types-host.mjs"
-                : retiredOnly
-                  ? "./retired-features-host.mjs"
-                  : viewsOnly
-                    ? "./views-host.mjs"
-                    : metadataOnly
-                      ? "./metadata-host.mjs"
-                      : workbenchOnly
-                        ? "./workbench-host.mjs"
-                        : "./text-tools-host.mjs",
+            settingsOnly
+              ? "./settings-host.mjs"
+              : graphViewsOnly
+                ? "./graph-views-host.mjs"
+                : noteTypesOnly
+                  ? "./note-types-host.mjs"
+                  : retiredOnly
+                    ? "./retired-features-host.mjs"
+                    : viewsOnly
+                      ? "./views-host.mjs"
+                      : metadataOnly
+                        ? "./metadata-host.mjs"
+                        : workbenchOnly
+                          ? "./workbench-host.mjs"
+                          : "./text-tools-host.mjs",
             import.meta.url,
           ),
           "utf8",
@@ -65,6 +69,7 @@ const templatesOnly = args.includes("--templates");
 const linksOnly = args.includes("--links");
 const relationsOnly = args.includes("--relations");
 const connectionsOnly =
+  settingsOnly ||
   args.includes("--retired-features") ||
   linksOnly ||
   relationsOnly ||
@@ -275,7 +280,7 @@ function runQuitTest() {
         setTimeout(run, 250);
         return;
       }
-      if (${graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
+      if (${settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
         const test = ${editingHost || "null"};
         restarting = await IOUtils.exists(${JSON.stringify(marker)});
         await test({Zotero, ChromeUtils, IOUtils, PathUtils, Services, Components, setTimeout,
@@ -3185,7 +3190,11 @@ try {
     clearTimeout(restartTimeout);
     if (restarted.exitCode === null) restarted.kill("SIGKILL");
   }
-  if (retiredOnly)
+  if (settingsOnly)
+    console.log(
+      "PASS Real Zotero minimal Settings, per-type templates, shared tag placeholder, vector progress, note counts and restart.",
+    );
+  else if (retiredOnly)
     console.log(
       "PASS Real Zotero retired AI and lexical suggestions remain unavailable; manual links, source notes, hierarchy, templates, credentials and legacy settings survive native/Markdown navigation and restart.",
     );

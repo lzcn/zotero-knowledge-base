@@ -9,20 +9,24 @@ import { getTagRevision, notifyDataChange } from "./events";
 import { SWTagPolicy } from "../library/tag-policy.js";
 
 const EXCLUDED_TAGS = "extensions.zotero.similar-works.excludedTags";
-let excludedValue: string | undefined;
-let excludedKeys = new Set<string>();
 let exclusionsObserver:
   | ReturnType<typeof Zotero.Prefs.registerObserver>
   | undefined;
 
 /** Hide excluded labels without removing native tags or inherited associations. */
-export function visibleNoteTags(tags: string[]): string[] {
+export function visibleNoteTags(
+  tags: string[],
+  libraryID: number | null = null,
+): string[] {
   const value = String(Zotero.Prefs.get(EXCLUDED_TAGS, true) || "");
-  if (value !== excludedValue) {
-    excludedValue = value;
-    excludedKeys = SWTagPolicy.excludedKeys(value);
+  const rules = SWTagPolicy.exclusions(value);
+  if (rules.colored) {
+    const library = libraryID ?? Zotero.Libraries.userLibraryID;
+    if (library)
+      for (const name of Zotero.Tags.getColors(library).keys())
+        rules.keys.add(SWTagPolicy.key(name));
   }
-  return SWTagPolicy.visible(tags, excludedKeys);
+  return SWTagPolicy.visible(tags, rules);
 }
 
 export function initTagExclusions(): void {
@@ -44,9 +48,30 @@ export function stopTagExclusions(): void {
 
 /** Settings needs the tag vocabulary, without building graph edges or reading note bodies. */
 export async function getGraphTags(): Promise<string[]> {
-  return visibleNoteTags([...(await getTagIndex()).keys()]).sort((a, b) =>
-    a.localeCompare(b),
+  const index = await getTagIndex();
+  const tags = [...index.keys()];
+  if (!SWTagPolicy.exclusions(Zotero.Prefs.get(EXCLUDED_TAGS, true)).colored)
+    return visibleNoteTags(tags).sort((a, b) => a.localeCompare(b));
+  const rows = await getAll<{ card_id: string; library_id: number }>(
+    "SELECT card_id, library_id FROM card_notes",
   );
+  const libraries = new Map(rows.map((row) => [row.card_id, row.library_id]));
+  const visible = new Map(
+    [...new Set([Zotero.Libraries.userLibraryID, ...libraries.values()])].map(
+      (library) => [library, new Set(visibleNoteTags(tags, library))],
+    ),
+  );
+  return tags
+    .filter((tag) =>
+      index
+        .get(tag)!
+        .some((id) =>
+          visible
+            .get(libraries.get(id) ?? Zotero.Libraries.userLibraryID)!
+            .has(tag),
+        ),
+    )
+    .sort((a, b) => a.localeCompare(b));
 }
 
 const tagIndexes = new Map<
@@ -319,10 +344,13 @@ export async function getEffectiveNoteTags(
     );
   }
   const tags = await loadNativeTags(notes, inherit);
-  return visibleNoteTags([
-    ...new Set([
-      ...notes.flatMap((item) => tags.get(item) || []),
-      ...(await getOwnNoteTags(noteID, cardID)),
-    ]),
-  ]);
+  return visibleNoteTags(
+    [
+      ...new Set([
+        ...notes.flatMap((item) => tags.get(item) || []),
+        ...(await getOwnNoteTags(noteID, cardID)),
+      ]),
+    ],
+    note.libraryID,
+  );
 }
