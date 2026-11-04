@@ -22,43 +22,6 @@ let graphView = "all";
 let cachedNotes;
 let notesDirty = true;
 let dataRevision = 0;
-let itemWork;
-let itemCache = { stamp: "", edges: [] };
-let loadingItems = false;
-function stopItemWork() {
-  itemWork?.worker.terminate();
-  itemWork?.resolve(null);
-  itemWork = undefined;
-}
-function compareItems(documents) {
-  return new Promise((resolve, reject) => {
-    const worker = new window.Worker(
-      "chrome://knowledge-base/content/item-graph-worker.js",
-    );
-    itemWork = { worker, resolve };
-    const finish = () => {
-      worker.terminate();
-      if (itemWork?.worker === worker) itemWork = undefined;
-    };
-    worker.onmessage = (event) => {
-      const data = /** @type {MessageEvent} */ (event).data;
-      finish();
-      if (data.error) reject(new Error(data.error));
-      else resolve(data.edges);
-    };
-    worker.onerror = (event) => {
-      event.preventDefault();
-      finish();
-      reject(new Error(event.message));
-    };
-    try {
-      worker.postMessage({ documents });
-    } catch (error) {
-      finish();
-      reject(error);
-    }
-  });
-}
 let centerId = /** @type {{ centerId?: string }} */ (window.arguments[0] || {})
   .centerId;
 let selectedId = centerId;
@@ -78,6 +41,8 @@ let rendererStyle = "";
 let canvasEdges = [];
 let resizeObserver;
 let matchedNodes = new Set();
+let searchQuery;
+let relatedNodes = new Set();
 let paintLabels = new Map();
 
 let layoutNodes = [];
@@ -93,6 +58,7 @@ let refreshTimer;
 let unsubscribe;
 let unsubscribeOptions;
 let layoutKey = "";
+let layoutRevision = 0;
 let simulation;
 let hoveredId;
 let viewMoved = false;
@@ -108,63 +74,28 @@ function run(fn) {
   Promise.resolve()
     .then(fn)
     .catch((error) => {
-      $("graph-error").textContent =
-        error.message === "graph-cache-unavailable"
-          ? api.loc("graph-cache-unavailable")
-          : String(error.message || error);
+      $("graph-error").textContent = String(error.message || error);
     });
 }
 async function refresh() {
   const version = ++refreshVersion;
-  stopItemWork();
-  const view = graphView;
   const revision = dataRevision;
   const active = () => !window.closed && version === refreshVersion;
-  loadingItems = view === "items";
-  if (loadingItems && graph.nodes.some((node) => node.kind === "card")) {
-    graph = { nodes: [], edges: [] };
-    graphNodes = new Map();
-    render();
-  }
-  const next =
-    view === "items"
-      ? { nodes: await api.getParentItems(active), edges: [] }
-      : await api.getGraph();
+  const next = await api.getGraph();
   if (!active()) return;
-  if (view !== "items") {
-    cachedNotes = next;
-    notesDirty = revision !== dataRevision;
-  }
+  cachedNotes = next;
+  notesDirty = revision !== dataRevision;
   graph = next;
   graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
   $("graph-error").textContent = "";
   render();
-  if (view !== "items") return;
-  try {
-    const snapshot = await api.getItemGraphSnapshot(
-      next.nodes.map((node) => node.id.slice(5)),
-      active,
-    );
-    if (!snapshot || !active()) return;
-    const edges =
-      itemCache.stamp === snapshot.stamp
-        ? itemCache.edges
-        : await compareItems(snapshot.documents);
-    if (!edges || !active()) return;
-    itemCache = { stamp: snapshot.stamp, edges };
-    graph.edges = edges;
-  } finally {
-    if (active()) {
-      loadingItems = false;
-      render();
-    }
-  }
 }
+
 function visibleGraph() {
   const options = api.getGraphOptions();
   const data = filterGraph(graph, {
     noteType:
-      graphView === "all" || graphView === "items"
+      graphView === "all"
         ? undefined
         : /** @type {import("../modules/note-types").NoteType} */ (graphView),
     includeUnresolved: true,
@@ -322,13 +253,17 @@ function updateLabels() {
     });
   }
   let count = 0;
-  const focusedNodes = labelNodes.filter(
-    (node) => node.id === hoveredId || node.id === selectedId,
-  );
-  for (const node of [
-    ...focusedNodes,
-    ...labelNodes.filter((node) => !focusedNodes.includes(node)),
-  ]) {
+  const priorities = [[], [], []];
+  for (const node of labelNodes) {
+    const priority =
+      node.id === hoveredId || node.id === selectedId
+        ? 0
+        : matchedNodes.has(node.id) || relatedNodes.has(node.id)
+          ? 1
+          : 2;
+    priorities[priority].push(node);
+  }
+  for (const node of priorities.flat()) {
     const view = nodeViews.get(node.id);
     if (!view) continue;
     const { group, dot, ring, label } = view;
@@ -430,53 +365,23 @@ function fit() {
     );
   else applyTransform();
 }
+function resetLayout() {
+  simulation?.stop();
+  layoutNodes = [];
+  savedPositions.clear();
+  layoutKey = "";
+  scopeChanged = true;
+  viewMoved = false;
+}
 function render() {
-  const items = graphView === "items";
-  $("graph-legend-cards").hidden = items;
-  $("graph-legend-items").hidden = !items;
-  $("graph-legend-unresolved").hidden = items;
-  for (const id of ["graph-outline", "graph-references"])
-    document.getElementById(id).hidden = items;
-  $("graph-search").placeholder = api.loc(
-    items ? "graph-search-items" : "graph-search",
-  );
-  $("graph-empty").textContent = api.loc(
-    loadingItems
-      ? "graph-cache-loading"
-      : items
-        ? "graph-items-empty"
-        : "graph-empty",
-  );
-  $("graph-canvas").setAttribute("aria-busy", String(loadingItems));
+  searchQuery = undefined;
   const data = visibleGraph();
   visibleData = data;
+  inspectedNode = undefined;
   syncScope();
-  const legend = $("graph-groups-legend");
-  legend.replaceChildren();
-  const groups = new Map(
-    data.nodes
-      .filter((node) => node.group)
-      .map((node) => [node.group, node.color]),
-  );
-  legend.hidden = !groups.size;
-  for (const [tag, color] of groups) {
-    const label = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "span",
-    );
-    label.className = "graph-group-legend";
-    const swatch = document.createElementNS(
-      "http://www.w3.org/1999/xhtml",
-      "span",
-    );
-    swatch.className = "graph-group-swatch";
-    swatch.style.backgroundColor = color;
-    label.append(swatch, document.createTextNode(tag));
-    legend.append(label);
-  }
   const nextKey = JSON.stringify([
-    graph.nodes.map((node) => [node.id, node.group]),
-    graph.edges.map(({ source, target, kind }) => [source, target, kind]),
+    data.nodes.map((node) => [node.id, node.group]),
+    data.edges.map(({ source, target, kind }) => [source, target, kind]),
     centerId,
     centerId ? localDepth : null,
   ]);
@@ -495,7 +400,7 @@ function render() {
   simulation = createAsyncGraphLayout(data, savedPositions, !retainLayout);
   const nodes = simulation.nodes();
   const paint = $("graph-paint");
-  paint.hidden = nodes.length < 400;
+  paint.hidden = nodes.length + data.edges.length < 400;
   if (paint.hidden) {
     canvasRenderer?.dispose();
     canvasRenderer = undefined;
@@ -521,6 +426,7 @@ function render() {
   const edges = data.edges.map((edge) => ({ ...edge }));
   const svg = $("graph-svg");
   const { width, height } = size();
+  svg.dataset.layoutRevision = String(++layoutRevision);
   svg.dataset.renderer = canvasRenderer?.backend || "svg";
   svg.dataset.layoutState = retainLayout ? "settled" : "running";
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -559,7 +465,7 @@ function render() {
     };
     const line = svgElement("path", {
       class: `graph-edge ${edge.kind}`,
-      "marker-end": edge.kind !== "similarity" ? "url(#graph-arrow)" : "",
+      "marker-end": edge.kind === "parent" ? "url(#graph-arrow)" : "",
     });
     const title = svgElement("title");
     title.textContent = edge.context || edge.ref;
@@ -696,27 +602,25 @@ function render() {
   if (firstLayout) fit();
   else applyTransform();
   $("graph-empty").hidden = nodes.length > 0;
-  $("graph-stats").textContent = api.loc(
-    items ? "graph-item-stats" : "graph-stats",
-    {
-      cards: nodes.filter((node) => node.kind === (items ? "item" : "card"))
-        .length,
-      links: edges.length,
-    },
-  );
+  $("graph-stats").textContent = api.loc("graph-stats", {
+    cards: nodes.filter((node) => node.kind === "card").length,
+    links: edges.length,
+  });
   select(selectedId);
 }
 function highlight() {
   const focusId = hoveredId || selectedId;
   const query = $("graph-search").value.trim().toLowerCase();
-  const matched = new Set();
-  for (const node of layoutNodes) {
-    if (
-      query &&
-      `${node.title} ${node.id} ${node.snippet}`.toLowerCase().includes(query)
-    )
-      matched.add(node.id);
-  }
+  const matched = query === searchQuery ? matchedNodes : new Set();
+  if (query !== searchQuery)
+    for (const node of layoutNodes) {
+      if (
+        query &&
+        `${node.title} ${node.id} ${node.snippet}`.toLowerCase().includes(query)
+      )
+        matched.add(node.id);
+    }
+  searchQuery = query;
   matchedNodes = matched;
   const active = !!focusId || !!query;
   for (const [id, element] of nodeElements) {
@@ -724,17 +628,24 @@ function highlight() {
     element.classList.toggle("highlighted", matched.has(id));
     element.classList.toggle("hovered", id === hoveredId);
   }
+  relatedNodes = new Set();
   for (const { edge, line } of renderedEdges) {
     const connected = focusId
       ? edge.source.id === focusId || edge.target.id === focusId
       : matched.has(edge.source.id) || matched.has(edge.target.id);
+    if (connected) {
+      relatedNodes.add(edge.source.id);
+      relatedNodes.add(edge.target.id);
+    }
     line.classList.toggle("highlighted", active && connected);
     if (edge.kind !== "similarity")
       line.setAttribute(
         "marker-end",
         connected && active
           ? "url(#graph-arrow-highlighted)"
-          : "url(#graph-arrow)",
+          : edge.kind === "parent"
+            ? "url(#graph-arrow)"
+            : "",
       );
   }
   const activeNode = nodeElements.get(focusId);
@@ -743,6 +654,7 @@ function highlight() {
   updateLabels();
   drawCanvas();
 }
+let inspectedNode;
 function select(id) {
   selectedId = id;
   syncScope();
@@ -750,6 +662,7 @@ function select(id) {
   if (!node || !nodeElements.has(id)) {
     selectedId = undefined;
     syncScope();
+    inspectedNode = undefined;
     $("graph-selection").hidden = true;
     highlight();
     return;
@@ -759,6 +672,8 @@ function select(id) {
   );
   highlight();
   $("graph-selection").hidden = false;
+  if (inspectedNode === node) return;
+  inspectedNode = node;
   $("graph-node-title").textContent = node.title;
   window.ZoteroKnowledgeBaseMarkdown.tags(
     $("graph-node-tags"),
@@ -778,23 +693,10 @@ function select(id) {
     $("graph-node-snippet"),
     node.snippet,
   );
-  if (node.kind === "item" && node.itemKey) {
-    api
-      .getItemSummary(node.itemKey, node.libraryID)
-      .then((item) => {
-        if (item && selectedId === id && !window.closed)
-          return window.ZoteroKnowledgeBaseMarkdown.source(
-            $("graph-node-snippet"),
-            item,
-            api,
-          );
-      })
-      .catch((error) => window.Zotero.logError(error));
-  }
   api
     .prepareMarkdown(node.snippet)
     .then(() => {
-      if (!window.closed && selectedId === id && node.kind !== "item")
+      if (!window.closed && selectedId === id)
         window.ZoteroKnowledgeBaseMarkdown.render(
           $("graph-node-snippet"),
           node.snippet,
@@ -802,11 +704,7 @@ function select(id) {
     })
     .catch((error) => window.Zotero.logError(error));
   const openLabel = api.loc(
-    node.kind === "unresolved"
-      ? "manager-unresolved"
-      : node.kind === "card"
-        ? "graph-open-card"
-        : "graph-open-item",
+    node.kind === "unresolved" ? "manager-unresolved" : "graph-open-card",
   );
   $("graph-node-open").setAttribute("data-kind", node.kind);
   $("graph-node-open").setAttribute("label", openLabel);
@@ -825,7 +723,6 @@ function select(id) {
     "children",
     "manager-outgoing",
     "manager-backlinks",
-    "graph-similar-items",
   ]) {
     const section = document.createElementNS(
       "http://www.w3.org/1999/xhtml",
@@ -868,14 +765,6 @@ function select(id) {
         peer.reference,
       );
     else row.textContent = peer.title;
-    if (edge.kind === "similarity" && peer.citation) {
-      const context = document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "small",
-      );
-      context.textContent = peer.citation;
-      row.appendChild(context);
-    }
     row.dataset.nodeId = peerId;
     row.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") select(peerId);
@@ -885,11 +774,9 @@ function select(id) {
         ? edge.source === id
           ? "children"
           : "parent"
-        : edge.kind === "similarity"
-          ? "graph-similar-items"
-          : edge.source === id
-            ? "manager-outgoing"
-            : "manager-backlinks";
+        : edge.source === id
+          ? "manager-outgoing"
+          : "manager-backlinks";
     const group = groups.get(key);
     group.section.hidden = false;
     group.peers.appendChild(row);
@@ -899,8 +786,6 @@ function select(id) {
 async function openNode(node) {
   if (!node) return;
   if (node.kind === "card") api.openEditor({ zettelId: node.id });
-  else if (node.kind === "item")
-    await api.selectItem(node.itemKey, node.libraryID);
   else api.openManager({ unresolvedRef: node.title });
 }
 window.ZoteroKnowledgeBase_showGraph = (id) => {
@@ -919,9 +804,6 @@ async function load() {
   const labels = {
     "graph-connections-title": "graph-connections",
     "graph-empty": "graph-empty",
-    "graph-legend-cards": "graph-legend-cards",
-    "graph-legend-items": "graph-legend-items",
-    "graph-legend-unresolved": "graph-legend-unresolved",
   };
   for (const [id, key] of Object.entries(labels))
     $(
@@ -952,6 +834,8 @@ async function load() {
         document.getElementById(id)
       );
       control.setAttribute("label", api.loc(id));
+      if (name !== "hideIsolated")
+        control.setAttribute("tooltiptext", api.loc(id + "-hint"));
       control.checked = options[name];
     }
   };
@@ -961,23 +845,18 @@ async function load() {
   for (const option of view.options) {
     const value = option.getAttribute("value");
     option.textContent = api.loc(
-      value === "all"
-        ? "graph-all"
-        : value === "items"
-          ? "graph-parent-items"
-          : "note-type-" + value,
+      value === "all" ? "graph-all" : "note-type-" + value,
     );
   }
   view.addEventListener("change", () => {
+    resetLayout();
     graphView = view.value;
     centerId = undefined;
     selectedId = undefined;
     scopeChanged = true;
     viewMoved = false;
-    if (graphView !== "items" && cachedNotes && !notesDirty) {
+    if (cachedNotes && !notesDirty) {
       ++refreshVersion;
-      stopItemWork();
-      loadingItems = false;
       graph = cachedNotes;
       graphNodes = new Map(graph.nodes.map((node) => [node.id, node]));
       render();
@@ -1002,8 +881,13 @@ async function load() {
     api,
   );
   $("graph-search").placeholder = api.loc("graph-search");
+  $("graph-search").setAttribute("aria-label", api.loc("graph-search"));
+  $("graph-svg").setAttribute("aria-label", api.loc("graph-title"));
   $("graph-fit").addEventListener("click", fit);
-  $("graph-refresh").addEventListener("click", () => run(refresh));
+  $("graph-refresh").addEventListener("click", () => {
+    resetLayout();
+    run(refresh);
+  });
   $("graph-node-open").addEventListener("click", () =>
     run(() => openNode(graphNodes.get(selectedId))),
   );
@@ -1221,6 +1105,7 @@ async function load() {
       if (centerId) viewMoved = false;
     }
     syncOptions();
+    resetLayout();
     run(render);
   });
   await refresh();
@@ -1241,7 +1126,6 @@ window.addEventListener("unload", () => {
   drag = null;
   d3Select($("graph-svg")).on(".zoom", null);
   refreshVersion++;
-  stopItemWork();
   unsubscribe?.();
   unsubscribeOptions?.();
   clearTimeout(refreshTimer);

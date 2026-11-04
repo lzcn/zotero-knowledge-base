@@ -3200,7 +3200,7 @@ try {
     );
   else if (graphViewsOnly)
     console.log(
-      "PASS Real Zotero note-type graph views, strict cached parent-item similarities, worker reuse, clean relationship titles, cancellation, local scope and restart.",
+      "PASS Real Zotero note-type graphs, fresh relationship layouts, compact controls, clean relationship titles, local scope and restart.",
     );
   else if (viewsOnly)
     console.log(

@@ -1,4 +1,4 @@
-/** Graph type views and parent similarities, using disposable Zotero data only. */
+/** Graph type views, relationship filters and fresh layouts, using disposable Zotero data only. */
 export default async function graphViewsHost({
   Zotero,
   IOUtils,
@@ -81,6 +81,20 @@ export default async function graphViewsHost({
       );
     state = { papers, ids, types };
   }
+  const paper = await Zotero.Items.getByLibraryAndKeyAsync(
+    state.papers[0].libraryID,
+    state.papers[0].key,
+  );
+  paper.addTag("Remote sensing");
+  await paper.saveTx();
+  await Zotero.DB.executeTransaction(() =>
+    Zotero.Tags.setColor(paper.libraryID, "Remote sensing", "#3478f6", 0),
+  );
+  assert(
+    (await api.getGraph()).nodes.find((node) => node.id === state.ids[0])
+      .color === "#3478f6",
+    "Graph did not inherit the paper's topic color",
+  );
   api.setGraphOption("hideIsolated", false);
   api.openGraph();
   const graph = await wait(
@@ -143,7 +157,7 @@ export default async function graphViewsHost({
   assert(
     [...doc.getElementById("graph-view").options]
       .map((option) => option.value)
-      .join() === "all,literature,zettel,thinking,entity,items",
+      .join() === "all,literature,zettel,thinking,entity",
     "Graph type choices are incomplete",
   );
   const choose = async (type, kind, count) => {
@@ -219,88 +233,109 @@ export default async function graphViewsHost({
     "Relationship titles still show gray inline identifiers",
   );
   await shot("graph-clean-links");
-  await wait(() => {
-    const status = api.getLibraryStatus();
-    return status?.indexedItems >= 4 && status.queuedItems === 0;
-  }, "The reusable item cache did not finish indexing the fixture papers");
-  const keys = state.papers
-    .slice(0, 3)
-    .map((paper) => paper.libraryID + "/" + paper.key);
-  let snapshot = await api.getItemGraphSnapshot(keys, () => true);
-  for (let i = 0; i < 20; i++) {
-    await pause(150);
-    const next = await api.getItemGraphSnapshot(keys, () => true);
-    if (next.stamp === snapshot.stamp) break;
-    snapshot = next;
-  }
-  let workers = 0;
-  const NativeWorker = graph.Worker;
-  graph.Worker = function (url, ...args) {
-    if (url.includes("item-graph-worker")) workers++;
-    return new NativeWorker(url, ...args);
-  };
-  await choose("items", "item", 3);
   assert(
-    doc.getElementById("graph-outline").hidden &&
-      doc.getElementById("graph-references").hidden,
-    "Note relationship controls leaked into the parent graph",
+    !doc.getElementById("graph-legend"),
+    "The footer legend should be absent",
   );
   assert(
-    doc.querySelectorAll(".graph-edge.similarity").length === 1 &&
-      [...doc.querySelectorAll(".graph-edge.similarity")].every(
-        (edge) => !edge.getAttribute("marker-end"),
-      ),
-    "Parent graph did not keep exactly the strong undirected pair",
+    doc.getElementById("graph-outline").getAttribute("label") ===
+      api.loc("graph-outline"),
+    "Structure label is missing",
   );
-  assert(workers === 1, "Parent similarities did not run in their Worker");
+  const revision = () =>
+    Number(doc.getElementById("graph-svg").dataset.layoutRevision);
+  let before = revision();
+  api.setGraphOption("references", false);
+  await wait(
+    () => revision() > before && !doc.querySelector(".graph-edge.link"),
+    "References did not produce a fresh layout",
+  );
+  before = revision();
+  api.setGraphOption("references", true);
+  await wait(
+    () => revision() > before && doc.querySelector(".graph-edge.link"),
+    "References did not return after redrawing",
+  );
+  before = revision();
+  await choose("entity", "card", 1);
+  assert(revision() > before, "Changing type did not redraw the graph");
   api.setGraphOption("hideIsolated", true);
   await wait(
-    () => doc.querySelectorAll(".graph-node.item").length === 2,
-    "Isolated parent items were not hidden",
-  );
-  await shot("graph-parent-items");
-  doc
-    .querySelector(".graph-node.item")
-    .dispatchEvent(new graph.MouseEvent("click", { bubbles: true }));
-  assert(
-    doc.querySelector('[data-relation="graph-similar-items"] li'),
-    "Paper connections are not grouped as Similar Items",
-  );
-  doc
-    .getElementById("graph-local")
-    .dispatchEvent(new graph.MouseEvent("click"));
-  assert(
-    doc.getElementById("graph-svg").dataset.scope === "local" &&
-      doc.getElementById("graph-view").value === "items",
-    "Local scope replaced the Parent Items view",
-  );
-  doc
-    .getElementById("graph-global")
-    .dispatchEvent(new graph.MouseEvent("click"));
-  await choose("all", "card", 4);
-  await choose("items", "item", 2);
-  assert(
-    workers === 1,
-    "Unchanged item graph recalculated instead of reusing its edges",
-  );
-  const view = doc.getElementById("graph-view");
-  view.value = "items";
-  view.dispatchEvent(new graph.Event("change"));
-  view.value = "entity";
-  view.dispatchEvent(new graph.Event("change"));
-  await wait(
-    () =>
-      doc.querySelectorAll(".graph-node.card").length === 0 &&
-      doc.getElementById("graph-canvas").getAttribute("aria-busy") === "false",
-    "A stale parent refresh replaced the selected note-type view",
+    () => !doc.querySelector(".graph-node.card"),
+    "Isolated entity was not hidden",
   );
   api.setGraphOption("hideIsolated", false);
   await wait(
     () => doc.querySelectorAll(".graph-node.card").length === 1,
-    "Entity view did not restore its isolated note",
+    "Entity did not return after redrawing",
   );
   await shot("graph-final-entity");
-  graph.Worker = NativeWorker;
+  // Render a representative graph without writing hundreds of fixture notes.
+  if (screenshots) {
+    const originalGraph = api.getGraph;
+    const topics = [
+      "Change detection",
+      "Temporal features",
+      "Remote sensing",
+      "Representation learning",
+      "Building datasets",
+      "Attention mechanisms",
+    ];
+    const nodes = Array.from({ length: 300 }, (_, i) => ({
+      id: "preview-" + i,
+      kind: "card",
+      noteType: state.types[i % 4],
+      color: ["#6387b7", "#76a18a", "#aa8aaf"][i % 3],
+      tags: [topics[i % topics.length]],
+      title: topics[i % topics.length] + (i < topics.length ? "" : " · " + i),
+      snippet:
+        "A focused note with manually organized structure and explicit references.",
+    }));
+    const edges = nodes.slice(1).flatMap((node, i) => [
+      {
+        source: nodes[Math.floor(i / 5)].id,
+        target: node.id,
+        kind: i % 4 === 0 ? "parent" : "link",
+        ref: node.id,
+        context: "",
+      },
+      ...(i % 2 === 0
+        ? [
+            {
+              source: node.id,
+              target: nodes[(i * 7 + 11) % nodes.length].id,
+              kind: "link",
+              ref: "",
+              context: "",
+            },
+          ]
+        : []),
+    ]);
+    try {
+      api.getGraph = async () => ({ nodes, edges });
+      await choose("all", "card", 4);
+      doc
+        .getElementById("graph-refresh")
+        .dispatchEvent(new graph.MouseEvent("click", { bubbles: true }));
+      await wait(
+        () => doc.querySelectorAll(".graph-node.card").length === 300,
+        "Representative graph did not load",
+      );
+      doc
+        .querySelector('[data-node-id="preview-0"]')
+        .dispatchEvent(new graph.MouseEvent("click", { bubbles: true }));
+      await shot("graph-overview");
+      assert(
+        ["webgl2", "canvas"].includes(
+          doc.getElementById("graph-svg").dataset.renderer,
+        ),
+        "Dense graph did not use batched rendering",
+      );
+    } finally {
+      api.getGraph = originalGraph;
+    }
+  }
+
   await IOUtils.writeUTF8(
     marker,
     JSON.stringify({ connectionsOnly: true, ...state }),

@@ -140,15 +140,13 @@ graph-refresh = 刷新
 graph-focus = 聚焦此节点
 graph-open = 打开
 graph-create = 创建卡片
-graph-connections = 链接与反向链接
+graph-connections = 关系
 graph-search = 搜索笔记…
 graph-hint = 单击选择，双击打开。
 graph-empty = 没有匹配的笔记
 graph-stats = { $cards } 篇笔记 · { $links } 条连接
 graph-kind-card = 笔记
 graph-kind-unresolved = 待创建的卡片
-graph-legend-cards = ● 笔记 · 实线：父子层级 · 虚线：卡片链接
-graph-legend-unresolved = ○ 待创建的卡片
 
 section-load-error = 加载失败，请重新选择条目。
 
@@ -185,9 +183,9 @@ graph-hierarchy = 层级
 
 graph-links = 笔记链接
 
-graph-outgoing = 链接到
+graph-outgoing = 引用
 
-graph-backlinks = 反向链接
+graph-backlinks = 被引用
 
 graph-open-card = 编辑笔记
 
@@ -231,7 +229,7 @@ health-restore = 恢复原记录
 health-read-only = 此文献库为只读。
 editor-format-native = 富文本
 editor-format-markdown = Markdown
-graph-outline = 层级
+graph-outline = 结构
 graph-references = 引用
 graph-hide-isolated = 隐藏孤立节点
 
@@ -401,16 +399,6 @@ manager-view-entity = 实体
 menu-open-native-note = 在知识库中打开
 
 graph-view = 图谱视图
-graph-parent-items = 父条目
-graph-kind-item = 父条目
-graph-open-item = 打开条目
-graph-legend-items = ● 父条目 · 相似关系
-graph-similar-items = 相似条目
-graph-search-items = 搜索父条目…
-graph-items-empty = 暂无高相关度的父条目
-graph-cache-loading = 正在读取相似度缓存…
-graph-item-stats = { $cards } 个条目 · { $links } 条连接
-graph-cache-unavailable = 相似度缓存暂不可用
 
 excluded-placeholder =
     .placeholder = @colored, 待读*
@@ -445,3 +433,6 @@ pref-template-entity =
 
 cache-progress =
     .aria-label = 缓存进度
+
+graph-outline-hint = 你手动整理的父子关系。
+graph-references-hint = 笔记正文中的引用。

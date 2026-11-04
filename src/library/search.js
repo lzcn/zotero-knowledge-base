@@ -314,10 +314,10 @@ var SWSearch = (() => {
     return data;
   }
   class Vector {
-    constructor(pairs) {
-      this.ids = new Uint32Array(pairs.map((p) => p[0]));
-      this.weights = new Float64Array(pairs.map((p) => p[1]));
-      this.length = pairs.length;
+    constructor(pairs, weights = null) {
+      this.ids = weights ? pairs : new Uint32Array(pairs.map((p) => p[0]));
+      this.weights = weights || new Float64Array(pairs.map((p) => p[1]));
+      this.length = this.ids.length;
     }
     *[Symbol.iterator]() {
       for (let i = 0; i < this.length; i++)
@@ -334,24 +334,27 @@ var SWSearch = (() => {
     }
   }
   function decodeSignature(data) {
-    const bytes = new Uint8Array(data),
-      view = new DataView(bytes.buffer),
-      vector = [];
-    let sum = 0,
-      previous = -1;
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data),
+      view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (bytes.length % 6 || bytes.length > SIGNATURE_SIZE * 6)
       throw new Error("Invalid signature");
-    for (let i = 0; i < bytes.length; i += 6) {
-      const id = view.getUint32(i, true),
-        weight = view.getUint16(i + 4, true) / 65535;
+    const ids = new Uint32Array(bytes.length / 6),
+      weights = new Float64Array(ids.length);
+    let sum = 0,
+      previous = -1;
+    for (let i = 0; i < ids.length; i++) {
+      const id = view.getUint32(i * 6, true),
+        weight = view.getUint16(i * 6 + 4, true) / 65535;
       if (id <= previous || !weight)
         throw new Error("Invalid signature feature");
       previous = id;
-      vector.push([id, weight]);
+      ids[i] = id;
+      weights[i] = weight;
       sum += weight * weight;
     }
     const norm = Math.sqrt(sum);
-    return new Vector(vector.map(([id, w]) => [id, w / norm]));
+    for (let i = 0; i < weights.length; i++) weights[i] /= norm;
+    return new Vector(ids, weights);
   }
   function cosine(a, b) {
     let i = 0,
@@ -635,7 +638,9 @@ var SWSearch = (() => {
         titleIds: new Set(fieldsOf(counts)[0].keys()),
         fieldVectors: this.fieldVectors(counts),
         vector: signature
-          ? decodeSignature(signature)
+          ? signature instanceof Vector
+            ? signature
+            : decodeSignature(signature)
           : this.fingerprint(counts),
         simhash: sim ? new Uint32Array(sim) : simhash(counts),
       };
@@ -676,7 +681,8 @@ var SWSearch = (() => {
           ) / Math.max(1, n) || 1,
       );
       const vectors = new Map();
-      let i = 0;
+      let i = 0,
+        sliceStarted = Date.now();
       for (const doc of this.docs.values()) {
         if (cancelled() || this.changes !== startingChanges) return false;
         const counts = decodeCounts(await loadCounts(doc));
@@ -684,8 +690,10 @@ var SWSearch = (() => {
           vector: generator.fingerprint(counts),
           fieldVectors: generator.fieldVectors(counts),
         });
-        if (++i % 5 === 0) {
+        // Yield by elapsed work, not library size; short batches need no timer.
+        if (++i % 5 === 0 && (i === 5 || Date.now() - sliceStarted >= 6)) {
           await pause();
+          sliceStarted = Date.now();
           if (cancelled() || this.changes !== startingChanges) return false;
         }
       }
@@ -697,8 +705,12 @@ var SWSearch = (() => {
         staged.docs.set(doc.key, next);
         staged.byID.set(doc.id, next);
         staged._post(next, true);
-        if (++built % 5 === 0) {
+        if (
+          ++built % 5 === 0 &&
+          (built === 5 || Date.now() - sliceStarted >= 6)
+        ) {
           await pause();
+          sliceStarted = Date.now();
           if (cancelled() || this.changes !== startingChanges) return false;
         }
       }

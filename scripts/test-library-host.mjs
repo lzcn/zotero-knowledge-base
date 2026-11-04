@@ -360,7 +360,7 @@ startup = async function(data) {
           if(!box.width || !box.height || view.getComputedStyle(control).visibility==='hidden')continue;
           const native=control.namespaceURI==='http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul';
           const text=(control.getAttribute('label') || control.textContent || '').trim();
-          if(!text && !control.getAttribute('aria-label') && !control.getAttribute('tooltiptext') && !control.getAttribute('title') && !control.getAttribute('image') && control.localName!=='menulist')throw new Error('Unnamed control: '+control.id);
+          if(!text && !control.getAttribute('aria-label') && !control.getAttribute('tooltiptext') && !control.getAttribute('title') && !control.getAttribute('image') && control.localName!=='menulist')throw new Error('Unnamed control: '+control.outerHTML.slice(0,300));
           const label=native && control.shadowRoot?.querySelector('.button-text, .toolbarbutton-text, .menulist-label, .checkbox-label');
           if(label && text) {
             const bounds=label.getBoundingClientRect();
@@ -401,7 +401,10 @@ startup = async function(data) {
             await new Promise(resolve => setTimeout(resolve,100));
           }
         }
-        for(const root of window.document.querySelectorAll('.plugin-preferences, #tag-manager, .sw-list'))auditUI(window,root);
+        for(const root of window.document.querySelectorAll('.plugin-preferences, #tag-manager, .sw-list')) {
+          await window.document.l10n?.translateFragment(root);
+          auditUI(window,root);
+        }
         const folder = ${JSON.stringify(process.env.SW_HOST_SCREENSHOTS || "")};
         if (!folder) return;
         await IOUtils.makeDirectory(folder, {ignoreExisting:true});
@@ -1033,7 +1036,11 @@ startup = async function(data) {
         await semantic._build(SWScope.SWIndexer.docKey(diffusionPaper));
         const semanticTags = await SWScope.SWTags.suggest(diffusionPaper,[{item:diffusionNeighbor,score:0.8}]);
         if (semanticTags.some(tag=>unsupportedTopics.includes(tag.name)) || !semanticTags.some(tag=>tag.isNew)) throw new Error("Native MiniLM tag ranking lost topic evidence");
-        await semantic.saveRecommendations(queryKey, true, hybrid.matches, hybrid.snapshot);
+        // Faster background inference can finish additional vectors after the
+        // earlier ranking. Cache only a ranking from the completed vector set.
+        await semantic._running;
+        const latestHybrid = await semantic.recommend(queryKey, 10, key => key.startsWith(item.libraryID + "/"));
+        await semantic.saveRecommendations(queryKey, true, latestHybrid.matches, latestHybrid.snapshot);
         if (!semantic.recommendationsFresh(semantic.getRecommendations(queryKey,true),queryKey)) throw new Error("Hybrid host cache is stale immediately after retrieval");
         const hybridBody = doc.createElementNS("http://www.w3.org/1999/xhtml","div");
         doc.documentElement.appendChild(hybridBody);
@@ -1185,7 +1192,7 @@ startup = async function(data) {
       if (corpus._db || SWScope.SWSection._registered || SWScope.SWSection._preferencePane || doc.getElementById("similar-works-organize-tags") || SWScope.SWTags._dialogs.size)
         throw new Error("Shutdown leaked resources");
       result.ok = true;
-    } catch (error) { result.error = String(error) + "\\n" + error.stack; }
+    } catch (error) { result.error = String(error) + "\\n" + error?.stack; }
     Zotero.HTTP.request = request;
     await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify(result));
     Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);

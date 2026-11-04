@@ -238,10 +238,5 @@ export interface GraphElements {
   "graph-node-open": HTMLElementTagNameMap["button"];
   "graph-connections-title": HTMLElementTagNameMap["html"];
   "graph-connections": HTMLElementTagNameMap["div"];
-  "graph-legend": HTMLElementTagNameMap["footer"];
-  "graph-legend-cards": HTMLElementTagNameMap["span"];
-  "graph-legend-items": HTMLElementTagNameMap["span"];
-  "graph-legend-unresolved": HTMLElementTagNameMap["span"];
-  "graph-groups-legend": HTMLElementTagNameMap["span"];
   "graph-error": HTMLElementTagNameMap["span"];
 }

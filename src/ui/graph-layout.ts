@@ -31,14 +31,45 @@ export function createGraphLayout(
       neighbors.get(id)!.add(peer);
     }
   }
+  const structure = new Map<string, number>();
+  for (const edge of graph.edges)
+    if (edge.kind === "parent") {
+      structure.set(edge.source, (structure.get(edge.source) || 0) + 1);
+      structure.set(edge.target, (structure.get(edge.target) || 0) + 1);
+    }
+  const parents = new Map<string, string>();
+  const children = new Map<string, string[]>();
+  for (const edge of graph.edges)
+    if (edge.kind === "parent") {
+      parents.set(edge.target, edge.source);
+      if (!children.has(edge.source)) children.set(edge.source, []);
+      children.get(edge.source)!.push(edge.target);
+    }
+  const depth = new Map<string, number>();
+  const queue = graph.nodes
+    .filter((node) => structure.has(node.id) && !parents.has(node.id))
+    .map((node) => node.id);
+  for (const id of queue) depth.set(id, 0);
+  for (let at = 0; at < queue.length; at++) {
+    for (const child of children.get(queue[at]) || []) {
+      if (depth.has(child)) continue;
+      depth.set(child, depth.get(queue[at])! + 1);
+      queue.push(child);
+    }
+  }
+  const middleDepth =
+    [...depth.values()].reduce((sum, value) => sum + value, 0) /
+    Math.max(1, depth.size);
   const nodes: LayoutNode[] = graph.nodes.map(
     (node) =>
       ({
         ...node,
         ...positions.get(node.id),
         radius: Math.min(
-          16,
-          6 + 2 * Math.sqrt(neighbors.get(node.id)?.size || 0),
+          13,
+          6 +
+            1.5 * Math.sqrt(structure.get(node.id) || 0) +
+            0.7 * Math.sqrt(neighbors.get(node.id)?.size || 0),
         ),
       }) as LayoutNode,
   );
@@ -65,9 +96,10 @@ export function createGraphLayout(
       "link",
       forceLink<LayoutNode, (typeof links)[number]>(links)
         .id((node) => node.id)
-        .distance((edge) => (edge.kind === "parent" ? 100 : 80)),
+        .distance((edge) => (edge.kind === "parent" ? 90 : 150))
+        .strength((edge) => (edge.kind === "parent" ? 0.8 : 0.12)),
     )
-    .force("charge", forceManyBody().strength(-240).distanceMax(900))
+    .force("charge", forceManyBody().strength(-180).distanceMax(900))
     .force(
       "x",
       forceX<LayoutNode>((node) => centers.get(node.group)?.x || 0).strength(
@@ -76,8 +108,12 @@ export function createGraphLayout(
     )
     .force(
       "y",
-      forceY<LayoutNode>((node) => centers.get(node.group)?.y || 0).strength(
-        (node) => (node.group ? 0.08 : 0.025),
+      forceY<LayoutNode>(
+        (node) =>
+          (centers.get(node.group)?.y || 0) +
+          (depth.has(node.id) ? (depth.get(node.id)! - middleDepth) * 110 : 0),
+      ).strength((node) =>
+        depth.has(node.id) ? 0.18 : node.group ? 0.08 : 0.025,
       ),
     )
     .force(

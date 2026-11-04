@@ -214,92 +214,113 @@ window.ZoteroKnowledgeBaseMarkdown = {
   },
 };
 
-window.KnowledgeBasePanels = {
-  /** @param {HTMLElement} handle @param {HTMLElement} pane @param {"manager" | "graph"} name @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
-  attach(handle, pane, name, api) {
-    let value = api.getPanelWidth(name);
-    let dragging = false;
-    let shield = null;
-    const reset = () => {
-      apply(name === "manager" ? 28 : 26);
-      api.setPanelWidth(name, value);
-    };
-    handle.classList.add("panel-splitter");
-    handle.tabIndex = 0;
-    handle.setAttribute("role", "separator");
-    handle.setAttribute("aria-orientation", "vertical");
-    handle.setAttribute("aria-label", api.loc("panel-resize"));
-    handle.setAttribute("aria-valuemin", "18");
-    handle.setAttribute("aria-valuemax", "55");
-    const apply = (next) => {
-      value = Math.max(18, Math.min(55, next));
-      pane.style.flexBasis = `${value}%`;
-      handle.setAttribute("aria-valuenow", String(Math.round(value)));
-      window.dispatchEvent(new window.Event("resize"));
-    };
-    const move = (event) => {
-      if (!dragging) return;
-      const rect = handle.parentElement.getBoundingClientRect();
-      if (!rect.width) return;
-      apply(
-        ((name === "graph"
-          ? rect.right - event.clientX
-          : event.clientX - rect.left) /
-          rect.width) *
-          100,
+window.KnowledgeBasePanels = (() => {
+  const bindings = new WeakMap();
+  return {
+    /** @param {HTMLElement} handle @param {HTMLElement} pane @param {"manager" | "graph"} name @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
+    attach(handle, pane, name, api) {
+      bindings.get(handle)?.();
+      const events = new window.AbortController();
+      const options = { signal: events.signal };
+      let resizeFrame = 0;
+      let value = api.getPanelWidth(name);
+      let dragging = false;
+      let shield = null;
+      const reset = () => {
+        apply(name === "manager" ? 28 : 26);
+        api.setPanelWidth(name, value);
+      };
+      handle.classList.add("panel-splitter");
+      handle.tabIndex = 0;
+      handle.setAttribute("role", "separator");
+      handle.setAttribute("aria-orientation", "vertical");
+      handle.setAttribute("aria-label", api.loc("panel-resize"));
+      handle.setAttribute("aria-valuemin", "18");
+      handle.setAttribute("aria-valuemax", "55");
+      const apply = (next) => {
+        value = Math.max(18, Math.min(55, next));
+        pane.style.flexBasis = `${value}%`;
+        handle.setAttribute("aria-valuenow", String(Math.round(value)));
+        if (!window.requestAnimationFrame)
+          window.dispatchEvent(new window.Event("resize"));
+        else if (!resizeFrame)
+          resizeFrame = window.requestAnimationFrame(() => {
+            resizeFrame = 0;
+            window.dispatchEvent(new window.Event("resize"));
+          });
+      };
+      const move = (event) => {
+        if (!dragging) return;
+        const rect = handle.parentElement.getBoundingClientRect();
+        if (!rect.width) return;
+        apply(
+          ((name === "graph"
+            ? rect.right - event.clientX
+            : event.clientX - rect.left) /
+            rect.width) *
+            100,
+        );
+        event.preventDefault();
+      };
+      const stop = () => {
+        if (!dragging) return;
+        dragging = false;
+        shield?.remove();
+        shield = null;
+        document.documentElement.classList.remove("resizing-panels");
+        apply(Math.round(value));
+        api.setPanelWidth(name, value);
+      };
+      handle.addEventListener(
+        "pointerdown",
+        (event) => {
+          if (event.button || dragging) return;
+          dragging = true;
+          // Cover embedded editors so dragging across their documents keeps working.
+          shield = document.createElementNS(
+            "http://www.w3.org/1999/xhtml",
+            "div",
+          );
+          shield.className = "panel-drag-shield";
+          handle.parentElement.appendChild(shield);
+          document.documentElement.classList.add("resizing-panels");
+          event.preventDefault();
+        },
+        options,
       );
-      event.preventDefault();
-    };
-    const stop = () => {
-      if (!dragging) return;
-      dragging = false;
-      shield?.remove();
-      shield = null;
-      document.documentElement.classList.remove("resizing-panels");
-      apply(Math.round(value));
-      api.setPanelWidth(name, value);
-    };
-    handle.addEventListener("pointerdown", (event) => {
-      if (event.button || dragging) return;
-      dragging = true;
-      // Cover embedded editors so dragging across their documents keeps working.
-      shield = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-      shield.className = "panel-drag-shield";
-      handle.parentElement.appendChild(shield);
-      document.documentElement.classList.add("resizing-panels");
-      event.preventDefault();
-    });
-    handle.addEventListener("dblclick", reset);
-    handle.addEventListener("keydown", (event) => {
-      if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
-      event.preventDefault();
-      apply(
-        event.key === "Home"
-          ? name === "manager"
-            ? 28
-            : 26
-          : value +
-              (event.key === "ArrowRight" ? 2 : -2) *
-                (name === "graph" ? -1 : 1),
+      handle.addEventListener("dblclick", reset, options);
+      handle.addEventListener(
+        "keydown",
+        (event) => {
+          if (!["ArrowLeft", "ArrowRight", "Home"].includes(event.key)) return;
+          event.preventDefault();
+          apply(
+            event.key === "Home"
+              ? name === "manager"
+                ? 28
+                : 26
+              : value +
+                  (event.key === "ArrowRight" ? 2 : -2) *
+                    (name === "graph" ? -1 : 1),
+          );
+          api.setPanelWidth(name, value);
+        },
+        options,
       );
-      api.setPanelWidth(name, value);
-    });
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", stop);
-    window.addEventListener("pointercancel", stop);
-    window.addEventListener("blur", stop);
-    window.addEventListener(
-      "unload",
-      () => {
+      window.addEventListener("pointermove", move, options);
+      window.addEventListener("pointerup", stop, options);
+      window.addEventListener("pointercancel", stop, options);
+      window.addEventListener("blur", stop, options);
+      const dispose = () => {
+        events.abort();
+        if (resizeFrame) window.cancelAnimationFrame(resizeFrame);
         shield?.remove();
         document.documentElement.classList.remove("resizing-panels");
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", stop);
-        window.removeEventListener("pointercancel", stop);
-        window.removeEventListener("blur", stop);
-      },
-      { once: true },
-    );
-    apply(value);
-  },
-};
+        bindings.delete(handle);
+      };
+      bindings.set(handle, dispose);
+      window.addEventListener("unload", dispose, { ...options, once: true });
+      apply(value);
+    },
+  };
+})();

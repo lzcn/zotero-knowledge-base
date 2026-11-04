@@ -882,3 +882,27 @@ test("tag-only initialization failure reports an error instead of indefinite cac
   assert.equal(semantic.status.state, "error");
   assert.equal(semantic.status.error, "Model unavailable");
 });
+
+test("background inference pacing follows work duration and remains bounded", async () => {
+  const { semantic, context } = fixture();
+  let elapsed = 0;
+  context.Date = { now: () => elapsed };
+  const rests = [];
+  const built = [];
+  semantic._enabled = true;
+  semantic._queue = ["1/A", "1/B"];
+  semantic._queued = new Set(semantic._queue);
+  semantic._idle = async () => {};
+  semantic._rest = async (ms) => {
+    rests.push(ms);
+  };
+  semantic._build = async (key) => {
+    built.push(key);
+    elapsed += key === "1/A" ? 20 : 1000;
+  };
+  await semantic._drain();
+  assert.deepEqual(built, ["1/A", "1/B"]);
+  assert.deepEqual(rests, [2000, 20, 250]);
+  assert.equal(semantic.status.state, "idle");
+  assert.equal(semantic._queued.size, 0);
+});

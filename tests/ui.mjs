@@ -776,6 +776,25 @@ check("Panel drag clamps its size and window blur ends dragging", () => {
     false,
   );
 });
+check("Rebinding a shared panel replaces its previous handlers", () => {
+  const original = panelAPI.setPanelWidth;
+  let saves = 0;
+  panelAPI.setPanelWidth = (...args) => {
+    saves++;
+    return original(...args);
+  };
+  panelWin.KnowledgeBasePanels.attach(
+    panelHandle,
+    panelPane,
+    "manager",
+    panelAPI,
+  );
+  panelHandle.dispatchEvent(
+    new panelWin.KeyboardEvent("keydown", { key: "ArrowLeft" }),
+  );
+  assert.equal(saves, 1);
+  panelAPI.setPanelWidth = original;
+});
 check("A failed width save still clears the panel dragging state", () => {
   panelAPI.setPanelWidth = () => {
     throw new Error("Preference save failed");
@@ -4064,6 +4083,26 @@ check(
   },
 );
 check(
+  "Manual structure anchors parents above children while references remain secondary",
+  () => {
+    const nodes = ["root", "child", "leaf"].map((id) => ({
+      id,
+      title: id,
+      kind: "card",
+      snippet: "",
+    }));
+    const edges = [
+      { source: "root", target: "child", kind: "parent", ref: "", context: "" },
+      { source: "child", target: "leaf", kind: "parent", ref: "", context: "" },
+      { source: "leaf", target: "root", kind: "link", ref: "", context: "" },
+    ];
+    const layout = graph_layout.createGraphLayout({ nodes, edges });
+    const [root, child, leaf] = layout.nodes();
+    assert.ok(root.y < child.y && child.y < leaf.y);
+    layout.stop();
+  },
+);
+check(
   "A thousand-node network includes isolated notes and produces finite positions",
   () => {
     const nodes = Array.from({ length: 1000 }, (_, i) => ({
@@ -4410,10 +4449,10 @@ const graphPositions = () =>
       node.getAttribute("transform"),
     ],
   ).sort(([a], [b]) => a.localeCompare(b));
-const originalPositions = graphPositions();
-const originalViewport = graphDom.window.document
-  .querySelector("#graph-svg > g")
-  .getAttribute("transform");
+const originalLayoutRevision = Number(
+  graphDom.window.document.getElementById("graph-svg").dataset.layoutRevision,
+);
+
 check(
   "Graph uses curved paths with clipped endpoints and handles self references",
   () => {
@@ -4455,14 +4494,22 @@ check("Hiding references leaves every card visible", () => {
   );
 });
 check(
-  "Relationship toggles retain every node position and the current viewport",
+  "Relationship toggles create a fresh fitted layout for the visible topology",
   () => {
-    assert.deepEqual(graphPositions(), originalPositions);
-    assert.equal(
+    assert.ok(
+      Number(
+        graphDom.window.document.getElementById("graph-svg").dataset
+          .layoutRevision,
+      ) > originalLayoutRevision,
+    );
+    assert.notEqual(
+      graphDom.window.document.querySelector(".graph-node"),
+      originalGraphNode,
+    );
+    assert.ok(
       graphDom.window.document
         .querySelector("#graph-svg > g")
         .getAttribute("transform"),
-      originalViewport,
     );
   },
 );
@@ -4476,7 +4523,7 @@ check("Showing references restores edges without filtering cards", () =>
   ),
 );
 check(
-  "Sources are removed; the graph view offers note types and Parent Items",
+  "Graph offers note types without sources, parent items or a footer legend",
   () => {
     assert.equal(
       graphDom.window.document.getElementById("graph-sources"),
@@ -4486,7 +4533,7 @@ check(
       [...graphDom.window.document.getElementById("graph-view").options].map(
         (option) => option.value,
       ),
-      ["all", "literature", "zettel", "thinking", "entity", "items"],
+      ["all", "literature", "zettel", "thinking", "entity"],
     );
   },
 );

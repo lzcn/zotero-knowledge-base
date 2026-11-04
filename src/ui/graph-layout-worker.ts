@@ -20,33 +20,35 @@ scope.onmessage = ({ data }) => {
   const simulation = createGraphLayout(data.graph, positions, false)
     .alpha(data.alpha)
     .alphaTarget(data.target);
-  let ticks = 0;
+  let ticks = 0,
+    posted = -Infinity;
   const step = () => {
     if (token !== generation) return;
     // Bound each batch so new drag jobs can interrupt even a large graph.
     const until = performance.now() + 8;
-    let batch = 0;
     do {
       simulation.tick(1);
       ticks++;
-      batch++;
-    } while (batch < 4 && performance.now() < until);
-    const nodes = simulation.nodes();
-    const buffer = new Float64Array(nodes.length * 4);
-    nodes.forEach((node, index) =>
-      buffer.set([node.x, node.y, node.vx ?? 0, node.vy ?? 0], index * 4),
-    );
+    } while (ticks < (data.target ? 360 : 180) && performance.now() < until);
     const done = ticks >= (data.target ? 360 : 180);
-    scope.postMessage(
-      {
-        revision: data.revision,
-        positions: buffer,
-        alpha: simulation.alpha(),
-        done,
-      },
-      [buffer.buffer],
-    );
-    if (!done) scope.setTimeout(step, 16);
+    if (done || performance.now() - posted >= 32) {
+      const nodes = simulation.nodes();
+      const buffer = new Float64Array(nodes.length * 4);
+      nodes.forEach((node, index) =>
+        buffer.set([node.x, node.y, node.vx ?? 0, node.vy ?? 0], index * 4),
+      );
+      scope.postMessage(
+        {
+          revision: data.revision,
+          positions: buffer,
+          alpha: simulation.alpha(),
+          done,
+        },
+        [buffer.buffer],
+      );
+      posted = performance.now();
+    }
+    if (!done) scope.setTimeout(step, 0);
   };
   step();
 };

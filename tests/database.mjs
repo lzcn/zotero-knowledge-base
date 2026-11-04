@@ -2016,6 +2016,34 @@ if (currentSchema) {
     nativeTaggedNode.tags.join(",") === "中文 标签,Machine learning" &&
       nativeTaggedNode.color === "#3478f6",
   );
+  const ownLookup = zoteroStub.Items.getByLibraryAndKeyAsync;
+  zoteroStub.Items.getByLibraryAndKeyAsync = async (library, key) =>
+    key === "PAPERTAG"
+      ? {
+          isRegularItem: () => true,
+          isInTrash: () => false,
+          getTags: () => [{ tag: "Paper topic" }],
+        }
+      : ownLookup(library, key);
+  zoteroStub.Tags.getColors = () =>
+    new Map([
+      ["Machine learning", { color: "#3478f6", position: 0 }],
+      ["Paper topic", { color: "#30a46c", position: 9 }],
+    ]);
+  await db.exec(
+    "UPDATE zettels SET item_key='PAPERTAG', library_id=1 WHERE id=?",
+    [taggedID],
+  );
+  const sourceColored = (await graph.getGraphData()).nodes.find(
+    (node) => node.id === taggedID,
+  );
+  check(
+    "A paper's colored topic takes precedence over a note's colored workflow tag",
+    sourceColored.color === "#30a46c" &&
+      sourceColored.tags.includes("Paper topic"),
+  );
+  await db.exec("UPDATE zettels SET item_key=NULL WHERE id=?", [taggedID]);
+  zoteroStub.Items.getByLibraryAndKeyAsync = ownLookup;
   await zettel.saveZettel({ id: taggedID, title: "Tags", body: "#tag-b" });
   noteTags = ["Renamed native tag"];
   const changedTags = (await graph.getGraphData()).nodes.find(

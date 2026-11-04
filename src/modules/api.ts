@@ -79,7 +79,7 @@ import {
   releaseImageDraft,
 } from "./assets";
 import { getFamily, getParentCandidates, getZettelOutline } from "./hierarchy";
-import { getGraphData, getParentItemNodes } from "./graph";
+import { getGraphData } from "./graph";
 import {
   getGraphOptions,
   setGraphOption,
@@ -304,10 +304,6 @@ export const api = {
       node.reference = refs.get(node.id);
     });
     return graph;
-  },
-  getParentItems: getParentItemNodes,
-  getItemGraphSnapshot(keys: string[], active: () => boolean) {
-    return libraryRuntime.getItemGraphSnapshot(keys, active);
   },
   async getFamily(id: string) {
     const family = await getFamily(id);

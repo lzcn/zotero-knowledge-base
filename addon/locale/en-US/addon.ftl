@@ -166,15 +166,13 @@ graph-refresh = Refresh
 graph-focus = Focus this node
 graph-open = Open
 graph-create = Create card
-graph-connections = Links & backlinks
+graph-connections = Connections
 graph-search = Search notes…
 graph-hint = Click to select; double-click to open.
 graph-empty = No matching notes
 graph-stats = { $cards } notes · { $links } connections
 graph-kind-card = Note
 graph-kind-unresolved = Missing card
-graph-legend-cards = ● Notes · solid: parent–child · dashed: card links
-graph-legend-unresolved = ○ Missing cards
 
 section-load-error = Could not load notes. Select the item again.
 
@@ -211,9 +209,9 @@ graph-hierarchy = Hierarchy
 
 graph-links = Note links
 
-graph-outgoing = Outgoing links
+graph-outgoing = References
 
-graph-backlinks = Backlinks
+graph-backlinks = Cited by
 
 graph-open-card = Edit note
 
@@ -257,7 +255,7 @@ health-restore = Restore original
 health-read-only = This library is read-only.
 editor-format-native = Rich text
 editor-format-markdown = Markdown
-graph-outline = Hierarchy
+graph-outline = Structure
 graph-references = References
 graph-hide-isolated = Hide isolated nodes
 
@@ -427,16 +425,6 @@ manager-view-entity = Entity
 menu-open-native-note = Open in Knowledge Base
 
 graph-view = Graph view
-graph-parent-items = Parent Items
-graph-kind-item = Parent item
-graph-open-item = Open item
-graph-legend-items = ● Parent items · similarity links
-graph-similar-items = Similar items
-graph-search-items = Search parent items…
-graph-items-empty = No strongly related parent items
-graph-cache-loading = Loading cached similarities…
-graph-item-stats = { $cards } items · { $links } connections
-graph-cache-unavailable = Cached similarities are unavailable
 
 excluded-placeholder =
     .placeholder = @colored, reading*
@@ -471,3 +459,6 @@ pref-template-entity =
 
 cache-progress =
     .aria-label = Cache progress
+
+graph-outline-hint = Parent–child relationships you organize.
+graph-references-hint = References written in note text.

@@ -2,12 +2,6 @@
 export function buildOptions(pkg, environment, outputDirectory = "dist/addon") {
   return [
     {
-      entryPoints: ["src/ui/library/item-graph-worker.js"],
-      bundle: true,
-      target: "firefox115",
-      outfile: `${outputDirectory}/content/item-graph-worker.js`,
-    },
-    {
       entryPoints: ["src/ui/graph-layout-worker.ts"],
       bundle: true,
       target: "firefox115",

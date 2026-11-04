@@ -742,3 +742,59 @@ test("startup restores source checks so an unchanged document needs no repeat wr
   assert.equal(writes.length, 1);
   assert.ok(writes[0][0].includes("source_updates"));
 });
+
+test("small rebuild work batches do not accumulate per-document timer delays", async (t) => {
+  const index = new SWSearch.Index();
+  for (let i = 0; i < 100; i++)
+    index.add(
+      `1/${i}`,
+      new Map([
+        [i, 2],
+        [101, 1],
+      ]),
+      true,
+    );
+  t.mock.method(Date, "now", () => 0);
+  let pauses = 0;
+  assert.equal(
+    await index.rebuild(async () => {
+      pauses++;
+    }),
+    true,
+  );
+  assert.equal(pauses, 2);
+  assert.equal(index.docs.size, 100);
+});
+
+test("cached signature decoding respects byte offsets and rejects damaged weights", () => {
+  const bytes = SWSearch.encodeSignature([
+    [1, 0.6],
+    [7, 0.8],
+  ]);
+  const padded = new Uint8Array(bytes.length + 3);
+  padded.set(bytes, 1);
+  const expected = SWSearch.decodeSignature(bytes);
+  assert.deepEqual(SWSearch.decodeSignature(padded.subarray(1, -2)), expected);
+  assert.deepEqual(SWSearch.decodeSignature(Array.from(bytes)), expected);
+  const damaged = bytes.slice();
+  damaged[4] = damaged[5] = 0;
+  assert.throws(
+    () => SWSearch.decodeSignature(damaged),
+    /Invalid signature feature/,
+  );
+  const index = new SWSearch.Index();
+  const counts = new Map([
+    [1, 3],
+    [7, 4],
+  ]);
+  const restored = index.add(
+    "1/A",
+    counts,
+    true,
+    expected,
+    null,
+    SWSearch.encodeCounts(counts),
+  );
+  assert.equal(restored.vector, expected);
+  assert.deepEqual([...restored.vector], [...expected]);
+});

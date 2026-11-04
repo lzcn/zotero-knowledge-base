@@ -64,10 +64,14 @@ export function createAsyncGraphLayout(
   const fallback = () => {
     timer = 0;
     if (stopped) return;
-    simulation.alpha(alpha).alphaTarget(target).tick(1);
-    alpha = simulation.alpha();
+    const until = performance.now() + 6;
+    do {
+      simulation.alpha(alpha).alphaTarget(target).tick(1);
+      alpha = simulation.alpha();
+      ticks++;
+    } while (ticks < (target ? 360 : 180) && performance.now() < until);
     listeners.get("tick")?.();
-    if (++ticks < (target ? 360 : 180)) timer = window.setTimeout(fallback, 16);
+    if (ticks < (target ? 360 : 180)) timer = window.setTimeout(fallback, 16);
     else listeners.get("end")?.();
   };
   const start = () => {

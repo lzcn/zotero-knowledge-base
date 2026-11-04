@@ -177,8 +177,14 @@ var SWSemantic = {
         const key = this._queue.shift();
         this._queued.delete(key);
         this._priority.delete(key);
+        const started = Date.now();
         await this._build(key, generation);
-        await this._rest(3000, generation);
+        // Pace actual inference work instead of adding three seconds per paper.
+        // Idle callbacks and bounded rests keep foreground selection responsive.
+        await this._rest(
+          Math.min(250, Math.max(16, Date.now() - started)),
+          generation,
+        );
       }
       if (this._enabled && !this._stopped && generation === this._generation)
         this.status.state = "idle";

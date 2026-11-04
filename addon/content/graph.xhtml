@@ -3,6 +3,8 @@
 href="chrome://zotero-platform/content/zotero.css" type="text/css"?>
 <?xml-stylesheet
 href="chrome://knowledge-base/content/manager.css?v=__styleVersion__"
+type="text/css"?> <?xml-stylesheet
+href="chrome://knowledge-base/content/graph.css?v=__styleVersion__"
 type="text/css"?>
 <window
   id="knowledge-base-graph"
@@ -28,7 +30,6 @@ type="text/css"?>
         <html:option value="zettel" />
         <html:option value="thinking" />
         <html:option value="entity" />
-        <html:option value="items" />
       </html:select>
       <html:input id="graph-search" type="search" />
       <checkbox id="graph-outline" />
@@ -44,6 +45,7 @@ type="text/css"?>
         <html:canvas id="graph-gpu" hidden="hidden" aria-hidden="true" />
         <html:canvas id="graph-paint" hidden="hidden" aria-hidden="true" />
         <svg:svg id="graph-svg" aria-label="Card graph" />
+        <html:div id="graph-error" class="error" role="status" />
         <html:div id="graph-empty" class="muted" hidden="hidden" />
       </html:div>
       <html:div id="graph-splitter" />
@@ -74,12 +76,5 @@ type="text/css"?>
         </html:div>
       </html:aside>
     </html:main>
-    <html:footer id="graph-legend">
-      <html:span id="graph-legend-cards" /><html:span
-        id="graph-legend-items"
-      /><html:span id="graph-legend-unresolved" />
-      <html:span id="graph-groups-legend" />
-      <html:span id="graph-error" class="error" role="status" />
-    </html:footer>
   </html:div>
 </window>

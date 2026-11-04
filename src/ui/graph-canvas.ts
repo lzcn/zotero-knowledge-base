@@ -39,6 +39,9 @@ export function createGraphCanvas(
     item: style.getPropertyValue("--graph-item").trim(),
     muted: style.getPropertyValue("--muted").trim(),
     link: style.getPropertyValue("--graph-link").trim(),
+    node:
+      style.getPropertyValue("--graph-node").trim() ||
+      style.getPropertyValue("--muted").trim(),
   };
   const font = style.fontFamily;
   function draw(
@@ -107,8 +110,9 @@ export function createGraphCanvas(
             : colors.accent
           : colors.link;
         ctx.fillStyle = ctx.strokeStyle;
-        ctx.globalAlpha = active ? 1 : 0.65;
-        ctx.lineWidth = (active ? 2.4 : kind === "parent" ? 1.2 : 1.1) / k;
+        ctx.globalAlpha = active ? 0.9 : kind === "parent" ? 0.8 : 0.3;
+        ctx.lineWidth =
+          (kind === "parent" ? (active ? 2.2 : 1.5) : active ? 1.4 : 0.8) / k;
         ctx.setLineDash([]);
         const arrows: number[] = [];
         ctx.beginPath();
@@ -128,7 +132,7 @@ export function createGraphCanvas(
               a.x - 10,
               a.y - 6,
             );
-            if (kind !== "similarity")
+            if (kind === "parent" || (active && kind !== "similarity"))
               arrows.push(a.x - 10, a.y - 6, Math.atan2(54, 44));
             continue;
           }
@@ -151,7 +155,8 @@ export function createGraphCanvas(
             ctx.quadraticCurveTo(cx, cy, tx, ty);
             angle = Math.atan2(ty - cy, tx - cx);
           }
-          if (kind !== "similarity") arrows.push(tx, ty, angle);
+          if (kind === "parent" || (active && kind !== "similarity"))
+            arrows.push(tx, ty, angle);
         }
         ctx.stroke();
         ctx.setLineDash([]);
@@ -192,7 +197,7 @@ export function createGraphCanvas(
             ? colors.item
             : node.kind === "unresolved"
               ? colors.bg
-              : node.color || colors.accent;
+              : node.color || colors.node;
         const unresolved = node.kind === "unresolved";
         const key = `${fill}\0${unresolved ? 1 : 0}`;
         let batch = nodeBatches.get(key);

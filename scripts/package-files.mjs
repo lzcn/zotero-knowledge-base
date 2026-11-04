@@ -1,5 +1,5 @@
 export const requiredFiles = [
-  "content/item-graph-worker.js",
+  "content/graph.css",
   "content/templates.xhtml",
   "content/templates.js",
   "content/templates.css",

@@ -1,5 +1,4 @@
 import { getAll, type ZettelRow, type LinkRow } from "./db";
-import { getItemSummary } from "./zotero";
 import type { NoteType } from "./note-types";
 import { getGraphGroups } from "./preferences";
 import { inheritCardTags, loadNativeTags, visibleNoteTags } from "./note-tags";
@@ -31,12 +30,6 @@ export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
-export interface ItemGraphDocument {
-  key: string;
-  vector?: { ids: Uint32Array; weights: Float64Array; length: number };
-  fieldVectors?: { ids: Uint32Array; weights: Float64Array; length: number }[];
-  semantic?: Float32Array;
-}
 export interface GraphOptions {
   centerId?: string;
   depth?: number;
@@ -47,7 +40,7 @@ export interface GraphOptions {
 }
 
 /** No list-view LIMIT: isolated cards and cards beyond the first 500 belong
- * to the knowledge graph too. Parent items use their own similarity view. */
+ * to the knowledge graph too. */
 export async function getGraphData(): Promise<GraphData> {
   const rows = await getAll<ZettelRow>(
     "SELECT * FROM zettels z WHERE NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY id",
@@ -95,37 +88,79 @@ export async function getGraphData(): Promise<GraphData> {
   }
   nativeTags = inheritCardTags(nativeTags, parentMap);
   const groups = getGraphGroups();
-  const palette = [
-    "#3478f6",
-    "#30a46c",
-    "#af52de",
-    "#f59e0b",
-    "#0891b2",
-    "#ec4899",
-    "#e5484d",
-  ];
+  const colorsByLibrary = new Map(
+    [
+      ...new Set(
+        rows
+          .map((row) => libraries.get(row.id) ?? row.library_id)
+          .filter((id): id is number => !!id),
+      ),
+    ].map((id) => [
+      id,
+      Zotero.Tags?.getColors(id) as unknown as
+        | Map<string, { color: string; position?: number }>
+        | undefined,
+    ]),
+  );
+  const sourceKeys = new Map<string, { libraryID: number; key: string }>();
+  for (const row of rows) {
+    const libraryID = row.library_id ?? libraries.get(row.id);
+    if (
+      row.item_key &&
+      libraryID &&
+      (groups.length || colorsByLibrary.get(libraryID)?.size)
+    )
+      sourceKeys.set(libraryID + "/" + row.item_key, {
+        libraryID,
+        key: row.item_key,
+      });
+  }
+  const sources = await Promise.all(
+    [...sourceKeys].map(async ([key, source]) => ({
+      key,
+      item: await Zotero.Items.getByLibraryAndKeyAsync(
+        source.libraryID,
+        source.key,
+      ),
+    })),
+  );
+  const sourceItems = sources.filter(
+    (source): source is typeof source & { item: Zotero.Item } =>
+      !!source.item && source.item.isRegularItem() && !source.item.isInTrash(),
+  );
+  if (sourceItems.length)
+    await Zotero.Items.loadDataTypes(
+      sourceItems.map((source) => source.item),
+      ["tags"],
+    );
+  const sourceTags = new Map(
+    sourceItems.map(({ key, item }) => [
+      key,
+      item.getTags().map(({ tag }) => tag),
+    ]),
+  );
   const colorFor = (tags: string[], libraryID: number | null) => {
-    const colors = libraryID
-      ? (Zotero.Tags?.getColors(libraryID) as unknown as
-          | Map<string, { color: string; position?: number }>
-          | undefined)
-      : undefined;
+    const colors = libraryID ? colorsByLibrary.get(libraryID) : undefined;
     const colored = tags
       .map((tag) => colors?.get(tag))
       .filter((color): color is { color: string; position?: number } => !!color)
       .sort((a, b) => (a.position || 0) - (b.position || 0));
-    if (colored.length) return colored[0].color;
-    const tag = tags[0];
-    let hash = 0;
-    for (const char of tag) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
-    return palette[hash % palette.length];
+    return colored[0]?.color;
   };
   const nodes = new Map<string, GraphNode>();
   const bodies = new Map<string, string>();
+  const contextLines = new Map<string, string[]>();
   const edges: GraphEdge[] = [];
   for (const row of rows) {
     const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
-    const tags = visibleNoteTags(nativeTags.get(row.id) || [], libraryID);
+    const paperTags = visibleNoteTags(
+      sourceTags.get((row.library_id ?? libraryID) + "/" + row.item_key) || [],
+      libraryID,
+    );
+    const tags = visibleNoteTags(
+      [...new Set([...(nativeTags.get(row.id) || []), ...paperTags])],
+      libraryID,
+    );
     const group = groups.find((group) => group.tag && tags.includes(group.tag));
     nodes.set(row.id, {
       id: row.id,
@@ -136,7 +171,9 @@ export async function getGraphData(): Promise<GraphData> {
       libraryID: row.library_id,
       tags,
       color:
-        group?.color || (tags.length ? colorFor(tags, libraryID) : undefined),
+        group?.color ||
+        colorFor(paperTags, libraryID) ||
+        colorFor(tags, libraryID),
       group: group?.tag,
       parentId: parentMap.get(row.id) ?? null,
       snippet: row.body,
@@ -170,10 +207,12 @@ export async function getGraphData(): Promise<GraphData> {
         kind: "unresolved",
         snippet: "",
       });
-    const context =
-      (bodies.get(link.source_id) || "")
-        .split("\n")
-        .find((line) => line.includes(link.ref)) || "";
+    let lines = contextLines.get(link.source_id);
+    if (!lines) {
+      lines = (bodies.get(link.source_id) || "").split("\n");
+      contextLines.set(link.source_id, lines);
+    }
+    const context = lines.find((line) => line.includes(link.ref)) || "";
     edges.push({
       source: link.source_id,
       target,
@@ -186,36 +225,6 @@ export async function getGraphData(): Promise<GraphData> {
 }
 
 /** Only parents of available managed notes belong in the paper view. */
-export async function getParentItemNodes(
-  active = () => true,
-): Promise<GraphNode[]> {
-  const rows = await getAll<{ library_id: number; item_key: string }>(
-    "SELECT DISTINCT library_id, item_key FROM zettels z WHERE item_key IS NOT NULL AND library_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM unavailable_notes u WHERE u.card_id = z.id) ORDER BY library_id, item_key",
-  );
-  const nodes: GraphNode[] = [];
-  for (const row of rows) {
-    if (!active()) return [];
-    const item = await Zotero.Items.getByLibraryAndKeyAsync(
-      row.library_id,
-      row.item_key,
-    );
-    if (!item || !item.isRegularItem() || item.isInTrash()) continue;
-    const summary = await getItemSummary(row.item_key, row.library_id);
-    if (!summary) continue;
-    nodes.push({
-      id: `item:${row.library_id}/${row.item_key}`,
-      title: summary.title,
-      kind: "item",
-      itemKey: row.item_key,
-      libraryID: row.library_id,
-      snippet: [summary.creatorYear, summary.publication]
-        .filter(Boolean)
-        .join(" · "),
-    });
-  }
-  return nodes;
-}
-
 export function filterGraph(
   graph: GraphData,
   options: GraphOptions = {},

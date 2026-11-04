@@ -182,23 +182,21 @@ export default async function viewsHost({
   );
   assert(
     manager.document.querySelectorAll("#knowledge-base-views [data-note-view]")
-      .length === 6 &&
+      .length === 5 &&
       !manager.document
         .getElementById("knowledge-base-views")
         .contains(control("trash")),
-    "Trash is not separate from All and the five types",
+    "Trash is not separate from All and the four types",
   );
   const before = [...manager.document.querySelectorAll("[data-note-view]")].map(
     (button) => button.getBoundingClientRect().x,
   );
   await shot("all");
-  await choose("note", [plain]);
-  await shot("note");
   await choose("literature", [literature]);
   await shot("literature");
   await choose("zettel", [zettel]);
   await shot("zettel");
-  await choose("entity", [entity]);
+  await choose("entity", [plain, entity]);
   await shot("entity");
   await choose("thinking", [thinking]);
   await shot("thinking");

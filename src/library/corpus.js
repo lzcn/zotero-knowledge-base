@@ -340,7 +340,7 @@ var SWCorpus = class {
             row.getResultByName("epoch") === this.search.epoch
               ? row.getResultByName("signature")
               : null;
-          if (signature) SWSearch.decodeSignature(signature);
+          if (signature) signature = SWSearch.decodeSignature(signature);
           var storedSimhash = row.getResultByName("simhash");
           if (storedSimhash) {
             simhash = SWSearch.decodeSimhash(storedSimhash);

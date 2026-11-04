@@ -47,7 +47,7 @@ void main() {
   int vertex = gl_VertexID;
   vec2 p;
   side = 0.0;
-  bool undirected = meta.y > 1.5;
+  bool undirected = meta.y > 1.5 || meta.z < 0.5;
   if (vertex >= 120) {
     vec2 end = d * view.z + view.xy;
     vec2 tangent = normalize(d - curve(0.99, a, b, c, d) + vec2(0.00001));
@@ -153,7 +153,11 @@ export function createGraphGPU(
     accent = color("--accent"),
     muted = color("--muted"),
     itemColor = color("--graph-item"),
-    linkColor = color("--graph-link");
+    linkColor = color("--graph-link"),
+    defaultNodeColor = rgb(
+      style.getPropertyValue("--graph-node").trim() ||
+        style.getPropertyValue("--muted"),
+    );
   function program(
     vertex: string,
     fragment: string,
@@ -334,11 +338,11 @@ export function createGraphGPU(
               edge.target.x,
               edge.target.y,
               edge.target.radius,
-              active ? 2.4 : kind === 0 ? 1.2 : 1.1,
+              kind === 0 ? (active ? 2.2 : 1.5) : active ? 1.4 : 0.8,
               kind,
-              0,
+              kind === 0 || active ? 1 : 0,
               ...ink.slice(0, 3),
-              active ? 1 : 0.65,
+              active ? 0.9 : kind === 0 ? 0.8 : 0.3,
             ],
             index++ * 13,
           );
@@ -349,7 +353,9 @@ export function createGraphGPU(
             ? itemColor
             : node.kind === "unresolved"
               ? background
-              : rgb(node.color || style.getPropertyValue("--accent"));
+              : node.color
+                ? rgb(node.color)
+                : defaultNodeColor;
         nodeValues.set(
           [
             node.x,

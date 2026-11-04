@@ -21,7 +21,7 @@ Open **Knowledge Base** from the **Tools** menu or its library and PDF toolbar b
 
 The three tabs share one library runtime across windows. Startup restores the completed search cache; unchanged papers reuse their vectors and saved results. New or changed papers update in the background. The first launch after upgrading prepares the new cache from the existing index. Settings uses neutral headings and thin separators. Graph has its own section. Status shows cache progress and note counts by type. Templates has matching selectors for Literature, Zettel, Thinking and Entity, plus one shared Manage button. Each type keeps its own selection; templates can be reused across types. Types without a selected template stay blank.
 
-The graph switches between note types and Parent Items. The latter includes only papers with notes and reuses the local search cache with stricter, mutual top-three similarity links. Note graphs show hierarchy and references without Source nodes. Relationship lists show titles; IDs stay in tooltips and copy controls.
+The graph shows notes by type. Structure represents manually organized parent–child relationships; References represents citations in note text. Structure lays parents above children with stronger layout links and clearer lines, while references stay quiet until selected. Changing a type or relationship filter rebuilds and fits the layout. Colors prioritize configured groups, then the parent paper’s colored tags, then note tag colors; other nodes stay neutral. The footer legend is removed; connection lists show titles, with IDs in tooltips and copy controls.
 
 The editor keeps Source, Parent and Tags above the note, with changes made in place. Click the Parent title to navigate; use its pencil to change the hierarchy. Long titles stay on one line, with the complete title in a tooltip. Its bottom status bar holds the type and directly editable ID with a copy action; long IDs stay compact and remain fully editable. Native and Markdown editing share a wider, responsive writing area and compact spacing. Single-click a note in the Knowledge Base list to view it; double-click to open it in a separate window. Graph actions stay in the top toolbar and list context menu.
 
@@ -59,6 +59,12 @@ npm run build
 ```
 
 Output: `dist/zotero-knowledge-base.xpi`.
+
+Inference shares one algorithm for tokenization, chunking, pooling and ranking. `inference-backend.h` owns ONNX execution and CPU fallback; `coreml-backend.h` supplies the macOS provider. Core ML initialization or execution failure falls back to the CPU backend. Native packaging currently supports macOS; other platform adapters are not implemented. `SW_NATIVE_MODEL_DIR=/path/to/model node scripts/test-native.mjs` checks CPU/Core ML vector and rank agreement using temporary caches.
+
+`node scripts/benchmark-layout.mjs` measures background layout on a fixed synthetic graph.
+
+`node scripts/benchmark-search.mjs` measures deterministic index rebuilding, signature decoding and retrieval without using a personal library. It reports a ranking digest for before/after comparisons; timings exclude Zotero storage and native model inference.
 
 ## License
 
