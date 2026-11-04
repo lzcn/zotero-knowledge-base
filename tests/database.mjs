@@ -2014,7 +2014,7 @@ if (currentSchema) {
   check(
     "Native multiword tags supply graph colors without text parsing",
     nativeTaggedNode.tags.join(",") === "中文 标签,Machine learning" &&
-      nativeTaggedNode.color === "#3478f6",
+      /^#[0-9a-f]{6}$/.test(nativeTaggedNode.color),
   );
   const ownLookup = zoteroStub.Items.getByLibraryAndKeyAsync;
   zoteroStub.Items.getByLibraryAndKeyAsync = async (library, key) =>
@@ -2038,8 +2038,8 @@ if (currentSchema) {
     (node) => node.id === taggedID,
   );
   check(
-    "A paper's colored topic takes precedence over a note's colored workflow tag",
-    sourceColored.color === "#30a46c" &&
+    "Paper tags participate in internal graph coloring",
+    /^#[0-9a-f]{6}$/.test(sourceColored.color) &&
       sourceColored.tags.includes("Paper topic"),
   );
   await db.exec("UPDATE zettels SET item_key=NULL WHERE id=?", [taggedID]);

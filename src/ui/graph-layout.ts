@@ -45,15 +45,20 @@ export function createGraphLayout(
       if (!children.has(edge.source)) children.set(edge.source, []);
       children.get(edge.source)!.push(edge.target);
     }
+  const roots = new Map<string, string>();
   const depth = new Map<string, number>();
   const queue = graph.nodes
     .filter((node) => structure.has(node.id) && !parents.has(node.id))
     .map((node) => node.id);
-  for (const id of queue) depth.set(id, 0);
+  for (const id of queue) {
+    depth.set(id, 0);
+    roots.set(id, id);
+  }
   for (let at = 0; at < queue.length; at++) {
     for (const child of children.get(queue[at]) || []) {
       if (depth.has(child)) continue;
       depth.set(child, depth.get(queue[at])! + 1);
+      roots.set(child, roots.get(queue[at])!);
       queue.push(child);
     }
   }
@@ -74,7 +79,16 @@ export function createGraphLayout(
       }) as LayoutNode,
   );
   const links = graph.edges.map((edge) => ({ ...edge }));
-  const groups = [...new Set(nodes.map((node) => node.group).filter(Boolean))];
+  // Structure branches share an anchor regardless of their topic colors.
+  const anchor = (node: LayoutNode) =>
+    roots.has(node.id) ? "structure:" + roots.get(node.id) : node.group;
+  const groups = [...new Set(nodes.map(anchor).filter(Boolean))];
+  const referenceDegree = new Map<string, number>();
+  for (const edge of graph.edges) {
+    if (edge.kind === "parent") continue;
+    for (const id of [edge.source, edge.target])
+      referenceDegree.set(id, (referenceDegree.get(id) || 0) + 1);
+  }
   const radius = Math.max(180, Math.sqrt(nodes.length) * 18);
   const centers = new Map(
     groups.map((group, index) => [
@@ -97,12 +111,25 @@ export function createGraphLayout(
       forceLink<LayoutNode, (typeof links)[number]>(links)
         .id((node) => node.id)
         .distance((edge) => (edge.kind === "parent" ? 90 : 150))
-        .strength((edge) => (edge.kind === "parent" ? 0.8 : 0.12)),
+        .strength((edge) => {
+          if (edge.kind === "parent") return 0.8;
+          const id = (node: string | LayoutNode) =>
+            typeof node === "string" ? node : node.id;
+          // Bound total reference pull so dense citations cannot overpower Structure.
+          return (
+            0.12 /
+            Math.max(
+              1,
+              referenceDegree.get(id(edge.source)) || 0,
+              referenceDegree.get(id(edge.target)) || 0,
+            )
+          );
+        }),
     )
     .force("charge", forceManyBody().strength(-180).distanceMax(900))
     .force(
       "x",
-      forceX<LayoutNode>((node) => centers.get(node.group)?.x || 0).strength(
+      forceX<LayoutNode>((node) => centers.get(anchor(node))?.x || 0).strength(
         (node) => (node.group ? 0.08 : 0.025),
       ),
     )
@@ -110,7 +137,7 @@ export function createGraphLayout(
       "y",
       forceY<LayoutNode>(
         (node) =>
-          (centers.get(node.group)?.y || 0) +
+          (centers.get(anchor(node))?.y || 0) +
           (depth.has(node.id) ? (depth.get(node.id)! - middleDepth) * 110 : 0),
       ).strength((node) =>
         depth.has(node.id) ? 0.18 : node.group ? 0.08 : 0.025,

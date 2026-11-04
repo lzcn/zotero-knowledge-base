@@ -4087,6 +4087,7 @@ check(
   () => {
     const nodes = ["root", "child", "leaf"].map((id) => ({
       id,
+      group: id,
       title: id,
       kind: "card",
       snippet: "",

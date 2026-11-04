@@ -88,7 +88,7 @@ export function createGraphCanvas(
       pixelRatio * x,
       pixelRatio * y,
     );
-    const radius = (node: LayoutNode) => Math.max(node.radius, 3.5 / k);
+    const radius = (node: LayoutNode) => Math.max(node.radius, 4.5 / k);
     if (!accelerated) {
       const batches = new Map<string, CanvasEdge[]>();
       for (const edge of edges) {
@@ -113,7 +113,7 @@ export function createGraphCanvas(
         ctx.globalAlpha = active ? 0.9 : kind === "parent" ? 0.8 : 0.3;
         ctx.lineWidth =
           (kind === "parent" ? (active ? 2.2 : 1.5) : active ? 1.4 : 0.8) / k;
-        ctx.setLineDash([]);
+        ctx.setLineDash(kind === "parent" ? [] : [4 / k, 4 / k]);
         const arrows: number[] = [];
         ctx.beginPath();
         for (const edge of batch) {
@@ -276,7 +276,7 @@ export function hitGraphNode(
       node.x * view.k + view.x - x,
       node.y * view.k + view.y - y,
     );
-    if (delta <= Math.max(node.radius * view.k, 3.5) + 5 && delta < distance) {
+    if (delta <= Math.max(node.radius * view.k, 4.5) + 5 && delta < distance) {
       found = node;
       distance = delta;
     }

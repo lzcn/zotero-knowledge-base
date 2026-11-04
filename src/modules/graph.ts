@@ -1,7 +1,12 @@
 import { getAll, type ZettelRow, type LinkRow } from "./db";
 import type { NoteType } from "./note-types";
 import { getGraphGroups } from "./preferences";
-import { inheritCardTags, loadNativeTags, visibleNoteTags } from "./note-tags";
+import { graphColorSelector } from "./graph-colors";
+import {
+  inheritCardTags,
+  loadNativeTags,
+  createTagVisibilityFilter,
+} from "./note-tags";
 
 export interface GraphNode {
   id: string;
@@ -88,28 +93,11 @@ export async function getGraphData(): Promise<GraphData> {
   }
   nativeTags = inheritCardTags(nativeTags, parentMap);
   const groups = getGraphGroups();
-  const colorsByLibrary = new Map(
-    [
-      ...new Set(
-        rows
-          .map((row) => libraries.get(row.id) ?? row.library_id)
-          .filter((id): id is number => !!id),
-      ),
-    ].map((id) => [
-      id,
-      Zotero.Tags?.getColors(id) as unknown as
-        | Map<string, { color: string; position?: number }>
-        | undefined,
-    ]),
-  );
+  const selectColor = graphColorSelector(groups);
   const sourceKeys = new Map<string, { libraryID: number; key: string }>();
   for (const row of rows) {
     const libraryID = row.library_id ?? libraries.get(row.id);
-    if (
-      row.item_key &&
-      libraryID &&
-      (groups.length || colorsByLibrary.get(libraryID)?.size)
-    )
+    if (row.item_key && libraryID)
       sourceKeys.set(libraryID + "/" + row.item_key, {
         libraryID,
         key: row.item_key,
@@ -139,29 +127,28 @@ export async function getGraphData(): Promise<GraphData> {
       item.getTags().map(({ tag }) => tag),
     ]),
   );
-  const colorFor = (tags: string[], libraryID: number | null) => {
-    const colors = libraryID ? colorsByLibrary.get(libraryID) : undefined;
-    const colored = tags
-      .map((tag) => colors?.get(tag))
-      .filter((color): color is { color: string; position?: number } => !!color)
-      .sort((a, b) => (a.position || 0) - (b.position || 0));
-    return colored[0]?.color;
-  };
   const nodes = new Map<string, GraphNode>();
   const bodies = new Map<string, string>();
   const contextLines = new Map<string, string[]>();
   const edges: GraphEdge[] = [];
+  const visibility = new Map<
+    number | null,
+    ReturnType<typeof createTagVisibilityFilter>
+  >();
   for (const row of rows) {
     const libraryID = libraries.get(row.id) ?? row.library_id ?? null;
-    const paperTags = visibleNoteTags(
-      sourceTags.get((row.library_id ?? libraryID) + "/" + row.item_key) || [],
-      libraryID,
-    );
-    const tags = visibleNoteTags(
-      [...new Set([...(nativeTags.get(row.id) || []), ...paperTags])],
-      libraryID,
-    );
-    const group = groups.find((group) => group.tag && tags.includes(group.tag));
+    let visible = visibility.get(libraryID);
+    if (!visible)
+      visibility.set(
+        libraryID,
+        (visible = createTagVisibilityFilter(libraryID)),
+      );
+    const paperTags =
+      sourceTags.get((row.library_id ?? libraryID) + "/" + row.item_key) || [];
+    const tags = visible([
+      ...new Set([...(nativeTags.get(row.id) || []), ...paperTags]),
+    ]);
+    const appearance = selectColor(tags, row.title, row.body);
     nodes.set(row.id, {
       id: row.id,
       title: row.title || row.id,
@@ -170,11 +157,7 @@ export async function getGraphData(): Promise<GraphData> {
       itemKey: row.item_key ?? undefined,
       libraryID: row.library_id,
       tags,
-      color:
-        group?.color ||
-        colorFor(paperTags, libraryID) ||
-        colorFor(tags, libraryID),
-      group: group?.tag,
+      ...appearance,
       parentId: parentMap.get(row.id) ?? null,
       snippet: row.body,
     });

@@ -798,3 +798,43 @@ test("cached signature decoding respects byte offsets and rejects damaged weight
   assert.equal(restored.vector, expected);
   assert.deepEqual([...restored.vector], [...expected]);
 });
+
+test("short candidate scoring batches yield once and honor cancellation", async (t) => {
+  const index = new SWSearch.Index();
+  const counts = new Map([
+    [1, 3],
+    [2, 1],
+  ]);
+  index.add("query", counts, true);
+  const keys = Array.from({ length: 200 }, (_, i) => `candidate-${i}`);
+  for (const key of keys) index.add(key, counts, true);
+  index.retrieve = async () => keys;
+  t.mock.method(Date, "now", () => 0);
+  let pauses = 0;
+  const rows = await index.search(
+    "query",
+    20,
+    null,
+    () => false,
+    async () => {
+      pauses++;
+    },
+    () => {},
+  );
+  assert.equal(rows.length, 20);
+  assert.equal(pauses, 1);
+  let cancelled = false;
+  assert.deepEqual(
+    await index.search(
+      "query",
+      20,
+      null,
+      () => cancelled,
+      async () => {
+        cancelled = true;
+      },
+      () => {},
+    ),
+    [],
+  );
+});

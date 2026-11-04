@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 for (const [file, name] of [
   ["document-merge.mjs", "Three-way document merging and conflict boundaries"],
   ["text-format.mjs", "Conservative formula delimiter normalization"],
+  ["graph-colors.mjs", "Stable tag colors and relevance-based group selection"],
   ["graph-worker.mjs", "Background graph geometry and cancellation"],
   ["assets-notes.mjs", "Asset lifecycle"],
   [

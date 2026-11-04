@@ -17,6 +17,8 @@ layout(location=2) in vec3 meta;
 layout(location=3) in vec4 color;
 out vec4 ink;
 out float side;
+out float along;
+flat out float dashed;
 vec2 curve(float t, vec2 a, vec2 b, vec2 c, vec2 d) {
   float u = 1.0 - t;
   return u*u*u*a + 3.0*u*u*t*b + 3.0*u*t*t*c + t*t*t*d;
@@ -32,8 +34,8 @@ void main() {
     c = source.xy + vec2(-54.0, -60.0);
     d = source.xy + vec2(-10.0, -6.0);
   } else {
-    a = source.xy + dir * min(max(source.z, 3.5 / view.z) + 2.0, len / 3.0);
-    d = target.xy - dir * min(max(target.z, 3.5 / view.z) + 2.0, len / 3.0);
+    a = source.xy + dir * min(max(source.z, 4.5 / view.z) + 2.0, len / 3.0);
+    d = target.xy - dir * min(max(target.z, 4.5 / view.z) + 2.0, len / 3.0);
     if (meta.y < 0.5) {
       float mid = (a.y + d.y) * 0.5;
       b = vec2(a.x, mid);
@@ -47,6 +49,8 @@ void main() {
   int vertex = gl_VertexID;
   vec2 p;
   side = 0.0;
+  along = 0.0;
+  dashed = meta.y > 0.5 && vertex < 120 ? 1.0 : 0.0;
   bool undirected = meta.y > 1.5 || meta.z < 0.5;
   if (vertex >= 120) {
     vec2 end = d * view.z + view.xy;
@@ -57,6 +61,7 @@ void main() {
   } else {
     int corner = vertex % 6;
     float t = (float(vertex / 6) + (corner == 1 || corner == 2 || corner == 4 ? 1.0 : 0.0)) / 20.0;
+    along = t * (length(b - a) + length(c - b) + length(d - c)) * view.z;
     vec2 tangent = normalize(curve(min(1.0, t + 0.001), a, b, c, d) - curve(max(0.0, t - 0.001), a, b, c, d) + vec2(0.00001));
     vec2 normal = vec2(-tangent.y, tangent.x);
     side = corner == 0 || corner == 1 || corner == 3 ? -1.0 : 1.0;
@@ -70,8 +75,11 @@ const EDGE_FRAGMENT = `#version 300 es
 precision highp float;
 in vec4 ink;
 in float side;
+in float along;
+flat in float dashed;
 out vec4 outputColor;
 void main() {
+  if (dashed > 0.5 && mod(along, 8.0) >= 4.0) discard;
   float coverage = 1.0 - smoothstep(0.5, 1.0, abs(side));
   outputColor = vec4(ink.rgb, ink.a * coverage);
 }
@@ -87,7 +95,7 @@ flat out float radius;
 flat out vec2 state;
 void main() {
   vec2 corners[6] = vec2[6](vec2(-1,-1),vec2(1,-1),vec2(1,1),vec2(-1,-1),vec2(1,1),vec2(-1,1));
-  radius = max(center.z * view.z, 3.5);
+  radius = max(center.z * view.z, 4.5);
   point = corners[gl_VertexID] * (radius + (flags.y > 0.5 ? 6.0 : 1.0));
   state = flags;
   ink = color;

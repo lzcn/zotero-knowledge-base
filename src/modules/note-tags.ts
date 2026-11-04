@@ -18,6 +18,11 @@ export function visibleNoteTags(
   tags: string[],
   libraryID: number | null = null,
 ): string[] {
+  return createTagVisibilityFilter(libraryID)(tags);
+}
+
+/** Snapshot exclusions once for a synchronous batch; never cache across edits. */
+export function createTagVisibilityFilter(libraryID: number | null = null) {
   const value = String(Zotero.Prefs.get(EXCLUDED_TAGS, true) || "");
   const rules = SWTagPolicy.exclusions(value);
   if (rules.colored) {
@@ -26,7 +31,7 @@ export function visibleNoteTags(
       for (const name of Zotero.Tags.getColors(library).keys())
         rules.keys.add(SWTagPolicy.key(name));
   }
-  return SWTagPolicy.visible(tags, rules);
+  return (tags: string[]) => SWTagPolicy.visible(tags, rules);
 }
 
 export function initTagExclusions(): void {

@@ -1,3 +1,10 @@
+/* global require */
+// Bundled consumers load the same stemmer as the shared script runtime.
+var swTokenStem =
+  typeof module !== "undefined" && module.exports
+    ? require("./stemmer.js").swPorterStem
+    : (word) => swPorterStem(word);
+
 var SW_EN_STOPWORDS = new Set([
   "a",
   "about",
@@ -280,7 +287,7 @@ function swTokenizeLatin(word, minLength, tokens) {
     return;
   }
   if (/^[a-z]+$/.test(word)) {
-    tokens.push(swPorterStem(word));
+    tokens.push(swTokenStem(word));
   } else {
     tokens.push(word);
   }

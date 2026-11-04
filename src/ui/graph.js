@@ -191,7 +191,7 @@ function showScope(id, reload = false) {
 }
 /** @param {import("./graph-layout").LayoutNode} node */
 function displayRadius(node) {
-  return Math.max(node.radius, 3.5 / transform.k);
+  return Math.max(node.radius, 4.5 / transform.k);
 }
 function titleLabel(title) {
   const chars = Array.from(title);

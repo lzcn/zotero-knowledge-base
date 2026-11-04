@@ -126,10 +126,11 @@
 }
 
 .graph-edge.similarity {
-  stroke-dasharray: none;
+  stroke-dasharray: 4 4;
 }
 
 .graph-edge.parent {
+  stroke-dasharray: none;
   stroke-width: 1.5px;
   opacity: 0.8;
 }
@@ -240,6 +241,7 @@
 }
 
 .graph-edge.link {
+  stroke-dasharray: 4 4;
   stroke-width: 0.8px;
   opacity: 0.3;
 }

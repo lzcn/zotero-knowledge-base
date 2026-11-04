@@ -797,14 +797,21 @@ var SWSearch = (() => {
       const keys = await this.retrieve(query, filter, pause, cancelled),
         results = [];
       progress({ done: 0, total: keys.length });
-      let done = 0;
+      let done = 0,
+        sliceStarted = Date.now();
       for (const candidate of keys) {
         if (cancelled()) return [];
         const doc = this.docs.get(candidate),
           score = this.similarity(query, doc);
         if (score > 0) results.push({ key: candidate, score, weak: doc.weak });
         progress({ done: ++done, total: keys.length });
-        if (done % 50 === 0) await pause();
+        if (
+          done % 50 === 0 &&
+          (done === 50 || Date.now() - sliceStarted >= 6)
+        ) {
+          await pause();
+          sliceStarted = Date.now();
+        }
       }
       results.sort((a, b) => b.score - a.score || a.key.localeCompare(b.key));
       const accepted = [];

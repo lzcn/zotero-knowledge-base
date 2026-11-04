@@ -87,13 +87,13 @@ export default async function graphViewsHost({
   );
   paper.addTag("Remote sensing");
   await paper.saveTx();
-  await Zotero.DB.executeTransaction(() =>
-    Zotero.Tags.setColor(paper.libraryID, "Remote sensing", "#3478f6", 0),
+  const coloredNode = (await api.getGraph()).nodes.find(
+    (node) => node.id === state.ids[0],
   );
   assert(
-    (await api.getGraph()).nodes.find((node) => node.id === state.ids[0])
-      .color === "#3478f6",
-    "Graph did not inherit the paper's topic color",
+    /^#[0-9a-f]{6}$/.test(coloredNode.color) &&
+      coloredNode.tags.includes("Remote sensing"),
+    "Graph did not assign an internal color to the paper's uncolored tag",
   );
   api.setGraphOption("hideIsolated", false);
   api.openGraph();
@@ -285,7 +285,7 @@ export default async function graphViewsHost({
       id: "preview-" + i,
       kind: "card",
       noteType: state.types[i % 4],
-      color: ["#6387b7", "#76a18a", "#aa8aaf"][i % 3],
+      color: ["#3478f6", "#16a085", "#a855f7"][i % 3],
       tags: [topics[i % topics.length]],
       title: topics[i % topics.length] + (i < topics.length ? "" : " · " + i),
       snippet:
