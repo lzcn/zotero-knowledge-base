@@ -15,6 +15,16 @@ try {
     format: "esm",
     outfile: join(root, "workbench.mjs"),
   });
+  await build({
+    entryPoints: ["src/modules/editor-views.ts"],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    outfile: join(root, "editor-views.mjs"),
+  });
+  const editorViews = await import(
+    pathToFileURL(join(root, "editor-views.mjs"))
+  );
   const dom = new JSDOM("<main></main>");
   const doc = dom.window.document;
   doc.createXULElement = (name) => doc.createElement(name);
@@ -222,6 +232,16 @@ try {
   assert.equal(auditRequests, 1);
   assert.deepEqual(tabs.getState(), nativeStates.slice(0, 2));
   const manager = doc.querySelector(".knowledge-base-workbench").contentWindow;
+  let selectedKnownNote;
+  manager.ZoteroKnowledgeBase_selectZettel = (id) => {
+    selectedKnownNote = id;
+  };
+  module.openWorkbench({ selectId: "known-note" });
+  assert.equal(selectedKnownNote, "known-note");
+  assert.equal(auditRequests, 1);
+  console.log(
+    "PASS Targeted note navigation reuses the workbench without requesting a library scan",
+  );
   let closeRequests = 0;
   manager.knowledgeBaseRequestClose = async () => {
     closeRequests++;
@@ -320,6 +340,8 @@ try {
   assert.equal(separateArgs.window, true);
   module.openWorkbenchWindow({ selectId: "third" });
   assert.deepEqual(selections, ["third"]);
+  assert.equal(refreshes, 0);
+  module.openWorkbenchWindow();
   assert.equal(refreshes, 1);
   const inline = separate.document.createElement("browser");
   inline.id = "knowledge-base-workbench-editor";
@@ -374,6 +396,92 @@ try {
   assert.equal(shutdownClose, true);
   console.log(
     "PASS Independent workbench reuses pending and ready windows, keeps the latest selection, flushes drafts on close and closes on shutdown",
+  );
+  const openedEditors = [];
+  let windowRequests = 0,
+    focusRequests = 0,
+    tagRequests = 0;
+  globalThis.Services.wm = { getEnumerator: () => openedEditors };
+  const openEditor = () => {
+    windowRequests++;
+    const view = new dom.window.EventTarget();
+    Object.assign(view, {
+      closed: false,
+      focus: () => focusRequests++,
+      close: () => {
+        view.closed = true;
+        view.dispatchEvent(new dom.window.Event("unload"));
+      },
+    });
+    openedEditors.push(view);
+    return view;
+  };
+  dom.window.openDialog = openEditor;
+  editorViews.openEditorWindow({ zettelId: "one", window: true });
+  editorViews.openEditorWindow({
+    zettelId: "one",
+    window: true,
+    editTags: true,
+  });
+  assert.equal(windowRequests, 1);
+  assert.equal(focusRequests, 1);
+  openedEditors[0].knowledgeBaseEditTags = async () => tagRequests++;
+  openedEditors[0].dispatchEvent(new dom.window.Event("load"));
+  await Promise.resolve();
+  assert.equal(tagRequests, 1);
+  openedEditors[0].close();
+  editorViews.openEditorWindow({ zettelId: "one", window: true });
+  assert.equal(windowRequests, 2);
+  editorViews.openEditorWindow({ draftId: "draft-one", window: true });
+  editorViews.openEditorWindow({ draftId: "draft-one", window: true });
+  assert.equal(windowRequests, 3);
+  editorViews.openEditorWindow({ window: true });
+  openedEditors.at(-1).knowledgeBaseCardId = "created-note";
+  editorViews.openEditorWindow({ zettelId: "created-note", window: true });
+  assert.equal(windowRequests, 4);
+  dom.window.openDialog = () => null;
+  assert.throws(
+    () => editorViews.openEditorWindow({ zettelId: "failed" }),
+    /Could not open note editor/,
+  );
+  dom.window.openDialog = openEditor;
+  editorViews.openEditorWindow({ zettelId: "failed" });
+  assert.equal(windowRequests, 5);
+  console.log(
+    "PASS Editor windows reuse pending notes, drafts and newly assigned identities, and recover after failed creation",
+  );
+  const viewErrors = [];
+  globalThis.Zotero.logError = (error) => viewErrors.push(error);
+  let stops = 0;
+  const failedFlush = {
+    knowledgeBaseFlushDraft: () => {
+      throw new Error("Draft flush failed");
+    },
+    knowledgeBaseStopEditor: () => stops++,
+  };
+  editorViews.stopEditorView(failedFlush);
+  editorViews.stopEditorView(failedFlush);
+  assert.equal(stops, 1);
+  assert.equal(failedFlush.knowledgeBaseStopping, true);
+  assert.equal(viewErrors.length, 1);
+  let completeFlush;
+  const pendingFlush = {
+    knowledgeBaseFlushDraft: () =>
+      new Promise((resolve) => {
+        completeFlush = resolve;
+      }),
+    knowledgeBaseStopEditor: () => {
+      throw new Error("Stop failed");
+    },
+  };
+  const flushed = editorViews.stopEditorView(pendingFlush);
+  assert.equal(pendingFlush.knowledgeBaseStopping, true);
+  assert.equal(viewErrors.length, 2);
+  assert.equal(editorViews.stopEditorView(pendingFlush), flushed);
+  completeFlush();
+  await flushed;
+  console.log(
+    "PASS Embedded and independent editors stop once and retain their pending draft writes when cleanup fails",
   );
 } finally {
   await rm(root, { recursive: true, force: true });

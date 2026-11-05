@@ -14,6 +14,7 @@ import {
   closeNativeMarkdown,
 } from "./modules/native-markdown";
 import { rebuildCounts } from "./modules/zettel";
+import { regularItemOf } from "./modules/zotero";
 import { initTagExclusions, stopTagExclusions } from "./modules/note-tags";
 import {
   initNoteSessions,
@@ -21,6 +22,12 @@ import {
   closeNoteSessions,
 } from "./modules/note-sessions";
 import { stopWorkbenches, closeWorkbenches } from "./modules/workbench";
+import { stopEditorView } from "./modules/editor-views";
+import { stopNativeNoteViews } from "./modules/native-note-view";
+import {
+  registerReaderClipping,
+  unregisterReaderClipping,
+} from "./modules/reader-clipping";
 import { registerPreferences, unregisterPreferences } from "./modules/settings";
 import { closeBibliographies } from "./modules/bibliography";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
@@ -114,6 +121,7 @@ async function start(token: number): Promise<void> {
       ["nativeMarkdown", initNativeMarkdown],
       ["registerPreferences", registerPreferences],
       ["registerReaderToolbar", registerReaderToolbar],
+      ["registerReaderClipping", registerReaderClipping],
       ["libraryRuntime", () => libraryRuntime.start()],
       ["registerItemPaneUI", registerItemPaneUI],
     ];
@@ -213,11 +221,11 @@ async function onMainWindowLoad(win: Window): Promise<void> {
       ).ZoteroPane;
       const item = pane.getSelectedItems()[0];
       if (!item) return;
+      const source = regularItemOf(item);
       addon.api.openEditor({
-        sourceItem:
-          item.isRegularItem() || item.isNote()
-            ? { key: item.key, libraryID: item.libraryID }
-            : undefined,
+        sourceItem: source
+          ? { key: source.key, libraryID: source.libraryID }
+          : undefined,
       });
     });
     let noteRequest = 0;
@@ -319,6 +327,7 @@ async function releaseResources(): Promise<void> {
     stopTagExclusions,
     unregisterItemPaneUI,
     unregisterReaderToolbar,
+    unregisterReaderClipping,
     unregisterPreferences,
     closeBibliographies,
     closeNativeMarkdown,
@@ -357,28 +366,25 @@ function onAppShutdown(): void {
       stopWorkbenches().catch((error) => Zotero.logError(error)),
     );
   });
+  stop(() => {
+    draftWrites.push(
+      stopNativeNoteViews().catch((error) => Zotero.logError(error)),
+    );
+  });
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:templates`)) {
     win.knowledgeBaseStopping = true;
     win.close();
   }
   // Start pending draft writes before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {
-    const editor = win as unknown as Window & {
-      knowledgeBaseFlushDraft?: () => Promise<void>;
-      knowledgeBaseStopping?: boolean;
-      knowledgeBaseStopEditor?: () => void;
-    };
     try {
-      const writing = editor.knowledgeBaseFlushDraft?.();
-      if (writing)
-        draftWrites.push(writing.catch((error) => Zotero.logError(error)));
-      editor.knowledgeBaseStopEditor?.();
+      const writing = stopEditorView(win as unknown as Window);
+      if (writing) draftWrites.push(writing);
     } catch (error) {
       Zotero.logError(
         error instanceof Error ? error : new Error(String(error)),
       );
     }
-    editor.knowledgeBaseStopping = true;
   }
   for (const action of [
     stopTagExclusions,

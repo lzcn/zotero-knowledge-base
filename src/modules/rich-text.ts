@@ -20,6 +20,12 @@ const converter = new TurndownService({
     ((node as HTMLElement & { isBlock: boolean }).isBlock ? "\n\n" : ""),
 });
 
+// Backslashes before letters and digits are already literal Markdown. Preserve
+// required escapes before punctuation, line endings and adjacent inline marks.
+const escapeMarkdown = converter.escape.bind(converter);
+converter.escape = (text: string) =>
+  escapeMarkdown(text).replace(/\\\\(?=[\p{L}\p{N}])/gu, "\\");
+
 /** ProseMirror serializes link marks outside emphasis; retain uniform inline marks in Markdown. */
 function formattedReference(link: HTMLElement, reference: string): string {
   const markers: Record<string, string> = {

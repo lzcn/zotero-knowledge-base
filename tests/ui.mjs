@@ -17,6 +17,7 @@ await writeFile(
     "graph",
     "assets",
     "rich-text",
+    "reader-clipping",
     "references",
     "native-notes",
     "preferences",
@@ -52,6 +53,7 @@ globalThis.window = htmlWindow;
 globalThis.document = htmlWindow.document;
 const {
   rich_text,
+  reader_clipping,
   markdown,
   zotero,
   graph: graphModule,
@@ -74,6 +76,46 @@ function check(label, fn) {
   checks++;
   console.log(`PASS ${label}`);
 }
+check(
+  "Annotation captions are omitted without removing PDF position or comments",
+  () => {
+    const annotation = encodeURIComponent(
+      JSON.stringify({
+        attachmentURI: "zotero://attachment",
+        position: { pageIndex: 2, rects: [[1, 2, 30, 40]] },
+      }),
+    );
+    const html = `<p><img data-attachment-key="IMAGE123" data-annotation="${annotation}"><br><span class="citation" data-citation="citation">(Author, 2026)</span> A useful figure.</p>`;
+    const xmlWindow = new JSDOM(
+      '<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"/>',
+      { contentType: "application/xml" },
+    ).window;
+    try {
+      const result = reader_clipping.withoutAnnotationCitations(
+        html,
+        xmlWindow.document,
+      );
+      const doc = new htmlWindow.DOMParser().parseFromString(
+        result,
+        "text/html",
+      );
+      assert.equal(doc.querySelector(".citation"), null);
+      assert.equal(doc.querySelector("br"), null);
+      assert.equal(
+        doc.querySelector("img").getAttribute("data-annotation"),
+        annotation,
+      );
+      assert.equal(
+        doc.querySelector("img").getAttribute("data-attachment-key"),
+        "IMAGE123",
+      );
+      assert.ok(doc.body.textContent.includes("A useful figure."));
+      assert.ok(html.includes("(Author, 2026)"));
+    } finally {
+      xmlWindow.close();
+    }
+  },
+);
 check(
   "macOS accelerators preserve Control editing and ignore input-method composition",
   () => {
@@ -553,15 +595,46 @@ const existingNote = {
 };
 items.set(30, existingNote);
 const noteSummary = await zotero.getItemSummary("NOTE1234", 1);
-check("Existing notes are linked by identity without importing content", () => {
-  assert.equal(noteSummary.title, "Existing note");
-  assert.equal(noteSummary.selectURL, "zotero://select/library/items/NOTE1234");
-  assert.ok(
-    searches.every(
-      (search) => !search.conditions.some((c) => c[0] === "noChildren"),
-    ),
-  );
+check(
+  "Source summaries reject notes while keeping them available for native navigation",
+  () => {
+    assert.equal(noteSummary, null);
+    assert.ok(
+      searches.every(
+        (search) => !search.conditions.some((c) => c[0] === "noChildren"),
+      ),
+    );
+  },
+);
+await zotero.selectItem("NOTE1234", 1);
+check(
+  "Native Zotero note links still open independently of Source selection",
+  () => assert.equal(selection.id, existingNote.id),
+);
+await assert.rejects(
+  zotero.requireSourceItem("NOTE1234", 1),
+  /SOURCE_ITEM_REQUIRED/,
+);
+await assert.rejects(
+  zotero.requireSourceItem("https://example.com", 1),
+  /SOURCE_ITEM_REQUIRED/,
+);
+const selectedSource = globalThis.Zotero.getActiveZoteroPane;
+globalThis.Zotero.getActiveZoteroPane = () => ({
+  getSelectedItems: () => [existingNote],
 });
+const standaloneSource = await zotero.getSelectedSource();
+existingNote.parentItemID = 1;
+const childSource = await zotero.getSelectedSource();
+delete existingNote.parentItemID;
+globalThis.Zotero.getActiveZoteroPane = selectedSource;
+check(
+  "A selected child note resolves to its paper and a standalone note supplies no Source",
+  () => {
+    assert.equal(standaloneSource, null);
+    assert.equal(childSource.key, "ABCD1234");
+  },
+);
 items.set(40, {
   ...makeItem(40, 1, "CITE0001", "Citation source"),
   citationKey: "Author2026",
@@ -636,10 +709,11 @@ check("The reference picker can search generated Better BibTeX keys", () => {
   );
 });
 delete globalThis.Zotero.BetterBibTeX;
+const focusesBeforeSource = focusCount;
 await zotero.selectItem("GROUP123", 7);
 check("Source navigation awaits selection and switches to library root", () => {
   assert.deepEqual(selection, { id: 7, options: { inLibraryRoot: true } });
-  assert.equal(focusCount, 2);
+  assert.equal(focusCount - focusesBeforeSource, 2);
 });
 check("Source keys require an explicit library identity", () =>
   assert.ok(zotero.getItemSummary),
@@ -3474,6 +3548,64 @@ check("Native code remains fenced and opaque to formula formatting", () => {
     code + "\n",
   );
 });
+check(
+  "Markdown leaves literal backslashes before letters and digits alone",
+  () => {
+    for (const text of [
+      String.raw`\alpha`,
+      String.raw`C:\Users\zhi\notes`,
+      String.raw`\中文\123`,
+    ]) {
+      const paragraph = htmlWindow.document.createElement("p");
+      paragraph.textContent = text;
+      const source = rich_text.richTextToMarkdown(paragraph.outerHTML);
+      assert.equal(source, text);
+      const rendered = htmlWindow.document
+        .createRange()
+        .createContextualFragment(markdown.renderMarkdown(source, htmlWindow));
+      assert.equal(rendered.querySelector("p").textContent, text);
+    }
+  },
+);
+
+check(
+  "Markdown backslash escaping preserves punctuation and repeated conversion",
+  () => {
+    for (const text of [
+      String.raw`\\server\share`,
+      String.raw`\\\alpha`,
+      String.raw`\*literal\*`,
+      String.raw`\[literal\]`,
+      "trailing\\",
+      "\\",
+    ]) {
+      const paragraph = htmlWindow.document.createElement("p");
+      paragraph.textContent = text;
+      const source = rich_text.richTextToMarkdown(paragraph.outerHTML);
+      const html = markdown.renderMarkdown(source, htmlWindow);
+      const rendered = htmlWindow.document
+        .createRange()
+        .createContextualFragment(html);
+      assert.equal(rendered.querySelector("p").textContent, text);
+      assert.equal(rich_text.richTextToMarkdown(html), source);
+    }
+  },
+);
+
+check("Markdown keeps backslashes beside inline formatting and in code", () => {
+  const html = "<p>before\\<em>word</em> and <code>\\alpha</code></p>";
+  const source = rich_text.richTextToMarkdown(html);
+  const rendered = htmlWindow.document
+    .createRange()
+    .createContextualFragment(markdown.renderMarkdown(source, htmlWindow));
+  assert.equal(
+    rendered.querySelector("p").textContent,
+    "before\\word and \\alpha",
+  );
+  assert.equal(rendered.querySelector("em").textContent, "word");
+  assert.equal(rendered.querySelector("code").textContent, "\\alpha");
+});
+
 check("Native math projects to Markdown without losing LaTeX", () => {
   assert.equal(
     rich_text.richTextToMarkdown(
@@ -3737,11 +3869,14 @@ await chooseMode(ed, "source");
 ed.win.__editorEval("toggleSourceDrop()");
 await ed.win.__editorEval("searchSources()");
 ed.$("knowledge-base-src-results").firstElementChild.click();
+await wait();
 check(
-  "Selecting a source fills its association and enables jump and insertion",
+  "Selecting a source preserves its formatted citation and enables jump and insertion",
   () => {
     assert.ok(
-      ed.$("knowledge-base-src-display").textContent.includes("Atomic idea"),
+      ed
+        .$("knowledge-base-src-display")
+        .textContent.includes("Linked Zotero item"),
     );
     assert.equal(ed.$("knowledge-base-src-insert").disabled, false);
   },
@@ -3763,7 +3898,13 @@ const referenceEditor = await editor(
   {
     searchItems: async () => [
       { ...sources[0], citationKey: "Author2026" },
-      noteSummary,
+      {
+        ...sources[1],
+        key: "WEBPAGE1",
+        title: "Saved web page",
+        citationKey: undefined,
+        selectURL: "zotero://select/library/items/WEBPAGE1",
+      },
     ],
   },
 );
@@ -3787,30 +3928,38 @@ await referenceEditor.win.__editorEval("searchSources()");
 referenceEditor.$("knowledge-base-src-results").lastElementChild.click();
 await wait();
 await wait();
-check("Zotero note references use ordinary editable Markdown link text", () => {
-  assert.ok(
-    referenceEditor
-      .$("knowledge-base-editor-body")
-      .value.includes(
-        "[Existing note](zotero://select/library/items/NOTE1234)",
+check(
+  "Unkeyed item references use editable Markdown without changing Source",
+  () => {
+    assert.ok(
+      referenceEditor
+        .$("knowledge-base-editor-body")
+        .value.includes(
+          "[Saved web page](zotero://select/library/items/WEBPAGE1)",
+        ),
+    );
+    assert.equal(referenceEditor.win.__editorEval("source.key"), "ABCD1234");
+  },
+);
+check(
+  "Existing Zotero note links still round-trip without changing their content",
+  () => {
+    const html = markdown.renderMarkdown(
+      "[My note title](zotero://select/library/items/NOTE1234)",
+      htmlWindow,
+    );
+    assert.equal(
+      rich_text.richTextToMarkdown(html),
+      "[My note title](zotero://select/library/items/NOTE1234)",
+    );
+    assert.equal(
+      rich_text.richTextToMarkdown(
+        '<p><a href="zotero://select/library/items/NOTE1234" title="[[stable-id|Old label]]">New label</a></p>',
       ),
-  );
-  assert.equal(referenceEditor.win.__editorEval("source.key"), "ABCD1234");
-  const html = markdown.renderMarkdown(
-    "[My note title](zotero://select/library/items/NOTE1234)",
-    htmlWindow,
-  );
-  assert.equal(
-    rich_text.richTextToMarkdown(html),
-    "[My note title](zotero://select/library/items/NOTE1234)",
-  );
-  assert.equal(
-    rich_text.richTextToMarkdown(
-      '<p><a href="zotero://select/library/items/NOTE1234" title="[[stable-id|Old label]]">New label</a></p>',
-    ),
-    "[[stable-id|New label]]",
-  );
-});
+      "[[stable-id|New label]]",
+    );
+  },
+);
 const literaturePicker = await editor(
   {},
   {

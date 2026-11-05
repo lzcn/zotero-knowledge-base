@@ -1,6 +1,7 @@
 import { config } from "../../package.json";
 import { isAccelKey } from "../ui/platform";
 import { getDOMWindow } from "../utils/dom";
+import { stopEditorView } from "./editor-views";
 import type { EditorArgs, ManagerArgs } from "./api";
 
 interface Browser extends Element {
@@ -75,7 +76,8 @@ export function openWorkbench(args: ManagerArgs = {}): void {
   const existing = workbenches.get(win);
   if (existing) {
     existing.tabs.select(existing.id);
-    existing.browser.contentWindow.knowledgeBaseRefreshNotes?.();
+    if (!args.editor && !args.selectId && !args.unresolvedRef)
+      existing.browser.contentWindow.knowledgeBaseRefreshNotes?.();
     if (args.editor) {
       existing.args.editor = args.editor;
       existing.browser.contentWindow.ZoteroKnowledgeBase_editNote?.(
@@ -161,7 +163,8 @@ export function openWorkbenchWindow(args: ManagerArgs = {}): void {
     Object.assign(record.args, args);
     record.win?.focus();
     const manager = record.browser?.contentWindow;
-    manager?.knowledgeBaseRefreshNotes?.();
+    if (!args.editor && !args.selectId && !args.unresolvedRef)
+      manager?.knowledgeBaseRefreshNotes?.();
     if (args.editor) manager?.ZoteroKnowledgeBase_editNote?.(args.editor);
     else if (args.selectId) {
       record.args.editor = undefined;
@@ -284,7 +287,6 @@ function stopWorkbench(win: Window): Promise<void> | undefined {
 }
 
 function stopWorkbenchBrowser(browser: Browser): Promise<void> | undefined {
-  let writing: Promise<void> | undefined;
   const manager = browser.contentWindow;
   const editorBrowser = manager?.document.getElementById(
     "knowledge-base-workbench-editor",
@@ -294,25 +296,7 @@ function stopWorkbenchBrowser(browser: Browser): Promise<void> | undefined {
     mounts.set(editorBrowser, (mounts.get(editorBrowser) || 0) + 1);
     cancelLoads.get(editorBrowser)?.();
   }
-  if (editor && !editor.knowledgeBaseStopping) {
-    try {
-      writing = editor
-        .knowledgeBaseFlushDraft?.()
-        .catch((error) => Zotero.logError(error));
-    } catch (error) {
-      Zotero.logError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
-    }
-    editor.knowledgeBaseStopping = true;
-    try {
-      editor.knowledgeBaseStopEditor?.();
-    } catch (error) {
-      Zotero.logError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
-    }
-  }
+  const writing = stopEditorView(editor);
   for (const view of [browser, editorBrowser]) {
     const token = view && pending.get(view);
     if (token) contexts.delete(token);

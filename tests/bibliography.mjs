@@ -138,8 +138,55 @@ try {
   await old;
   assert.equal(container.textContent, "New source");
   assert.ok(container.querySelector("i"));
+  const originalEmphasis = container.querySelector("i");
+  await dom.window.ZoteroKnowledgeBaseMarkdown.source(
+    container,
+    { key: "NEW", title: "New", libraryID: 1 },
+    api,
+  );
+  assert.equal(
+    container.querySelector("i"),
+    originalEmphasis,
+    "An unchanged refresh must preserve the mouse-down target",
+  );
   assert.equal(container.getAttribute("role"), "link");
   console.log("PASS Slow Source rendering cannot overwrite a newer source");
+  const selected = [];
+  let release;
+  api.selectItem = (key, libraryID) => {
+    selected.push([key, libraryID]);
+    return new Promise((resolve) => {
+      release = resolve;
+    });
+  };
+  container.innerHTML = '<a href="https://example.com/doi">Citation</a>';
+  const click = (detail) =>
+    container.firstChild.dispatchEvent(
+      new dom.window.MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        detail,
+      }),
+    );
+  click(1);
+  click(2);
+  await Promise.resolve();
+  assert.deepEqual(selected, [["NEW", 1]]);
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await dom.window.ZoteroKnowledgeBaseMarkdown.source(
+    container,
+    { key: "EARLY", title: "Early", libraryID: 1 },
+    api,
+    false,
+  );
+  container.click();
+  await Promise.resolve();
+  assert.deepEqual(selected[1], ["EARLY", 1]);
+  release();
+  console.log(
+    "PASS Single Source click opens the item, ignores double-click repeats and works before CSL initialization",
+  );
 } finally {
   await rm(root, { recursive: true, force: true });
 }

@@ -7,6 +7,9 @@ import type {
 declare global {
   interface HTMLElement {
     _sourceRender?: object | null;
+    _sourceIdentity?: string | null;
+    _sourceHTML?: string | null;
+    _sourceOpening?: Promise<void> | null;
   }
   namespace Zotero {
     const ZoteroKnowledgeBase: { api: KnowledgeBaseAPI };
@@ -25,6 +28,7 @@ declare global {
       ): import("../src/ui/markdown-source").MarkdownSource;
     };
     knowledgeBaseCardId?: string | null;
+    knowledgeBaseInsertAnnotations?: (annotations: unknown[]) => Promise<void>;
     knowledgeBaseReady?: () => Promise<void>;
     knowledgeBaseRequestClose?: () => Promise<void>;
     knowledgeBaseEditTags?: () => Promise<void>;
@@ -61,6 +65,7 @@ declare global {
         container: HTMLElement,
         item: import("../src/modules/zotero").ItemSummary,
         api: KnowledgeBaseAPI,
+        format?: boolean,
       ): Promise<void>;
       render(container: Element, body: string): void;
       identity(
@@ -88,6 +93,8 @@ declare global {
 }
 
 export interface EditorElements {
+  "knowledge-base-note-details": HTMLDetailsElement;
+  "knowledge-base-note-details-label": HTMLElement;
   "knowledge-base-note-type": HTMLSelectElement;
   "knowledge-base-editor-restore": HTMLButtonElement;
   "knowledge-base-editor-format": HTMLButtonElement;
@@ -114,6 +121,7 @@ export interface EditorElements {
   "knowledge-base-editor-root": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-toolbar": HTMLElementTagNameMap["div"];
   "knowledge-base-src-display": HTMLElementTagNameMap["div"];
+  "knowledge-base-source-label": HTMLLabelElement;
   "knowledge-base-src-pick": HTMLElementTagNameMap["button"];
   "knowledge-base-src-jump": HTMLElementTagNameMap["button"];
   "knowledge-base-src-anno": HTMLElementTagNameMap["button"];

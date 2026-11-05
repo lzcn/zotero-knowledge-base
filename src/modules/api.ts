@@ -1,8 +1,11 @@
+import { setNativeNoteTakeover } from "./native-markdown";
 import { getAll } from "./db";
 import { getNewNoteBody } from "./preferences";
 import { getNoteTemplate, setNoteTemplate } from "./preferences";
 import { compareNoteSummaries } from "./note-sort";
 import { getDOMWindow } from "../utils/dom";
+import { openEditorWindow } from "./editor-views";
+import { openReadingNote } from "./reading-view";
 import { getGraphTags, getOwnNoteTags, visibleNoteTags } from "./note-tags";
 import { isAccelKey } from "../ui/platform";
 /**
@@ -95,6 +98,7 @@ import {
   getNoteEditorMode,
   setNoteEditorMode,
   getWorkbenchMode,
+  getNativeNoteTakeover,
   setWorkbenchMode,
   getGraphGroups,
   setGraphGroups,
@@ -142,7 +146,6 @@ import {
 } from "./zotero";
 
 const MANAGER_URL = `chrome://${config.addonRef}/content/manager.xhtml`;
-const EDITOR_URL = `chrome://${config.addonRef}/content/editor.xhtml`;
 const ANNOTATIONS_URL = `chrome://${config.addonRef}/content/annotations.xhtml`;
 
 /** A highlight plus the number of cards already created from it. */
@@ -186,8 +189,6 @@ export interface AnnotationPickerArgs {
 function mainWindow(): Window {
   return getDOMWindow();
 }
-
-const editorWindows = new Map<string, Window>();
 
 export const api = {
   getNoteTemplate,
@@ -577,6 +578,8 @@ export const api = {
 
   openWorkbenchWindow,
   getWorkbenchMode,
+  getNativeNoteTakeover,
+  setNativeNoteTakeover,
   setWorkbenchMode,
 
   openTemplateManager(): Window {
@@ -627,63 +630,10 @@ export const api = {
         editor: args,
         selectId: args.zettelId || undefined,
       });
-    const key = args.zettelId
-      ? `note:${args.zettelId}`
-      : args.draftId
-        ? `draft:${args.draftId}`
-        : null;
-    const pending = key ? editorWindows.get(key) : null;
-    const focus = (editor: Window) => {
-      editor.focus();
-      if (!args.editTags) return;
-      const edit = () => {
-        void editor
-          .knowledgeBaseEditTags?.()
-          .catch((error) => Zotero.logError(error));
-      };
-      if (editor.knowledgeBaseEditTags) edit();
-      else editor.addEventListener("load", edit, { once: true });
-    };
-    if (pending && !pending.closed) {
-      focus(pending);
-      return;
-    }
-    for (const win of Services.wm.getEnumerator("knowledge-base:editor")) {
-      const editor = win as unknown as Window & {
-        knowledgeBaseCardId?: string;
-        knowledgeBaseDraftId?: string;
-      };
-      if (
-        (args.zettelId && editor.knowledgeBaseCardId === args.zettelId) ||
-        (args.draftId && editor.knowledgeBaseDraftId === args.draftId)
-      ) {
-        focus(editor);
-        return;
-      }
-    }
-    const opened = mainWindow().openDialog(
-      EDITOR_URL,
-      "_blank",
-      "chrome,centerscreen,resizable=yes,width=1000,height=720",
-      args,
-    ) as Window & {
-      knowledgeBaseCardId?: string;
-      knowledgeBaseDraftId?: string;
-    };
-    if (key) {
-      editorWindows.set(key, opened);
-      opened.addEventListener(
-        "unload",
-        () => {
-          if (editorWindows.get(key) === opened) editorWindows.delete(key);
-        },
-        { once: true },
-      );
-    }
-    // Stamp identity before the window script loads, so rapid requests reuse it.
-    if (args.zettelId) opened.knowledgeBaseCardId = args.zettelId;
-    if (args.draftId) opened.knowledgeBaseDraftId = args.draftId;
+    openEditorWindow(args);
   },
+
+  openReadingNote,
 
   openGraph(args: { centerId?: string } = {}): void {
     const existing = Services.wm.getMostRecentWindow("knowledge-base:graph") as

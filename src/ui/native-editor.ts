@@ -78,6 +78,7 @@ const NOTE_LINK_URL = /^(?:knowledge-base:\/\/|zotero:\/\/(?:select\/|note\/))/;
 
 /** Thin adapter around Zotero's editor; the host owns editing and note storage. */
 export interface NativeEditorInstance {
+  insertAnnotations(annotations: unknown[]): Promise<void>;
   instanceID: string;
   _initPromise: Promise<void>;
   _disableSaving: boolean;
@@ -159,6 +160,7 @@ async function create(
   let sourceMode = false;
   let composing = false;
   let appearance: HTMLStyleElement | undefined;
+  let toolbarSize: ResizeObserver | undefined;
   let previousDisableSaving = element.getCurrentInstance()._disableSaving;
   type LinkRange = {
     view: NativeEditorView;
@@ -403,6 +405,7 @@ async function create(
       linkQuery = null;
       options.onNoteQuery(null);
     }
+    toolbarSize?.disconnect();
     appearance?.remove();
     removeMarkdownToggle?.();
     removeNoteLink();
@@ -436,6 +439,8 @@ async function create(
       @import url("chrome://knowledge-base/content/ui.css");
       @import url("chrome://knowledge-base/content/note-headings.css");
       @import url("chrome://knowledge-base/content/note-layout.css");
+      .toolbar { height: auto !important; padding-block: 5px; box-sizing: border-box; }
+      .toolbar .toolbar-button { flex-shrink: 0; }
       .primary-editor {
         --editor-padding-block: var(--knowledge-base-note-top);
         --editor-padding-inline: var(--knowledge-base-note-gutter);
@@ -457,6 +462,18 @@ async function create(
       .primary-editor h3 { font-size: 1.15em; }
     `;
     frame.document.head.append(appearance);
+    const noteToolbar = frame.document.querySelector(".toolbar");
+    if (noteToolbar) {
+      toolbarSize = new element.ownerDocument.defaultView!.ResizeObserver(
+        () => {
+          element.parentElement?.style.setProperty(
+            "--knowledge-base-toolbar-height",
+            `${noteToolbar.getBoundingClientRect().height}px`,
+          );
+        },
+      );
+      toolbarSize.observe(noteToolbar);
+    }
     if (!readOnly)
       removeMarkdownToggle = attachMarkdownToggle(
         frame,

@@ -38,35 +38,52 @@ window.ZoteroKnowledgeBaseMarkdown = {
     container.hidden = !tags.length;
   },
   /** @param {HTMLElement} container @param {import("../../src/modules/zotero").ItemSummary} item @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
-  async source(container, item, api) {
+  async source(container, item, api, format = true) {
     const token = {};
     container._sourceRender = token;
     container.classList.add("bibliography-reference");
-    container.textContent = item.title;
+    const identity = JSON.stringify([item.libraryID, item.key]);
+    if (container._sourceIdentity !== identity) {
+      container._sourceIdentity = identity;
+      container._sourceHTML = null;
+      container.textContent = item.title;
+    }
     container.setAttribute("role", "link");
     container.tabIndex = 0;
     container.title = api.loc("manager-source-open");
     container.onclick = (event) => {
-      const link = /** @type {Element} */ (event.target).closest?.("a[href]");
       event.preventDefault();
-      (link
-        ? api.openLink(link.getAttribute("href"))
-        : api.selectItem(item.key, item.libraryID)
-      ).catch((error) => Zotero.logError(error));
+      if (event.button !== 0 || event.detail > 1 || container._sourceOpening)
+        return;
+      const opening = Promise.resolve().then(() =>
+        api.selectItem(item.key, item.libraryID),
+      );
+      container._sourceOpening = opening;
+      opening
+        .catch((error) => Zotero.logError(error))
+        .finally(() => {
+          if (container._sourceOpening === opening)
+            container._sourceOpening = null;
+        });
     };
     container.onkeydown = (event) => {
-      if (event.target === container && event.key === "Enter")
+      if (event.key === "Enter" && !event.isComposing) {
+        event.preventDefault();
         container.click();
+      }
     };
+    if (!format) return;
     const html = await api.getSourceBibliography(item.key, item.libraryID);
     if (container._sourceRender !== token || !container.isConnected || !html)
       return;
+    if (container._sourceHTML === html) return;
     const parsed = new window.DOMParser().parseFromString(html, "text/html");
     container.replaceChildren(
       ...Array.from(parsed.body.childNodes).map((node) =>
         document.importNode(node, true),
       ),
     );
+    container._sourceHTML = html;
   },
   /** @param {Element} container @param {string} id @param {string} title @param {string} [reference] */
   identity(container, id, title, reference = id) {

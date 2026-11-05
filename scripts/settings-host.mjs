@@ -111,6 +111,19 @@ export default async function settingsHost({
         }),
     );
   });
+  const takeover = doc.getElementById("knowledge-base-native-note-takeover");
+  assert(
+    takeover?.checked && takeover.getAttribute("label"),
+    "Native note takeover setting is missing or unnamed",
+  );
+  for (const enabled of [false, true]) {
+    takeover.checked = enabled;
+    takeover.dispatchEvent(new settings.Event("command", { bubbles: true }));
+    await wait(
+      () => !takeover.disabled && api.getNativeNoteTakeover() === enabled,
+      "Native note takeover setting did not save",
+    );
+  }
   const groups = [...doc.querySelectorAll(".plugin-preferences .main-section")];
   assert(
     groups.length === 7 &&

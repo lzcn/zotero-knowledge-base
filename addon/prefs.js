@@ -1,4 +1,5 @@
 /* global pref */
+pref("extensions.zotero.knowledge-base.nativeNoteTakeover", true);
 pref("extensions.zotero.knowledge-base.workbenchMode", "tab");
 pref("extensions.zotero.knowledge-base.editorMode", "visual");
 pref(

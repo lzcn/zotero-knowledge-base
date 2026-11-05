@@ -1,4 +1,12 @@
+import { config } from "../../package.json";
 import { attachTextTools, textToolLabels } from "../ui/text-tools";
+import {
+  attachNativeNoteEditor,
+  detachNativeNoteEditor,
+  type NativeEditorInstance,
+  prepareNativeNoteViews,
+  stopNativeNoteViews,
+} from "./native-note-view";
 import { isAccelKey } from "../ui/platform";
 import {
   attachMarkdownToggle,
@@ -19,7 +27,7 @@ import {
   discardEditorDraft,
 } from "./editor-drafts";
 
-interface EditorInstance {
+interface EditorInstance extends NativeEditorInstance {
   instanceID: string;
   _item: Zotero.Item;
   _tabID?: string;
@@ -92,6 +100,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     const win = doc.defaultView!;
     const windowType = doc.documentElement.getAttribute("windowtype") || "";
     if (windowType.startsWith("knowledge-base:")) return;
+    if (await attachNativeNoteEditor(instance, element)) return;
     const item = instance._item;
     if (!item?.isNote()) return;
     await repairNativeNoteLinks(item);
@@ -579,6 +588,7 @@ export function initNativeMarkdown(): void {
     this: NativeNotes,
     instance: EditorInstance,
   ) {
+    detachNativeNoteEditor(instance);
     controllers.get(instance)?.dispose();
     controllers.delete(instance);
     return unregister.call(this, instance);
@@ -621,4 +631,22 @@ export async function closeNativeMarkdown(
     for (const controller of controllers.values()) controller.dispose();
   }
   controllers.clear();
+}
+
+/** Switch the shared native integration only after all visible documents are saved. */
+export async function setNativeNoteTakeover(enabled: boolean): Promise<void> {
+  const elements = await prepareNativeNoteViews();
+  await closeNativeMarkdown();
+  await stopNativeNoteViews();
+  Zotero.Prefs.set(`${config.prefsPrefix}.nativeNoteTakeover`, enabled, true);
+  try {
+    for (const element of elements) {
+      if (element.isConnected)
+        await (
+          element as HTMLElement & { initEditor(): Promise<void> }
+        ).initEditor();
+    }
+  } finally {
+    initNativeMarkdown();
+  }
 }

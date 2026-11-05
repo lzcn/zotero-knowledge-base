@@ -1710,7 +1710,7 @@ summary {
 #knowledge-base-markdown-toolbar {
   display: none;
 }
-#knowledge-base-editor-toolbar > #knowledge-base-src-display {
+#knowledge-base-src-display {
   border: 0;
   background: transparent;
   padding: 0;
@@ -1720,7 +1720,7 @@ summary {
   font: inherit;
   cursor: pointer;
 }
-#knowledge-base-editor-toolbar > #knowledge-base-src-display.placeholder {
+#knowledge-base-src-display.placeholder {
   color: var(--muted);
   cursor: default;
 }
@@ -1787,12 +1787,13 @@ summary {
   color: var(--muted);
   font-size: 12px;
 }
+#knowledge-base-source-label,
 #knowledge-base-tags-label,
 #knowledge-base-parent-label {
   padding-block: 2px;
   line-height: 20px;
 }
-#knowledge-base-editor-toolbar > #knowledge-base-src-display {
+#knowledge-base-src-display {
   max-width: none;
   min-width: 0;
   width: auto;
@@ -2351,4 +2352,34 @@ summary {
 }
 #knowledge-base-view-entity {
   list-style-image: url("chrome://knowledge-base/content/icons/ui/entity.svg");
+}
+
+.source-value {
+  align-items: flex-start;
+}
+.source-value > .metadata-change {
+  flex: 0 0 24px;
+}
+
+/* One compact metadata disclosure in every note host. */
+#knowledge-base-editor-metadata {
+  display: block;
+  padding: 4px 16px;
+}
+#knowledge-base-note-details > summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 26px;
+  cursor: pointer;
+}
+#knowledge-base-note-details > summary:hover {
+  color: var(--fg);
+}
+#knowledge-base-note-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+#knowledge-base-note-details[open] .note-metadata-fields {
+  padding: 4px 0 8px;
 }

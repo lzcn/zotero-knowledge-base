@@ -23,7 +23,7 @@ import {
 } from "./note-references";
 import { getCitation, prepareCitations, resolveCitation } from "./references";
 import { resolveAssetURL } from "./assets";
-import { getCitationKey } from "./zotero";
+import { getCitationKey, requireSourceItem } from "./zotero";
 import { getDOMWindow } from "../utils/dom";
 import { getString } from "../utils/locale";
 import { writeNativeNote } from "./note-sessions";
@@ -724,7 +724,7 @@ export async function getNoteHealth(id: string): Promise<NoteHealth> {
             : "available",
     source: !card?.item_key
       ? "none"
-      : !source
+      : !source || !source.isRegularItem()
         ? "missing"
         : source.isInTrash()
           ? "trashed"
@@ -957,16 +957,17 @@ async function organizeNativeNote(
   if (mapping?.external && !relocate) return;
   const library = Zotero.Libraries.get(note.libraryID);
   if (!library || !library.editable) return;
-  let source = input.itemKey
+  const source = input.itemKey
     ? await Zotero.Items.getByLibraryAndKeyAsync(
         input.libraryID ?? note.libraryID,
         input.itemKey,
       )
     : null;
-  if (input.itemKey && (!source || source.isInTrash())) return;
-  if (source && !source.isRegularItem() && source.parentItemID)
-    source = await Zotero.Items.getAsync(source.parentItemID);
-  if (input.itemKey && source && source.isInTrash()) return;
+  if (
+    input.itemKey &&
+    (!source || !source.isRegularItem() || source.isInTrash())
+  )
+    return;
   const parent =
     source &&
     source.isRegularItem() &&
@@ -1043,6 +1044,12 @@ export async function acquireNativeNote(
     await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
   }
   const original = input.id ? await getZettel(input.id) : null;
+  if (
+    input.itemKey &&
+    (input.itemKey !== original?.item_key ||
+      input.libraryID !== original?.library_id)
+  )
+    await requireSourceItem(input.itemKey, input.libraryID);
   if (!note) {
     note = new Zotero.Item("note");
     note.libraryID = (original ? !!original.source_note : input.sourceNote)
@@ -1103,6 +1110,12 @@ export async function saveNativeCard(
 ): Promise<{ id: string; updatedAt: number; html?: string; noteID?: number }> {
   if (input.noteType !== undefined) requireNoteType(input.noteType);
   const existing = input.id ? await getZettel(input.id) : null;
+  if (
+    input.itemKey &&
+    (input.itemKey !== existing?.item_key ||
+      input.libraryID !== existing?.library_id)
+  )
+    await requireSourceItem(input.itemKey, input.libraryID);
   const sourceNote = input.sourceNote ?? !!existing?.source_note;
   if (sourceNote) {
     const source =

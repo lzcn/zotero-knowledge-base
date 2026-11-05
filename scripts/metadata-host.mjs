@@ -42,6 +42,7 @@ export default async function metadataHost({
       );
     }, "Metadata editor did not open");
     await editor.knowledgeBaseReady();
+    editor.document.getElementById("knowledge-base-note-details").open = true;
     await wait(
       () => editor.document.documentElement.getBoundingClientRect().width > 0,
       "Metadata editor has not been shown",
@@ -100,6 +101,53 @@ export default async function metadataHost({
   source.addTag("Graph learning");
   source.addTag("Representation learning");
   await source.saveTx();
+  const internalNote = new Zotero.Item("note");
+  internalNote.setNote(
+    '<div data-schema-version="2"><p>SourceBoundary internal note</p></div>',
+  );
+  await internalNote.saveTx();
+  const webItem = new Zotero.Item("webpage");
+  webItem.setField("title", "SourceBoundary saved web page");
+  webItem.setField("url", "https://example.com/source-boundary");
+  await webItem.saveTx();
+  const sourceCandidates =
+    await knowledgeBase.api.searchItems("SourceBoundary");
+  assert(
+    sourceCandidates.some((item) => item.key === webItem.key) &&
+      !sourceCandidates.some((item) => item.key === internalNote.key),
+    "Source search mixed notes with bibliographic items",
+  );
+  assert(
+    (await knowledgeBase.api.getItemSummary(
+      internalNote.key,
+      internalNote.libraryID,
+    )) === null,
+    "A Zotero note is still displayed as Source",
+  );
+  const noteHTML = internalNote.getNote();
+  for (const itemKey of [internalNote.key, "https://example.com/direct-source"])
+    for (const save of [
+      knowledgeBase.api.saveZettel,
+      knowledgeBase.api.saveEditorCard,
+    ]) {
+      let rejected = false;
+      try {
+        await save({
+          title: "Invalid SourceBoundary",
+          body: "Must not be saved.",
+          itemKey,
+          libraryID: source.libraryID,
+        });
+      } catch (error) {
+        if (!String(error).includes("SOURCE_ITEM_REQUIRED")) throw error;
+        rejected = true;
+      }
+      assert(rejected, "A non-item Source was accepted");
+    }
+  assert(
+    internalNote.getNote() === noteHTML,
+    "Rejecting a note Source changed its original content",
+  );
   const id = await knowledgeBase.api.saveZettel({
     sourceNote: true,
     customKey: "BetterDynamicGraphYu23",
@@ -465,8 +513,29 @@ export default async function metadataHost({
   } finally {
     knowledgeBase.api.selectItem = originalSelect;
   }
+  const workbenchTab = main.Zotero_Tabs.selectedID;
+  await pause(0);
+  const sourceTarget =
+    display.querySelector("i") || display.firstElementChild || display;
+  const sourceBounds = sourceTarget.getBoundingClientRect();
+  const sourceX = sourceBounds.x + Math.min(10, sourceBounds.width / 2);
+  const sourceY = sourceBounds.y + sourceBounds.height / 2;
+  editor.windowUtils.sendMouseEvent("mousedown", sourceX, sourceY, 0, 1, 0);
+  await editor.eval("refreshSourceDisplay()");
+  editor.windowUtils.sendMouseEvent("mouseup", sourceX, sourceY, 0, 1, 0);
+  await wait(
+    () =>
+      main.Zotero_Tabs.selectedID === "zotero-pane" &&
+      main.ZoteroPane.getSelectedItems().some(
+        (item) =>
+          item.key === source.key && item.libraryID === source.libraryID,
+      ),
+    "One Source click did not switch to the library and select the paper",
+  );
+  main.Zotero_Tabs.select(workbenchTab);
+  await pause(50);
   pointer($("src-pick"));
-  assert(!$("src-drop").hidden, "Source label did not open the source picker");
+  assert(!$("src-drop").hidden, "Source pencil did not open the source picker");
   $("src-search").dispatchEvent(
     new editor.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
   );
@@ -640,7 +709,7 @@ export default async function metadataHost({
         );
         const sourceRect = display.getBoundingClientRect(),
           copyRect = key.getBoundingClientRect();
-        const sourceLabel = $("src-pick").getBoundingClientRect(),
+        const sourceLabel = $("source-label").getBoundingClientRect(),
           tagsLabel = $("tags-label").getBoundingClientRect(),
           keyLabel = $("key-label").getBoundingClientRect();
         assert(

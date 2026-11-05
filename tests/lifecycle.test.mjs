@@ -19,10 +19,14 @@ await build({
     {
       name: "host-boundaries",
       setup(builder) {
-        builder.onResolve({ filter: /(?:modules|utils)\// }, (args) => ({
-          path: args.path,
-          namespace: "lifecycle",
-        }));
+        builder.onResolve({ filter: /(?:modules|utils)\// }, (args) => {
+          if (
+            args.path.endsWith("/editor-views") ||
+            args.path.endsWith("/utils/dom")
+          )
+            return;
+          return { path: args.path, namespace: "lifecycle" };
+        });
         builder.onLoad({ filter: /.*/, namespace: "lifecycle" }, () => ({
           contents: `
       const state = () => globalThis.lifecycle;
@@ -36,6 +40,7 @@ await build({
         if (state().fail === name) throw new Error(name + " failed");
       };
       export const stopWorkbenches = async () => stop("stopWorkbenches");
+      export const stopNativeNoteViews = async () => stop("stopNativeNoteViews");
       export const closeWorkbenches = () => {
         if (state().fail === "closeWorkbenches") throw new Error("Workbench close failed");
       };
@@ -61,6 +66,7 @@ await build({
       export const closeAssets = () => run("closeAssets");
       export const cleanupImagesAfterChange = () => run("cleanupImages");
       export const rebuildCounts = () => run("rebuildCounts");
+      export const regularItemOf = () => null;
       export const registerPreferences = () => run("registerPreferences");
       export const unregisterPreferences = () => {};
       export const closeBibliographies = () => {};
@@ -70,6 +76,8 @@ await build({
       export const unregisterReaderUI = () => run("unregisterReader");
       export const registerReaderToolbar = () => run("registerReaderToolbar");
       export const unregisterReaderToolbar = () => run("unregisterReaderToolbar");
+      export const registerReaderClipping = () => run("registerReaderClipping");
+      export const unregisterReaderClipping = () => {};
       export const clearStartupLog = () => run("clearLog");
       export const reportStartupFailure = async (step, error) => { state().failures.push({ step, error }); };
     `,

@@ -23,12 +23,14 @@ const settingsOnly = args.includes("--settings");
 const graphViewsOnly = args.includes("--graph-views");
 const noteTypesOnly = args.includes("--note-types");
 const readerToolbarOnly = args.includes("--reader-toolbar");
+const readingViewOnly = args.includes("--reading-view");
 const textToolsOnly = args.includes("--text-tools");
 const workbenchOnly = args.includes("--workbench");
 const metadataOnly = args.includes("--metadata");
 const viewsOnly = args.includes("--views");
 const retiredOnly = args.includes("--retired-features");
 const editingHost =
+  readingViewOnly ||
   settingsOnly ||
   graphViewsOnly ||
   noteTypesOnly ||
@@ -40,21 +42,23 @@ const editingHost =
     ? (
         await readFile(
           new URL(
-            settingsOnly
-              ? "./settings-host.mjs"
-              : graphViewsOnly
-                ? "./graph-views-host.mjs"
-                : noteTypesOnly
-                  ? "./note-types-host.mjs"
-                  : retiredOnly
-                    ? "./retired-features-host.mjs"
-                    : viewsOnly
-                      ? "./views-host.mjs"
-                      : metadataOnly
-                        ? "./metadata-host.mjs"
-                        : workbenchOnly
-                          ? "./workbench-host.mjs"
-                          : "./text-tools-host.mjs",
+            readingViewOnly
+              ? "./reading-view-host.mjs"
+              : settingsOnly
+                ? "./settings-host.mjs"
+                : graphViewsOnly
+                  ? "./graph-views-host.mjs"
+                  : noteTypesOnly
+                    ? "./note-types-host.mjs"
+                    : retiredOnly
+                      ? "./retired-features-host.mjs"
+                      : viewsOnly
+                        ? "./views-host.mjs"
+                        : metadataOnly
+                          ? "./metadata-host.mjs"
+                          : workbenchOnly
+                            ? "./workbench-host.mjs"
+                            : "./text-tools-host.mjs",
             import.meta.url,
           ),
           "utf8",
@@ -69,6 +73,7 @@ const templatesOnly = args.includes("--templates");
 const linksOnly = args.includes("--links");
 const relationsOnly = args.includes("--relations");
 const connectionsOnly =
+  readingViewOnly ||
   settingsOnly ||
   args.includes("--retired-features") ||
   linksOnly ||
@@ -109,7 +114,7 @@ await mkdir(join(profile, "extensions"), { recursive: true });
 await mkdir(data);
 await mkdir(hostTemp);
 const readerPDF = join(root, "reader.pdf");
-if (readerToolbarOnly) {
+if (readerToolbarOnly || readingViewOnly) {
   const stream = "BT /F1 20 Tf 40 700 Td (Knowledge Base reader toolbar) Tj ET";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
@@ -280,11 +285,11 @@ function runQuitTest() {
         setTimeout(run, 250);
         return;
       }
-      if (${settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
+      if (${readingViewOnly || settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
         const test = ${editingHost || "null"};
         restarting = await IOUtils.exists(${JSON.stringify(marker)});
         await test({Zotero, ChromeUtils, IOUtils, PathUtils, Services, Components, setTimeout,
-          marker:${JSON.stringify(marker)}, restartMarker:${JSON.stringify(restartMarker)},
+          readerPDF:${JSON.stringify(readerPDF)}, marker:${JSON.stringify(marker)}, restartMarker:${JSON.stringify(restartMarker)},
           screenshots:${JSON.stringify(process.env.KNOWLEDGE_BASE_HOST_SCREENSHOTS || "")}, aiRequests:${JSON.stringify(aiRequests)}});
         return;
       }
@@ -295,6 +300,7 @@ function runQuitTest() {
         const checkButton=async(reader)=>{
           const doc=reader._iframeWindow.document;
           const button=doc.getElementById('knowledge-base-reader-button');
+          await waitFor(()=>doc.querySelectorAll('#knowledge-base-clip-figure').length===1,'Figure clipping button is missing or duplicated');
           if(doc.querySelectorAll('#knowledge-base-reader-button').length!==1 || !button.closest('.toolbar .custom-sections') || button.title!==Zotero.ZoteroKnowledgeBase.api.loc('menu-open-manager') || button.getAttribute('aria-label')!==button.title || !button.classList.contains('toolbar-button'))throw new Error('Reader button is missing, duplicated or unnamed');
           await waitFor(()=>button.querySelector('img').complete && button.querySelector('img').naturalWidth>0,'Reader icon failed to load');
           const bounds=button.getBoundingClientRect();if(bounds.width<26 || bounds.height<26)throw new Error('Reader button does not use native toolbar geometry');
@@ -308,9 +314,9 @@ function runQuitTest() {
           const reader=await openReader(first.pdfID);const button=await checkButton(reader);
           button.click();
           await waitFor(()=>main.document.querySelector('.knowledge-base-workbench')?.contentWindow?.document.getElementById('knowledge-base-workbench-editor')?.contentWindow?.knowledgeBaseCardId===first.sourceNoteID,'Restarted reader did not open its Literature Note');
-          if(listeners().length!==1)throw new Error('Reader listener was duplicated after restart');
+          if(listeners().length!==2 || new Set(listeners().map(entry=>entry.handler)).size!==2)throw new Error('Reader listener was duplicated after restart');
           await Zotero.ZoteroKnowledgeBase.hooks.onShutdown();
-          if(reader._iframeWindow.document.getElementById('knowledge-base-reader-button') || listeners().length)throw new Error('Shutdown retained reader UI');
+          if(reader._iframeWindow.document.querySelector('#knowledge-base-reader-button, #knowledge-base-clip-figure') || listeners().length)throw new Error('Shutdown retained reader UI');
           await IOUtils.writeUTF8(${JSON.stringify(restartMarker)},JSON.stringify({connectionsOnly:true}));
           Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
         }
@@ -323,11 +329,11 @@ function runQuitTest() {
         const extension=await AddonManager.getAddonByID('knowledge-base@lzcn');
         await extension.disable();
         await waitFor(()=>!Zotero.ZoteroKnowledgeBase && !reader._iframeWindow.document.getElementById('knowledge-base-reader-button') && !listeners().length,'Disabling did not finish reader cleanup');
-        if(reader._iframeWindow.document.getElementById('knowledge-base-reader-button') || listeners().length)throw new Error('Disabling retained the reader button or listener');
+        if(reader._iframeWindow.document.querySelector('#knowledge-base-reader-button, #knowledge-base-clip-figure') || listeners().length)throw new Error('Disabling retained the reader button or listener');
         initialButton.click();if(main.document.querySelector('.knowledge-base-workbench'))throw new Error('A disabled reader button reopened Knowledge Base');
         await extension.enable();
         await waitFor(()=>Zotero.ZoteroKnowledgeBase?.api && reader._iframeWindow.document.getElementById('knowledge-base-reader-button'),'Re-enabling did not update the already-open PDF');
-        await checkButton(reader);if(listeners().length!==1)throw new Error('Re-enabling duplicated reader listeners');
+        await checkButton(reader);if(listeners().length!==2 || new Set(listeners().map(entry=>entry.handler)).size!==2)throw new Error('Re-enabling duplicated reader listeners');
         const second=await Zotero.Attachments.importFromFile({file:${JSON.stringify(readerPDF)},parentItemID:paper.id});
         const another=await openReader(second.id);await checkButton(another);
         reader._iframeWindow.document.getElementById('knowledge-base-reader-button').click();
@@ -839,6 +845,7 @@ function runQuitTest() {
           await editor.setEditorMode("visual",false);
           if(nativeElement.getCurrentInstance()._item.getNote()!==savedHTML)throw new Error("Opening More in Markdown changed the note");
         }
+        await knowledgeBase.api.setNativeNoteTakeover(false);
         const note=new Zotero.Item("note");note.libraryID=Zotero.Libraries.userLibraryID;note.setNote('<div data-schema-version="9"><h1>Ordinary Zotero note</h1><p>Unchanged note body.</p></div>');await note.saveTx();
         const instance=await Zotero.Notes.open(note.id,null,{openInWindow:true});
         await instance._initPromise;
@@ -1206,7 +1213,8 @@ function runQuitTest() {
       unmanaged.setNote("<p>Unmanaged library note</p>");
       await unmanaged.saveTx({skipSelect: true});
 
-      // The extension also edits an ordinary native note without creating a Knowledge Base card.
+      // Exercise the optional native layout independently of full editor takeover.
+      await knowledgeBase.api.setNativeNoteTakeover(false);
       const nativeMarkdownNote = new Zotero.Item("note");
       nativeMarkdownNote.libraryID = item.libraryID;
       nativeMarkdownNote.parentItemID = item.id;
@@ -3056,6 +3064,19 @@ function runQuitTest() {
 }
 `,
 );
+files["bootstrap.js"] = strToU8(
+  strFromU8(files["bootstrap.js"]) +
+    `
+const hostTestStartup = startup;
+startup = async function (...args) {
+  try { await hostTestStartup(...args); }
+  catch (error) {
+    await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({error:String(error),stack:error.stack}));
+    Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
+  }
+};
+`,
+);
 new Script(strFromU8(files["bootstrap.js"]), {
   filename: "host-test-bootstrap.js",
 });
@@ -3213,6 +3234,10 @@ try {
   else if (workbenchOnly)
     console.log(
       "PASS Real Zotero native/Markdown autosave without Save buttons; pending edits across note changes; explicit draft application; close shortcuts and save/cancel/draft dialogs, conflicts, editor-mode persistence and restart.",
+    );
+  else if (readingViewOnly)
+    console.log(
+      "PASS Real Zotero shared note editor in sidebar, tab and window; live takeover setting, compact metadata, responsive toolbars, figure capture, saved edits, cleanup failure recovery and restart.",
     );
   else if (textToolsOnly)
     console.log(

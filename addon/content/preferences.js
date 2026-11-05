@@ -273,6 +273,28 @@ window.KnowledgeBasePreferences = (() => {
           });
         }
         bindGraphControls(doc, api);
+        const takeover = /** @type {XULCheckboxElement} */ (
+          /** @type {unknown} */ (
+            doc.getElementById("knowledge-base-native-note-takeover")
+          )
+        );
+        takeover.checked = api.getNativeNoteTakeover();
+        if (!menus.has(takeover)) {
+          menus.add(takeover);
+          takeover.addEventListener("command", async () => {
+            takeover.disabled = true;
+            try {
+              await api.setNativeNoteTakeover(takeover.checked);
+            } catch (failure) {
+              error.textContent = String(failure.message || failure);
+              error.hidden = false;
+              Zotero.logError(failure);
+            } finally {
+              takeover.checked = api.getNativeNoteTakeover();
+              takeover.disabled = false;
+            }
+          });
+        }
         const mode = getMenu(doc, "knowledge-base-workbench-mode");
         bindMenu(mode, api.getWorkbenchMode(), (value) =>
           api.setWorkbenchMode(value),

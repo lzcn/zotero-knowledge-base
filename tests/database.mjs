@@ -7,6 +7,7 @@
  * An optional snapshot argument is copied; the supplied file is never changed.
  */
 import { build } from "esbuild";
+import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { copyFile, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -114,10 +115,31 @@ let failStatement;
 /* host bindings (must exist before the bundle is imported)                  */
 /* ------------------------------------------------------------------ */
 
+const sourceFixtures = new Map(
+  [
+    [1, "ITEMKEY1"],
+    [1, "READING1"],
+    [2, "READING1"],
+  ].map(([libraryID, key], i) => [
+    `${libraryID}/${key}`,
+    {
+      id: 100 + i,
+      key,
+      libraryID,
+      isRegularItem: () => true,
+      isInTrash: () => false,
+      getField: () => "",
+    },
+  ]),
+);
 const zoteroStub = {
+  ItemFields: { getID: () => false },
   DataDirectory: { dir: "" },
   Items: {
-    getIDFromLibraryAndKey: () => false,
+    getIDFromLibraryAndKey: (library, key) =>
+      sourceFixtures.get(`${library}/${key}`)?.id || false,
+    getAsync: async (id) =>
+      [...sourceFixtures.values()].find((item) => item.id === id),
     getByLibraryAndKeyAsync: async () => false,
     loadDataTypes: async () => {},
   },
@@ -1185,6 +1207,27 @@ if (currentSchema) {
   check(
     "Deleting a note releases its Thinking aliases",
     !(await zettel.resolveRefs(["RevisedPlan"])).has("RevisedPlan"),
+  );
+  const rowsBeforeInvalidSource = (await zettel.listZettels()).length;
+  sourceFixtures.set("1/NOTESRC1", {
+    id: 199,
+    isRegularItem: () => false,
+    isInTrash: () => false,
+  });
+  for (const itemKey of ["NOTESRC1", "MISSING1", "https://example.com"])
+    await assert.rejects(
+      zettel.saveZettel({
+        title: "Invalid source",
+        body: "Must not be written.",
+        itemKey,
+        libraryID: 1,
+      }),
+      /SOURCE_ITEM_REQUIRED/,
+    );
+  sourceFixtures.delete("1/NOTESRC1");
+  check(
+    "Source accepts only existing bibliographic items and rejects notes, missing items and URLs before writes",
+    (await zettel.listZettels()).length === rowsBeforeInvalidSource,
   );
   const alphaId = await zettel.saveZettel({
     title: "Alpha",
@@ -2680,6 +2723,10 @@ for (const id of [9101, 9102, 9103])
   });
 zoteroStub.Items = {
   getAsync: async (id) => discoveryItems.get(id),
+  getIDFromLibraryAndKey: (libraryID, key) =>
+    [...discoveryItems.values()].find(
+      (item) => item.libraryID === libraryID && item.key === key,
+    )?.id || false,
   getByLibraryAndKeyAsync: async (libraryID, key) =>
     [...discoveryItems.values()].find(
       (item) => item.key === key && item.libraryID === libraryID,

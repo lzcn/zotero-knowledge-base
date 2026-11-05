@@ -14,7 +14,6 @@ export interface ItemSummary {
   selectURL: string;
   libraryName: string;
   citationKey?: string;
-  isNote?: boolean;
 }
 
 export interface HighlightInfo {
@@ -57,9 +56,7 @@ function summary(item: Zotero.Item): ItemSummary {
   return {
     key: item.key,
     libraryID: item.libraryID,
-    title: item.isNote()
-      ? item.getNoteTitle()
-      : item.getField("title", false, true) || "",
+    title: item.getField("title", false, true) || "",
     creatorYear: creatorYear(item),
     publication: String(
       item.getField("publicationTitle", false, true) ||
@@ -70,8 +67,7 @@ function summary(item: Zotero.Item): ItemSummary {
     ),
     selectURL: selectURL(item),
     libraryName: library ? library.name : "",
-    citationKey: item.isRegularItem() ? getCitationKey(item) : undefined,
-    isNote: item.isNote(),
+    citationKey: getCitationKey(item),
   };
 }
 
@@ -148,6 +144,7 @@ export async function searchItems(
       const scope = new Zotero.Search({ libraryID: lib.libraryID });
       scope.addCondition("deleted", "false");
       scope.addCondition("itemType", "isNot", "attachment");
+      scope.addCondition("itemType", "isNot", "note");
       const s = q ? new Zotero.Search({ libraryID: lib.libraryID }) : scope;
       if (q) {
         s.setScope(scope, false);
@@ -159,18 +156,9 @@ export async function searchItems(
           s.addCondition("citationKey", "contains", q);
         s.addCondition("extra", "contains", `Citation Key: ${q}`);
       }
-      let noteIds: number[] = [];
-      if (q) {
-        const notes = new Zotero.Search({ libraryID: lib.libraryID });
-        notes.addCondition("deleted", "false");
-        notes.addCondition("itemType", "is", "note");
-        notes.addCondition("note", "contains", q);
-        noteIds = await notes.search();
-      }
       const ids = [
         ...new Set([
           ...(await s.search()),
-          ...noteIds,
           ...(q
             ? keyManager()
                 ?.all(
@@ -186,9 +174,7 @@ export async function searchItems(
       const items = await Zotero.Items.getAsync(ids.slice(0, limit));
       await Zotero.Items.loadDataTypes(items, ["itemData"]);
       return items
-        .filter(
-          (item) => !item.deleted && (item.isRegularItem() || item.isNote()),
-        )
+        .filter((item) => !item.isInTrash() && item.isRegularItem())
         .map(summary);
     }),
   );
@@ -203,10 +189,23 @@ export async function getItemSummary(
   const id = Zotero.Items.getIDFromLibraryAndKey(libraryID, key);
   if (!id) return null;
   const item = await Zotero.Items.getAsync(id);
-  if (!item || item.isInTrash() || (!item.isRegularItem() && !item.isNote()))
-    return null;
+  if (!item || item.isInTrash() || !item.isRegularItem()) return null;
   await Zotero.Items.loadDataTypes([item], ["itemData"]);
   return summary(item);
+}
+
+/** Source is a Zotero bibliographic item; note hierarchy belongs to Parent. */
+export async function requireSourceItem(
+  key: string,
+  libraryID: number | null | undefined,
+): Promise<Zotero.Item> {
+  const id = libraryID
+    ? Zotero.Items.getIDFromLibraryAndKey(libraryID, key)
+    : false;
+  const item = id ? await Zotero.Items.getAsync(id) : null;
+  if (!item || !item.isRegularItem() || item.isInTrash())
+    throw new Error("SOURCE_ITEM_REQUIRED");
+  return item;
 }
 
 /** Page label of an annotation, falling back to its 1-based page index. */
@@ -316,10 +315,14 @@ export async function selectItem(
   key: string,
   libraryID: number | null,
 ): Promise<void> {
-  const item = await getItemSummary(key, libraryID);
-  if (!item) throw new Error(`Source item not found: ${key}`);
-  const id = Zotero.Items.getIDFromLibraryAndKey(item.libraryID, key);
-  if (!id) throw new Error(`Source item not found: ${key}`);
+  const id =
+    libraryID == null
+      ? false
+      : Zotero.Items.getIDFromLibraryAndKey(libraryID, key);
+  if (!id) throw new Error(`Zotero item not found: ${key}`);
+  const item = await Zotero.Items.getAsync(id);
+  if (!item || item.isInTrash())
+    throw new Error(`Zotero item not found: ${key}`);
   const win = Zotero.getMainWindow();
   win.focus();
   const pane = (win as unknown as { ZoteroPane?: ZoteroPaneStubs }).ZoteroPane;
@@ -335,7 +338,8 @@ interface ZoteroPaneStubs {
 
 export async function getSelectedSource(): Promise<ItemSummary | null> {
   const selected = Zotero.getActiveZoteroPane()?.getSelectedItems?.()[0];
-  const item = selected?.isNote() ? selected : regularItemOf(selected ?? null);
+  const item = regularItemOf(selected ?? null);
+  if (item?.isInTrash()) return null;
   if (item) await Zotero.Items.loadDataTypes([item], ["itemData"]);
   return item ? summary(item) : null;
 }

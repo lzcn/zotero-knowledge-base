@@ -1,3 +1,4 @@
+import { attachReaderToolbarLayout } from "./reader-toolbar-layout";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
 
@@ -32,6 +33,7 @@ function addButton(
   icon.alt = "";
   icon.draggable = false;
   button.append(icon);
+  const removeLayout = attachReaderToolbarLayout(doc);
   let disposed = false;
   const open = async () => {
     if (button.disabled || disposed) return;
@@ -63,6 +65,7 @@ function addButton(
   };
   const dispose = () => {
     disposed = true;
+    removeLayout();
     button.removeEventListener("click", open);
     win.removeEventListener("unload", dispose);
     const section = button.parentElement;

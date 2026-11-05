@@ -10,6 +10,7 @@ import { cleanupImagesAfterChange } from "./assets";
 import { getNoteReferences, invalidateNoteReferences } from "./note-references";
 import { searchRows, type SearchOptions } from "./search";
 import { requireNoteType, type NoteType } from "./note-types";
+import { requireSourceItem } from "./zotero";
 
 export interface Zettel extends ZettelRow {
   searchRank?: number;
@@ -462,6 +463,12 @@ export async function saveEditorCard(
       throw new Error("CARD_CONFLICT");
     }
     const sourceNote = input.sourceNote ?? !!previous?.source_note;
+    if (
+      input.itemKey &&
+      (input.itemKey !== previous?.item_key ||
+        input.libraryID !== previous?.library_id)
+    )
+      await requireSourceItem(input.itemKey, input.libraryID);
     const noteType = requireNoteType(
       input.noteType === undefined
         ? (previous?.note_type ?? "entity")

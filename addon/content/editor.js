@@ -33,6 +33,38 @@ let dirty = false;
 let loaded = false;
 let editorLoad = null;
 window.knowledgeBaseReady = load;
+window.knowledgeBaseInsertAnnotations = async (annotations) => {
+  await load();
+  if (disposed || libraryReadOnly || recoveryPending || noteUnavailable) {
+    throw new Error(api.loc("clip-note-required"));
+  }
+  if (editorMode !== "visual") await setEditorMode("visual");
+  const before = richEditor.getHTML();
+  await $("knowledge-base-rich-frame")
+    .getCurrentInstance()
+    .insertAnnotations(annotations);
+  const imageKeys = annotations
+    .map(
+      (annotation) =>
+        /** @type {{imageAttachmentKey?: string}} */ (annotation)
+          .imageAttachmentKey,
+    )
+    .filter(Boolean);
+  for (let n = 0; n < 250; n++) {
+    if (disposed || window.knowledgeBaseStopping) return;
+    const html = richEditor.getHTML();
+    if (
+      html !== before &&
+      imageKeys.every((key) => html.includes(`data-attachment-key="${key}"`))
+    ) {
+      richEditor.captureChanges();
+      if (!(await save(false))) throw new Error(api.loc("clip-insert-failed"));
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(api.loc("clip-insert-failed"));
+};
 window.knowledgeBaseRequestClose = async () => {
   await load();
   await closeIfClean();
@@ -132,6 +164,19 @@ function load() {
   return editorLoad;
 }
 
+/** @param {string | null | undefined} key @param {number | null | undefined} libraryID */
+async function readSource(key, libraryID) {
+  if (!key) return null;
+  return (
+    (await api.getItemSummary(key, libraryID ?? null)) || {
+      key,
+      libraryID: libraryID ?? null,
+      title: api.loc("manager-source-missing"),
+      missing: true,
+    }
+  );
+}
+
 async function loadEditor() {
   applyLocale();
   bindEvents();
@@ -163,20 +208,12 @@ async function loadEditor() {
       expectedUpdatedAt = z.updated_at;
       noteTitle = z.title;
       $("knowledge-base-editor-body").value = z.body;
-      parentId = (await api.getFamily(zettelId)).parent?.id || null;
-
-      if (z.item_key) {
-        const s = await api.getItemSummary(z.item_key, z.library_id);
-        setSource(
-          s || {
-            key: z.item_key,
-            libraryID: z.library_id,
-            title: api.loc("manager-source-missing"),
-            missing: true,
-          },
-          false,
-        );
-      }
+      const [family, summary] = await Promise.all([
+        api.getFamily(zettelId),
+        readSource(z.item_key, z.library_id),
+      ]);
+      parentId = family.parent?.id || null;
+      setSource(summary, false);
     } else {
       zettelId = null;
     }
@@ -204,21 +241,7 @@ async function loadEditor() {
     parentId = draft.parentId || null;
     noteTitle = draft.title;
     $("knowledge-base-editor-body").value = draft.body;
-    const summary = draft.itemKey
-      ? await api.getItemSummary(draft.itemKey, draft.libraryID)
-      : null;
-    setSource(
-      summary ||
-        (draft.itemKey
-          ? {
-              key: draft.itemKey,
-              libraryID: draft.libraryID,
-              title: api.loc("manager-source-missing"),
-              missing: true,
-            }
-          : null),
-      false,
-    );
+    setSource(await readSource(draft.itemKey, draft.libraryID), false);
     recoveryPending = true;
     recoveryHTML = draft.sourceMode ? null : draft.nativeHTML || null;
     dirty = true;
@@ -305,9 +328,7 @@ async function refreshSavedCard() {
     api.getFamily(id),
   ]);
   if (!card) return;
-  const summary = card.item_key
-    ? await api.getItemSummary(card.item_key, card.library_id)
-    : null;
+  const summary = await readSource(card.item_key, card.library_id);
   if (
     disposed ||
     id !== zettelId ||
@@ -363,18 +384,7 @@ async function refreshSavedCard() {
   customKey = card.custom_key || null;
   savedReference = card.reference || null;
   parentId = family.parent?.id || null;
-  setSource(
-    summary ||
-      (card.item_key
-        ? {
-            key: card.item_key,
-            libraryID: card.library_id,
-            title: api.loc("manager-source-missing"),
-            missing: true,
-          }
-        : null),
-    false,
-  );
+  setSource(summary, false);
   updateNoteIdentity(card);
   return alreadyCommitted;
 }
@@ -447,6 +457,8 @@ function toggleParentPicker() {
   if (libraryReadOnly || recoveryPending || noteUnavailable) return;
   const picker = $("knowledge-base-parent-picker");
   if (!picker.hidden) return closeParentPicker();
+  $("knowledge-base-src-drop").hidden = true;
+  sourceSearchVersion++;
   picker.hidden = false;
   $("knowledge-base-parent-search").hidden = false;
   $("knowledge-base-parent-edit").setAttribute("aria-expanded", "true");
@@ -455,6 +467,12 @@ function toggleParentPicker() {
 }
 
 function applyLocale() {
+  $("knowledge-base-note-details-label").textContent = api.loc("note-details");
+  $("knowledge-base-note-details").open = !!args.editTags;
+  $("knowledge-base-note-details").addEventListener("toggle", () => {
+    if (!$("knowledge-base-note-details").open)
+      $("knowledge-base-src-drop").hidden = true;
+  });
   const type = $("knowledge-base-note-type");
   type.title = api.loc("note-type-change");
   type.setAttribute("aria-label", api.loc("note-type-change"));
@@ -484,10 +502,10 @@ function applyLocale() {
   $("knowledge-base-key-resolve").textContent = api.loc("editor-key-resolve");
   for (const [id, key] of [
     ["knowledge-base-src-pick", "editor-change-source"],
+    ["knowledge-base-read-note", "reading-open"],
     ["knowledge-base-parent-edit", "editor-change-parent"],
   ]) {
     const button = document.getElementById(id);
-    if (id === "knowledge-base-src-pick") button.textContent = api.loc(key);
     button.title = api.loc(key);
     button.setAttribute("aria-label", api.loc(key));
   }
@@ -495,7 +513,7 @@ function applyLocale() {
     ? api.loc("editor-title-edit")
     : api.loc("editor-title-new");
   if (args.embedded) $("knowledge-base-editor-cancel").hidden = true;
-  $("knowledge-base-src-pick").textContent = api.loc("editor-source-label");
+  $("knowledge-base-source-label").textContent = api.loc("editor-source-label");
   $("knowledge-base-src-none").textContent = api.loc("editor-src-none");
 
   $("knowledge-base-src-search").placeholder = api.loc(
@@ -841,6 +859,24 @@ function bindEvents() {
   $("knowledge-base-src-pick").addEventListener("click", () =>
     toggleSourceDrop(),
   );
+  document
+    .getElementById("knowledge-base-read-note")
+    .addEventListener("click", () => {
+      const button = /** @type {HTMLButtonElement} */ (
+        document.getElementById("knowledge-base-read-note")
+      );
+      if (button.disabled) return;
+      button.disabled = true;
+      run(async () => {
+        try {
+          if (await window.knowledgeBasePrepareNavigation()) {
+            if (zettelId) await api.openReadingNote(zettelId);
+          }
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
   $("knowledge-base-src-none").addEventListener("click", () => {
     setSource(null, true);
     $("knowledge-base-src-drop").hidden = true;
@@ -988,6 +1024,8 @@ window.knowledgeBaseEditTags = async () => {
 /* ---------------- source item picker ---------------- */
 
 function toggleSourceDrop(mode = "source") {
+  if (libraryReadOnly || recoveryPending || noteUnavailable) return;
+  closeParentPicker();
   const drop = $("knowledge-base-src-drop");
   drop.hidden = !drop.hidden && sourcePickMode === mode;
   sourcePickMode = mode;
@@ -1071,10 +1109,10 @@ function setSource(s, markDirty = false) {
   source = s;
   if (!s) sourceNote = false;
   $("knowledge-base-src-display")._sourceRender = null;
-  $("knowledge-base-src-display").textContent =
-    s?.title || api.loc("editor-src-none");
   run(refreshSourceDisplay);
   $("knowledge-base-src-insert").disabled = !s || !!s.missing;
+  document.getElementById("knowledge-base-read-note").hidden =
+    !s || !!s.missing;
 
   if (markDirty) setDirty();
   if (loaded) run(refreshParentItem);
@@ -1089,6 +1127,8 @@ async function refreshSourceDisplay() {
   display.onkeydown = null;
   display.classList.toggle("placeholder", !current || !!current.missing);
   if (!current || current.missing) {
+    display._sourceIdentity = null;
+    display._sourceHTML = null;
     display.textContent = current?.title || api.loc("editor-src-none");
     display.setAttribute("role", "button");
     display.setAttribute("tabindex", "0");
@@ -1102,13 +1142,13 @@ async function refreshSourceDisplay() {
     };
     return;
   }
-  // Keep CSL initialization out of the first usable document's critical path.
-  if (!loaded) {
-    display.textContent = current.title;
-    return;
-  }
   try {
-    await window.ZoteroKnowledgeBaseMarkdown.source(display, current, api);
+    await window.ZoteroKnowledgeBaseMarkdown.source(
+      display,
+      current,
+      api,
+      loaded,
+    );
   } catch (error) {
     if (version !== sourceRenderVersion || disposed) return;
     setStatus(
@@ -1639,10 +1679,9 @@ async function insertSourceLink() {
 }
 
 async function insertItemReference(item, range) {
-  const text =
-    item.citationKey && !item.isNote
-      ? `[@${item.citationKey}]`
-      : `[${markdownLabel(item.title || item.key)}](${item.selectURL})`;
+  const text = item.citationKey
+    ? `[@${item.citationKey}]`
+    : `[${markdownLabel(item.title || item.key)}](${item.selectURL})`;
   await api.prepareMarkdown(text);
   if (!disposed) insertText(text, range);
 }
@@ -1843,13 +1882,15 @@ function reportSaveError(error) {
         ? api.loc("editor-key-exists")
         : message.includes("CARD_CONFLICT")
           ? api.loc("editor-save-conflict")
-          : message.includes("LITERATURE_SOURCE_REQUIRED")
-            ? api.loc("literature-source-required")
-            : message.includes("NOTE_UNAVAILABLE")
-              ? api.loc("health-note-missing")
-              : message.includes("LITERATURE_EXISTS")
-                ? api.loc("literature-exists")
-                : api.loc("editor-save-failed") + " " + message,
+          : message.includes("SOURCE_ITEM_REQUIRED")
+            ? api.loc("source-item-required")
+            : message.includes("LITERATURE_SOURCE_REQUIRED")
+              ? api.loc("literature-source-required")
+              : message.includes("NOTE_UNAVAILABLE")
+                ? api.loc("health-note-missing")
+                : message.includes("LITERATURE_EXISTS")
+                  ? api.loc("literature-exists")
+                  : api.loc("editor-save-failed") + " " + message,
   );
   $("knowledge-base-editor-status").classList.add("error");
   document.getElementById("knowledge-base-editor-save-copy").hidden =

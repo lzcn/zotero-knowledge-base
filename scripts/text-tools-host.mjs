@@ -201,7 +201,9 @@ export default async function textToolsHost({
     ],
     properties: {},
   };
+  const literalBackslashes = "Path C:\\Users\\zhi\\notes and command \\alpha";
   const raw = [
+    paragraph(literalBackslashes),
     paragraph("Current $t$ and \\(u,v\\)."),
     paragraph("\\[ \\mathcal H_{<t}=\\{(u_i,v_i,t_i)\\mid t_i<t\\} \\]"),
     paragraph(
@@ -333,6 +335,10 @@ export default async function textToolsHost({
   await shot("text-tools-native");
   await inline.setEditorMode("source");
   const source = inline.document.getElementById("knowledge-base-editor-body");
+  assert(
+    source.value.includes(literalBackslashes),
+    "Native-to-Markdown conversion added unnecessary backslashes",
+  );
   const added =
     "\n\nSelection \\(\\alpha+\\beta\\).\n\n\\[ a_t=\\frac{1}{2} \\]\n\n`\\(literal\\)`\n\n~~~tex\n\\[code\\]\n~~~\n\nhttps://example.org/\\(x\\) [[note\\(id\\)]]\n\nReplace target target.";
   source.setRangeText(added, source.value.length, source.value.length, "end");
@@ -490,6 +496,10 @@ export default async function textToolsHost({
   search.querySelector('button[name="replaceAll"]').click();
   search.querySelector('button[name="close"]').click();
   await inline.setEditorMode("visual");
+  assert(
+    core(native()).view.state.doc.textContent.includes(literalBackslashes),
+    "Markdown round-trip changed literal backslashes",
+  );
   for (const altKey of [false, true]) {
     const frame = native(),
       editable = frame.document.querySelector(".primary-editor");

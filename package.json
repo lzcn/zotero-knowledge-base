@@ -1,7 +1,7 @@
 {
   "name": "zotero-knowledge-base",
   "type": "module",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Notes, tags and related papers for Zotero",
   "config": {
     "addonName": "Knowledge Base",
@@ -33,6 +33,7 @@
     "test:views:host": "node scripts/test-zotero-quit.mjs --views",
     "test:settings:host": "node scripts/test-zotero-quit.mjs --settings",
     "test:metadata:host": "node scripts/test-zotero-quit.mjs --metadata",
+    "test:reading-view:host": "node scripts/test-zotero-quit.mjs --reading-view",
     "test:text-tools:host": "node scripts/test-zotero-quit.mjs --text-tools",
     "test:reader-toolbar:host": "node scripts/test-zotero-quit.mjs --reader-toolbar",
     "test:context-menu:host": "node scripts/test-zotero-quit.mjs --context-menu",

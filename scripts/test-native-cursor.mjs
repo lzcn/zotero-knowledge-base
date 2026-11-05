@@ -18,6 +18,7 @@ await writeFile(
     "extensions.zotero.firstRun2": false,
     "extensions.zotero.firstRun.skipFirefoxProfileAccessCheck": true,
     "extensions.autoDisableScopes": 0,
+    "extensions.zotero.knowledge-base.nativeNoteTakeover": false,
     "extensions.enabledScopes": 15,
     "app.update.auto": false,
     "extensions.update.enabled": false,

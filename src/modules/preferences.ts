@@ -316,3 +316,9 @@ export function onGraphOptionsChange(listener: () => void): () => void {
   return () =>
     observers.forEach((observer) => Zotero.Prefs.unregisterObserver(observer));
 }
+
+export function getNativeNoteTakeover(): boolean {
+  return (
+    Zotero.Prefs.get(`${config.prefsPrefix}.nativeNoteTakeover`, true) !== false
+  );
+}
