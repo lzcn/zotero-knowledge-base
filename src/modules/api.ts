@@ -59,13 +59,7 @@ import {
   clearEditor,
   getViewArguments,
 } from "./workbench";
-import {
-  getSourceBibliography,
-  getSourceStyle,
-  getSourceStyles,
-  setSourceStyle,
-  onSourceStyleChange,
-} from "./bibliography";
+import { getSourceReference } from "./source-reference";
 import { getString } from "../utils/locale";
 import {
   cardRefFromURL,
@@ -347,11 +341,7 @@ export const api = {
   mountEditor,
   clearEditor,
   getViewArguments,
-  getSourceBibliography,
-  getSourceStyle,
-  getSourceStyles,
-  setSourceStyle,
-  onSourceStyleChange,
+  getSourceReference,
   getGraphOptions,
   setGraphOption,
   getGraphLabelLength,

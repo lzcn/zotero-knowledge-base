@@ -69,7 +69,7 @@ await build({
       export const regularItemOf = () => null;
       export const registerPreferences = () => run("registerPreferences");
       export const unregisterPreferences = () => {};
-      export const closeBibliographies = () => {};
+      export const closeSourceReferences = () => {};
       export const registerItemPaneUI = () => run("registerPane");
       export const unregisterItemPaneUI = () => run("unregisterPane");
       export const registerReaderUI = () => run("registerReader");

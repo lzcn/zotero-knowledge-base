@@ -704,6 +704,15 @@ export async function deleteZettel(id: string): Promise<void> {
   );
   await transaction(async () => {
     await exec("DELETE FROM unavailable_notes WHERE card_id = ?", [id]);
+    await exec(
+      `DELETE FROM note_states WHERE EXISTS (
+        SELECT 1 FROM card_notes
+        WHERE card_id = ?
+          AND card_notes.note_key = note_states.note_key
+          AND card_notes.library_id = note_states.library_id
+      )`,
+      [id],
+    );
     await exec("DELETE FROM card_notes WHERE card_id = ?", [id]);
     await exec("DELETE FROM note_keys WHERE card_id = ?", [id]);
     await removeParent(id);

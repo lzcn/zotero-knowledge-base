@@ -106,11 +106,11 @@ export default async function readingViewHost({
   };
   const browser = await wait(
     browserFor,
-    "Native sidebar did not adopt the KB editor",
+    "Native sidebar did not adopt the Knowledge Base editor",
   );
   await wait(
     () => browser.contentWindow.knowledgeBaseReady,
-    "KB editor did not load",
+    "Knowledge Base editor did not load",
   );
   await browser.contentWindow.knowledgeBaseReady();
   const editor = browser.contentWindow;
@@ -392,7 +392,7 @@ export default async function readingViewHost({
   const next = await wait(() => {
     const b = browserFor();
     return b?.contentWindow.knowledgeBaseCardId === second && b;
-  }, "Second native note did not adopt KB");
+  }, "Second native note did not adopt Knowledge Base");
   await next.contentWindow.knowledgeBaseReady();
   assert(
     (await Zotero.Items.getAsync(noteID)).getNote().includes("data-annotation"),
@@ -448,7 +448,7 @@ export default async function readingViewHost({
   await api.setNativeNoteTakeover(false);
   assert(
     !main.document.querySelector(".knowledge-base-native-note-editor"),
-    "Turning takeover off retained a KB view",
+    "Turning takeover off retained a Knowledge Base view",
   );
   assert(
     windowElement.style.display !== "none",
@@ -482,7 +482,7 @@ export default async function readingViewHost({
   await plugin.hooks.onShutdown();
   assert(
     !main.document.querySelector(".knowledge-base-native-note-editor"),
-    "Shutdown left the KB sidebar mounted",
+    "Shutdown left the Knowledge Base sidebar mounted",
   );
   assert(
     !reader._iframeWindow.document.getElementById("knowledge-base-clip-figure"),

@@ -759,7 +759,7 @@ startup = async function(data) {
       tagDialog.close();
 
       const settings = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
-      await waitFor(() => settings.document.getElementById("knowledge-base-source-style")?.value && settings.document.getElementById("similar-works-limit"), "Unified settings did not load");
+      await waitFor(() => settings.document.getElementById("knowledge-base-workbench-mode")?.value && settings.document.getElementById("similar-works-limit"), "Unified settings did not load");
       settings.resizeTo(940,1000);
       await new Promise(resolve=>setTimeout(resolve,100));
       const panes = Zotero.PreferencePanes.pluginPanes.filter(pane => pane.pluginID === "knowledge-base@lzcn");
@@ -852,7 +852,7 @@ startup = async function(data) {
       if(!(await exclusionEditor.save(false)))throw new Error('Exclusion note did not settle');
       exclusionEditor.close();
       await capture("settings-tags",settings);
-      await waitFor(() => settings.document.getElementById("knowledge-base-source-style")?.value, "Note System controls did not load");
+      await waitFor(() => settings.document.getElementById("knowledge-base-workbench-mode")?.value, "Note System controls did not load");
       await capture("settings-notes",settings);
       settings.document.getElementById("similar-works-diagnostics").scrollIntoView({block:"center"});
       await capture("settings-cache",settings);

@@ -13,6 +13,10 @@ function SWResultLimit(value) {
   return Number.isFinite(n) && n >= 1 ? Math.min(100, Math.floor(n)) : 20;
 }
 
+// Keep background pauses cheap enough for a first scan while still yielding
+// CPU between batches.
+var INDEX_BATCH_SIZE = 10;
+
 var SWIndexer = {
   corpus: null,
   _queue: [],
@@ -260,18 +264,26 @@ var SWIndexer = {
     try {
       await this.corpus.ready;
       let sliceStarted = Date.now();
+      let changedBatch = 0;
       while (!this._stopped && this._queue.length) {
         var id = this._queue.shift();
         this._queued.delete(id);
         const changed = await this._processId(id);
         this._reportStatus();
-        // Pace expensive updates, not the cheap source checks on every restart.
-        var remaining = changed
-          ? Math.max(2000, SWPref("indexDelayMs", 2000))
-          : 0;
-        while (!this._stopped && remaining > 0) {
-          await swYield(Math.min(100, remaining));
-          remaining -= 100;
+        // Pause once per batch. A delay after every document made a first
+        // scan of 1000 papers spend over 30 minutes waiting.
+        if (changed) changedBatch++;
+        if (changedBatch >= INDEX_BATCH_SIZE && this._queue.length) {
+          changedBatch = 0;
+          let remaining = Math.max(
+            0,
+            Number(SWPref("indexDelayMs", 2000)) || 0,
+          );
+          while (!this._stopped && remaining > 0) {
+            await swYield(Math.min(100, remaining));
+            remaining -= 100;
+          }
+          sliceStarted = Date.now();
         }
         if (Date.now() - sliceStarted >= 6) {
           await swYield(20);

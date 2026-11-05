@@ -20,7 +20,7 @@ const views = new Map<HTMLElement, NativeNoteView>();
 const owners = new WeakMap<NativeEditorInstance, HTMLElement>();
 let generation = 0;
 
-/** Keep the KB document alive when Zotero refreshes its hidden native editor. */
+/** Keep the Knowledge Base document alive when Zotero refreshes its hidden native editor. */
 export async function attachNativeNoteEditor(
   instance: NativeEditorInstance,
   element: HTMLElement,

@@ -1391,8 +1391,16 @@ test("warm startup checks unchanged sources without per-item indexing delays", a
   );
   items[0].getField = (field) =>
     field === "title" ? "Changed graph neural networks" : "";
-  h.SWIndexer.enqueue(items[0].id);
-  await h.SWIndexer._drainPromise;
+  const changed = [
+    items[0],
+    ...Array.from({ length: 10 }, (_, index) =>
+      h.item(11 + index, "Changed graph neural network " + index),
+    ),
+  ];
+  h.SWIndexer._draining = true;
+  for (const item of changed) h.SWIndexer.enqueue(item.id);
+  h.SWIndexer._draining = false;
+  await h.SWIndexer._drain();
   assert.ok(
     h.corpus.revision > revision,
     "Changed metadata still updates the index",
@@ -1400,7 +1408,7 @@ test("warm startup checks unchanged sources without per-item indexing delays", a
   assert.equal(
     pauses.reduce((sum, ms) => sum + ms, 0),
     2000,
-    "Expensive background updates remain paced",
+    "Expensive background updates remain paced between batches",
   );
 });
 

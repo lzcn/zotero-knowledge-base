@@ -5,7 +5,7 @@ import {
   applyPendingTagsToMappedNotes,
   changeNoteTag,
 } from "./note-tags";
-import { exec, getAll, getOne, transaction } from "./db";
+import { exec, execInternal, getAll, getOne, transaction } from "./db";
 import { notifyDataChange, onDataChange } from "./events";
 import { getNewNoteBody } from "./preferences";
 import { getFamily } from "./hierarchy";
@@ -628,6 +628,20 @@ export interface NoteHealth {
   editable: boolean;
 }
 
+function noteModified(note: Zotero.Item): string {
+  return String(note.dateModified || "");
+}
+
+/** Remember the note timestamp only after its content has been processed. */
+async function rememberNoteState(note: Zotero.Item): Promise<void> {
+  const modified = noteModified(note);
+  if (!modified) return;
+  await execInternal(
+    "INSERT OR REPLACE INTO note_states(note_key, library_id, modified) VALUES (?, ?, ?)",
+    [note.key, note.libraryID, modified],
+  );
+}
+
 /** Keep Trash mappings; remove cards only after confirming their original no longer exists. */
 export function auditNativeNotes(rescan = false): Promise<void> {
   if (auditing) {
@@ -640,8 +654,10 @@ export function auditNativeNotes(rescan = false): Promise<void> {
       auditRequested = false;
       const changed: string[] = [];
       const itemKeys = new Set<string>();
-      const rows = await getAll<NoteMapping & { state: string | null }>(
-        "SELECT n.*, u.state FROM card_notes n LEFT JOIN unavailable_notes u ON u.card_id = n.card_id",
+      const rows = await getAll<
+        NoteMapping & { state: string | null; modified: string | null }
+      >(
+        "SELECT n.*, u.state, s.modified FROM card_notes n LEFT JOIN unavailable_notes u ON u.card_id = n.card_id LEFT JOIN note_states s ON s.note_key = n.note_key AND s.library_id = n.library_id",
       );
       for (let index = 0; index < rows.length && !stopping; index++) {
         const row = rows[index];
@@ -676,7 +692,12 @@ export function auditNativeNotes(rescan = false): Promise<void> {
           await refreshAnnotationCount(card?.annotation_key ?? null);
           changed.push(row.card_id);
         }
-        if (!state && note && !activeNotes.has(note.id))
+        const modified = noteModified(note);
+        const unchanged =
+          !!modified &&
+          row.modified === modified &&
+          !deferredLinkRepairs.has(note.id);
+        if (!state && note && !activeNotes.has(note.id) && !unchanged)
           await refreshNote(note, row);
         if (index % 20 === 19) await Zotero.Promise.delay(0);
       }
@@ -1341,8 +1362,10 @@ async function refreshNote(
     indexedHTML.get(note.id) === note.getNote() &&
     indexedParents.get(note.id) === note.parentItemID &&
     !deferredLinkRepairs.has(note.id)
-  )
+  ) {
+    await rememberNoteState(note);
     return;
+  }
   const row =
     mapping ??
     (await getOne<NoteMapping>(
@@ -1370,6 +1393,7 @@ async function refreshNote(
   ) {
     indexedHTML.set(note.id, html);
     indexedParents.set(note.id, note.parentItemID);
+    await rememberNoteState(note);
     return;
   }
   await saveEditorCard({
@@ -1382,6 +1406,7 @@ async function refreshNote(
   });
   indexedHTML.set(note.id, html);
   indexedParents.set(note.id, note.parentItemID);
+  await rememberNoteState(note);
 }
 
 export function releaseNativeNote(noteID: number): Promise<void> {

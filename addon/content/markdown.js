@@ -8,7 +8,7 @@ document.addEventListener(
     if (
       event.detail > 1 &&
       /** @type {Element} */ (event.target).closest(
-        "a[href], .relation-link, .bibliography-reference, #knowledge-base-parent-display",
+        "a[href], .relation-link, .source-reference, #knowledge-base-parent-display",
       )
     ) {
       event.preventDefault();
@@ -38,10 +38,10 @@ window.ZoteroKnowledgeBaseMarkdown = {
     container.hidden = !tags.length;
   },
   /** @param {HTMLElement} container @param {import("../../src/modules/zotero").ItemSummary} item @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
-  async source(container, item, api, format = true) {
+  async source(container, item, api) {
     const token = {};
     container._sourceRender = token;
-    container.classList.add("bibliography-reference");
+    container.classList.add("source-reference");
     const identity = JSON.stringify([item.libraryID, item.key]);
     if (container._sourceIdentity !== identity) {
       container._sourceIdentity = identity;
@@ -72,8 +72,7 @@ window.ZoteroKnowledgeBaseMarkdown = {
         container.click();
       }
     };
-    if (!format) return;
-    const html = await api.getSourceBibliography(item.key, item.libraryID);
+    const html = await api.getSourceReference(item.key, item.libraryID);
     if (container._sourceRender !== token || !container.isConnected || !html)
       return;
     if (container._sourceHTML === html) return;
@@ -214,8 +213,8 @@ window.ZoteroKnowledgeBaseMarkdown = {
   render(container, body) {
     const element = /** @type {HTMLElement} */ (container);
     element._sourceRender = null;
-    if (element.classList.contains("bibliography-reference")) {
-      element.classList.remove("bibliography-reference");
+    if (element.classList.contains("source-reference")) {
+      element.classList.remove("source-reference");
       element.removeAttribute("role");
       element.removeAttribute("tabindex");
       element.onclick = null;

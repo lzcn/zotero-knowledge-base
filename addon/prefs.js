@@ -13,11 +13,6 @@ pref("extensions.zotero.knowledge-base.graph.hideIsolated", false);
 pref("extensions.zotero.knowledge-base.graph.labelLength", 20);
 pref("extensions.zotero.knowledge-base.graph.localDepth", 1);
 
-pref(
-  "extensions.zotero.knowledge-base.sourceStyle",
-  "http://www.zotero.org/styles/apa",
-);
-
 pref("extensions.zotero.knowledge-base.noteSort", "updated-desc");
 
 // User settings and internal indexing defaults.

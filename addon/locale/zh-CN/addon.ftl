@@ -9,11 +9,7 @@ pref-workbench-tab =
     .label = Zotero 标签页
 pref-workbench-window =
     .label = 独立窗口
-pref-source-heading = 来源引用
-source-item-required = 来源必须是现有的 Zotero 文献条目。
-pref-source-style = 参考文献格式
-    .tooltiptext = 在设置 → 引用中管理格式。
-source-style-missing = 请选择可用的引用格式。
+source-item-required = 来源必须是 Zotero 条目。
 editor-source-format-failed = 来源格式生成失败：
 personal-knowledge-title = 个人知识
 
@@ -121,7 +117,7 @@ picker-nothing = 没有可创建的卡片
 
 # Markdown 编辑和链接
 editor-src-selected = 使用当前选中条目
-editor-src-no-selection = 请先在 Zotero 中选中文献条目。
+editor-src-no-selection = 请先在 Zotero 中选择条目。
 editor-src-insert = 插入来源链接
 editor-reference-insert = 插入条目或笔记引用
 editor-link-pick = 插入笔记链接
@@ -448,6 +444,6 @@ graph-references-hint = 笔记正文中的引用。
 
 note-details = 笔记信息
 pref-native-note-takeover =
-    .label = 使用 KB 编辑器接管原生笔记
+    .label = 原生笔记使用知识库编辑器
 reader-more-tools = 更多工具
 native-note-switch-save = 请先保存当前笔记，再切换编辑器。

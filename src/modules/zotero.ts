@@ -194,7 +194,7 @@ export async function getItemSummary(
   return summary(item);
 }
 
-/** Source is a Zotero bibliographic item; note hierarchy belongs to Parent. */
+/** Source is a Zotero item; note hierarchy belongs to Parent. */
 export async function requireSourceItem(
   key: string,
   libraryID: number | null | undefined,

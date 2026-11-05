@@ -18,8 +18,8 @@ for (const [file, name] of [
     "Workbench navigation, conflicts and native session cleanup",
   ],
   [
-    "bibliography.mjs",
-    "Native bibliography rendering and asynchronous Source changes",
+    "source-reference.mjs",
+    "Concise Source references and asynchronous Source changes",
   ],
   ["database.mjs", "SQLite storage, card lifecycle and relationship indexing"],
   ["ui.mjs", "Markdown, sources, editor and graph interactions in XML windows"],

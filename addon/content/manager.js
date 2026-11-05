@@ -379,10 +379,6 @@ async function load() {
       )),
   );
   window.addEventListener("unload", unsubscribe, { once: true });
-  const unsubscribeStyle = api.onSourceStyleChange(() => {
-    if (selectedId && !args.embedded) safeCall(() => renderDetail(selectedId));
-  });
-  window.addEventListener("unload", unsubscribeStyle, { once: true });
   window.knowledgeBaseRefreshNotes();
 }
 

@@ -1453,28 +1453,11 @@ function runQuitTest() {
       const parentDisplay = literatureEditor.document.getElementById("knowledge-base-src-display");
       for (let n = 0; n < 100 && !parentDisplay.textContent.includes("Updated parent item title"); n++) await new Promise(resolve => setTimeout(resolve, 50));
       if (!parentDisplay.textContent.includes("Updated parent item title") || note.getNote() !== originalLiteratureHTML) throw new Error("Parent item title did not refresh without rewriting note content");
-      const nativeStyles = await knowledgeBase.api.getSourceStyles();
-      for (const styleName of ["apa", "ieee", "chicago-author-date"]) {
-        const styleID = "http://www.zotero.org/styles/" + styleName;
-        if (!nativeStyles.some(style => style.id === styleID)) throw new Error("Installed CSL style missing: " + styleName);
-        knowledgeBase.api.setSourceStyle(styleID);
-        const formatted = await knowledgeBase.api.getSourceBibliography(item.key, item.libraryID);
-        if (!formatted.includes("Smith") || !formatted.includes("2026") || !formatted.includes("<i>Journal of Test Studies</i>") || formatted.includes("Z3988") || formatted.includes("style=")) throw new Error("Native CSL rendering lost bibliography semantics: " + formatted);
-        if (styleName === "ieee") {
-          for (let n=0; n<100 && !parentDisplay.textContent.includes("[1]"); n++) await new Promise(resolve => setTimeout(resolve, 25));
-          if (!parentDisplay.textContent.includes("[1]") || !parentDisplay.querySelector(".csl-left-margin")) throw new Error("Open editor did not refresh when CSL style changed");
-        }
-      }
-      knowledgeBase.api.setSourceStyle("http://www.zotero.org/styles/apa");
+      const formatted = await knowledgeBase.api.getSourceReference(item.key, item.libraryID);
+      if (!formatted.includes("Smith") || !formatted.includes("2026") || !formatted.includes("<i>Updated parent item title</i>") || !formatted.includes("Journal of Test Studies") || formatted.includes("csl-")) throw new Error("Source reference did not follow item fields: " + formatted);
       if (!Zotero.PreferencePanes.pluginPanes.some(pane => pane.id === "knowledge-base-preferences") || note.getNote() !== originalLiteratureHTML) throw new Error("Source Settings are missing or rendering rewrote the note");
       const preferences = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
-      let styleMenu;
-      for (let n=0; n<100; n++) {
-        styleMenu = preferences.document.getElementById("knowledge-base-source-style");
-        if (styleMenu?.value === "http://www.zotero.org/styles/apa" && preferences.document.querySelectorAll("#knowledge-base-source-styles menuitem").length) break;
-        await new Promise(resolve => setTimeout(resolve,50));
-      }
-      if (!styleMenu || styleMenu.value !== "http://www.zotero.org/styles/apa") throw new Error("Native Settings style control did not initialize");
+      if (preferences.document.getElementById("knowledge-base-source-style")) throw new Error("Source style control remains");
       if(preferences.document.getElementById("knowledge-base-ai-open") || Zotero.PreferencePanes.pluginPanes.some(pane=>pane.id==="knowledge-base-ai-preferences"))throw new Error("Retired AI Settings remain available");
       Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
       for(let n=0;n<100 && !preferences.document.getElementById("knowledge-base-workbench-mode")?.getBoundingClientRect().width;n++) await new Promise(resolve=>setTimeout(resolve,20));
@@ -1483,11 +1466,6 @@ function runQuitTest() {
       modeMenu.value="window";modeMenu.dispatchEvent(new preferences.Event("command",{bubbles:true}));
       if(knowledgeBase.api.getWorkbenchMode()!=="window") throw new Error('Native Settings did not persist separate-window mode');
       modeMenu.value="tab";modeMenu.dispatchEvent(new preferences.Event("command",{bubbles:true}));
-      styleMenu.value = "http://www.zotero.org/styles/ieee";
-      styleMenu.dispatchEvent(new preferences.Event("command", {bubbles:true}));
-      if (knowledgeBase.api.getSourceStyle() !== "http://www.zotero.org/styles/ieee") throw new Error("Native Settings did not persist the style");
-      styleMenu.value = "http://www.zotero.org/styles/apa";
-      styleMenu.dispatchEvent(new preferences.Event("command", {bubbles:true}));
       preferences.document.getElementById("knowledge-base-graph-appearance").open=true;
       const labelLengthControl=preferences.document.getElementById("knowledge-base-graph-label-length");
       if(labelLengthControl?.value !== "20" || labelLengthControl.getBoundingClientRect().width < 30) throw new Error('Graph title length setting is missing or invisible');
@@ -1746,7 +1724,7 @@ function runQuitTest() {
         const toolbar = manager.document.getElementById("knowledge-base-toolbar");
         if (toolbar.getBoundingClientRect().height > 55) throw new Error("Default-width toolbar wraps note actions onto another row");
         const sourceBox = manager.document.getElementById("knowledge-base-detail-source");
-        if (sourceBox.querySelector(".source-item-label")?.textContent !== knowledgeBase.api.loc("manager-source-item") || !sourceBox.querySelector(".csl-entry")) throw new Error("Source is not identified as a Zotero item");
+        if (sourceBox.querySelector(".source-item-label")?.textContent !== knowledgeBase.api.loc("manager-source-item") || !sourceBox.querySelector(".source-reference i")) throw new Error("Source is not identified as a Zotero item");
         const iconSVG = (await Zotero.HTTP.request("GET", "chrome://zotero/skin/16/universal/book.svg")).responseText;
         if (!iconSVG.includes("<svg")) throw new Error("Native source item icon is unavailable");
         const preview = manager.document.getElementById("knowledge-base-preview");
@@ -2433,7 +2411,7 @@ function runQuitTest() {
         const compactConnections = editorRelations.getBoundingClientRect().width >= 200 && editor.getComputedStyle(editor.document.getElementById("knowledge-base-editor-content")).flexDirection === "column" && editorRelations.querySelectorAll("nav button").length === 3 && !editorRelations.querySelector("details") && !editorRelations.contains(editor.document.getElementById("knowledge-base-parent-display"));
         const sourceDisplay = editor.document.getElementById("knowledge-base-src-display");
         const sourceReference = sourceDisplay.textContent;
-        if (!sourceReference.includes("Smith") || !sourceReference.includes("2026") || !sourceDisplay.querySelector(".csl-entry") || !sourceReference.includes("Journal of Test Studies") || editor.document.getElementById("knowledge-base-parent-root")) throw new Error("Source/Parent metadata is not a concise reference");
+        if (!sourceReference.includes("Smith") || !sourceReference.includes("2026") || !sourceDisplay.querySelector("i") || !sourceReference.includes("Journal of Test Studies") || editor.document.getElementById("knowledge-base-parent-root")) throw new Error("Source/Parent metadata is not a concise reference");
         const systemDark = editor.matchMedia("(prefers-color-scheme: dark)").matches;
         const nativeFrame = noteElement.getCurrentInstance()._iframeWindow;
         let noteLinkTool;
@@ -3229,7 +3207,7 @@ try {
     );
   else if (metadataOnly)
     console.log(
-      "PASS Real Zotero compact metadata: click-to-copy, editable IDs, cancel, conflicts, retained references, aligned long text, source navigation and full citations, native/Markdown, styles and restart.",
+      "PASS Real Zotero compact metadata: click-to-copy, editable IDs, cancel, conflicts, retained references, aligned long text, source navigation and concise Source references; native/Markdown and restart.",
     );
   else if (workbenchOnly)
     console.log(
@@ -3281,7 +3259,7 @@ try {
     );
   else {
     console.log(
-      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; unified notes, unique source notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable note IDs, plain timestamp initialization and refreshed Markdown references with retained aliases, retained source associations, scoped Knowledge Base typography, native Settings CSL selection and real-time bibliography updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, direct Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; unified notes, unique source notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable note IDs, plain timestamp initialization and refreshed Markdown references with retained aliases, retained source associations, scoped Knowledge Base typography, concise Source references and live metadata updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, direct Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
     );
     console.log(
       "Graph display intervals (ms): " +

@@ -98,7 +98,7 @@ function benchmarkLoading() {
       const workbenchEngines=engines;
       engines=0;
       const renderStart=now();
-      await Promise.all(Array.from({length:3},()=>api.getSourceBibliography(item.key,item.libraryID)));
+      await Promise.all(Array.from({length:3},()=>api.getSourceReference(item.key,item.libraryID)));
       const sourceMs=now()-renderStart;
       Zotero.Styles.get = originalGet;
       await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify({notes:ids.length,auditsMs:audits,tagVocabularyMs:tagVocabulary,workbenchMs,workbenchEngines,threeSourceRendersMs:sourceMs,threeSourceEngines:engines}));

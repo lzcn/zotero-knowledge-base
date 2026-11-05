@@ -84,7 +84,6 @@ export default async function metadataHost({
     quit();
     return;
   }
-  await knowledgeBase.api.getSourceStyles();
   const source = new Zotero.Item("journalArticle");
   source.setField(
     "title",
@@ -115,7 +114,7 @@ export default async function metadataHost({
   assert(
     sourceCandidates.some((item) => item.key === webItem.key) &&
       !sourceCandidates.some((item) => item.key === internalNote.key),
-    "Source search mixed notes with bibliographic items",
+    "Source search mixed notes with Zotero items",
   );
   assert(
     (await knowledgeBase.api.getItemSummary(
@@ -370,13 +369,13 @@ export default async function metadataHost({
   main.resizeTo(1200, 850);
   await shot("initial");
   await wait(
-    () => display.querySelector(".csl-entry")?.textContent.includes("2023"),
-    "Full source citation did not load",
+    () => display.textContent.includes("2023"),
+    "Source reference did not load",
   );
   assert(
     !key.hidden &&
       key.value === "BetterDynamicGraphYu23" &&
-      display.querySelector(".csl-entry")?.textContent.includes("Yu"),
+      display.textContent.includes("Yu"),
     "Metadata is not compact by default",
   );
   const metadata = $("editor-metadata"),
@@ -780,16 +779,6 @@ export default async function metadataHost({
       }
     }
   }
-  for (const style of ["ieee", "apa"]) {
-    knowledgeBase.api.setSourceStyle("http://www.zotero.org/styles/" + style);
-    await wait(
-      () =>
-        style === "ieee"
-          ? display.textContent.includes("[1]")
-          : !display.textContent.includes("[1]"),
-      "Full citation did not refresh with the selected style",
-    );
-  }
   source.setField("title", "Updated source title");
   await source.saveTx();
   await wait(
@@ -845,14 +834,12 @@ export default async function metadataHost({
   );
   manager.ZoteroKnowledgeBase_selectZettel(id);
   active = await current(id);
-  knowledgeBase.api.setSourceStyle("http://www.zotero.org/styles/ieee");
   await wait(
     () =>
       active.document
         .getElementById("knowledge-base-src-display")
-        ?.querySelector(".csl-entry")
-        ?.textContent.includes("[1]"),
-    "Full citation did not render without a library window",
+        ?.textContent.includes("Updated source title"),
+    "Source reference did not render without a library window",
   );
   manager.ZoteroKnowledgeBase_selectZettel(secondID);
   active = await current(secondID);

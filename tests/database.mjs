@@ -626,8 +626,14 @@ if (currentSchema) {
       '<div data-schema-version="9"><h1>Changed search fixture</h1><p>Replacement phrase</p></div>',
   };
   let auditNoteReads = 0;
+  let auditNoteLoads = 0;
+  const originalLoadDataTypes = originalItems.loadDataTypes;
   zoteroStub.Items = {
     ...originalItems,
+    loadDataTypes: async (...args) => {
+      auditNoteLoads++;
+      return originalLoadDataTypes(...args);
+    },
     getByLibraryAndKeyAsync: async (_library, key) => {
       if (key !== auditNote.key) return false;
       auditNoteReads++;
@@ -755,6 +761,21 @@ if (currentSchema) {
           sql.startsWith("SELECT * FROM card_notes WHERE note_key") ||
           sql.startsWith("SELECT state FROM unavailable_notes WHERE card_id"),
       ),
+  );
+  const beforeStateLoads = auditNoteLoads;
+  auditNote.dateModified = "2026-01-02T03:04:05Z";
+  await nativeNotes.auditNativeNotes();
+  const stateLoads = auditNoteLoads;
+  await nativeNotes.auditNativeNotes();
+  const noteState = await db.getOne(
+    "SELECT modified FROM note_states WHERE note_key = ? AND library_id = 1",
+    [auditNote.key],
+  );
+  check(
+    "Unchanged native notes skip body loads after their timestamp is stored",
+    stateLoads > beforeStateLoads &&
+      auditNoteLoads === stateLoads &&
+      noteState?.modified === auditNote.dateModified,
   );
   for (const id of searchFixtures.slice(1, 4))
     await db.exec("DELETE FROM card_notes WHERE card_id = ?", [id]);
@@ -1226,7 +1247,7 @@ if (currentSchema) {
     );
   sourceFixtures.delete("1/NOTESRC1");
   check(
-    "Source accepts only existing bibliographic items and rejects notes, missing items and URLs before writes",
+    "Source accepts only existing Zotero items and rejects notes, missing items and URLs before writes",
     (await zettel.listZettels()).length === rowsBeforeInvalidSource,
   );
   const alphaId = await zettel.saveZettel({

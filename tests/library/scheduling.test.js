@@ -82,6 +82,30 @@ test("stopping during preload prevents vectors, library scanning and deletion wr
   assert.deepEqual(f.calls, ["read-index", "unregister"]);
 });
 
+test("changed documents pause once per batch instead of after every document", async () => {
+  const f = fixture();
+  await f.indexer.start();
+  f.release();
+  await f.indexer._scanPromise;
+  const processed = [];
+  let pauseSlices = 0;
+  f.indexer._processId = async (id) => {
+    processed.push(id);
+    return true;
+  };
+  f.context.swYield = async (ms) => {
+    if (ms === 100) pauseSlices++;
+  };
+  for (let id = 0; id < 11; id++) {
+    f.indexer._queue.push(id);
+    f.indexer._queued.add(id);
+  }
+  await f.indexer._drain();
+  assert.equal(processed.length, 11);
+  assert.equal(pauseSlices, 20);
+  f.indexer.requestStop();
+});
+
 test("quitting before index preparation never creates a competing status-only cache directory", async () => {
   const f = fixture();
   let writes = 0;

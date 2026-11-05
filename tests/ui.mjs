@@ -1131,9 +1131,6 @@ prefsWin.Zotero = {
       ...preferences,
       getLibraryState: () => "ready",
       getGraphTags: async () => ["Machine learning", "中文 标签"],
-      getSourceStyles: async () => [{ id: "apa", title: "APA" }],
-      getSourceStyle: () => "apa",
-      setSourceStyle() {},
       loc: (key) => key,
     },
   },
@@ -1516,9 +1513,8 @@ async function editor(args = {}, overrides = {}) {
     getBacklinks: async () => [],
     onDataChange: () => () => {},
     onNativeNoteChange: () => () => {},
-    onSourceStyleChange: () => () => {},
-    getSourceBibliography: async () =>
-      '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
+    getSourceReference: async () =>
+      "Author (2026). <i>Linked Zotero item</i>. Journal.",
     searchItems: async () => sources,
     getSelectedSource: async () => sources[0],
     listZettels: async () => [{ id: "20261001000000", title: "Target card" }],
@@ -1956,13 +1952,13 @@ const slowSourceLoad = editor(
   {
     getZettel: async () => ({
       id: "SLOW_SOURCE",
-      title: "Ready before CSL",
+      title: "Ready before formatting",
       body: "Editable original",
       item_key: "SOURCE01",
       library_id: 1,
       updated_at: 1,
     }),
-    getSourceBibliography: async () => slowSource,
+    getSourceReference: async () => slowSource,
   },
 );
 const sourceReadyEditor = await Promise.race([
@@ -1970,7 +1966,7 @@ const sourceReadyEditor = await Promise.race([
   new Promise((resolve) => setTimeout(() => resolve(null), 500)),
 ]);
 check(
-  "A pending CSL bibliography never blocks opening the original note editor",
+  "A pending Source reference never blocks opening the original note editor",
   () => {
     assert.ok(sourceReadyEditor);
     assert.equal(sourceReadyEditor.initialMode, "visual");
@@ -1981,17 +1977,15 @@ check(
     );
   },
 );
-finishSlowSource('<div class="csl-entry">Completed source bibliography</div>');
+finishSlowSource("Completed source reference");
 await wait();
 await wait();
 check(
   "Source formatting finishes in the open document after the editor is ready",
   () => {
     assert.equal(
-      sourceReadyEditor
-        .$("knowledge-base-src-display")
-        .querySelector(".csl-entry").textContent,
-      "Completed source bibliography",
+      sourceReadyEditor.$("knowledge-base-src-display").textContent,
+      "Completed source reference",
     );
   },
 );
@@ -3871,7 +3865,7 @@ await ed.win.__editorEval("searchSources()");
 ed.$("knowledge-base-src-results").firstElementChild.click();
 await wait();
 check(
-  "Selecting a source preserves its formatted citation and enables jump and insertion",
+  "Selecting a source shows its concise reference and enables jump and insertion",
   () => {
     assert.ok(
       ed
@@ -4439,9 +4433,8 @@ const graphOpened = [];
 graphDom.window.Zotero = {
   ZoteroKnowledgeBase: {
     api: {
-      onSourceStyleChange: () => () => {},
-      getSourceBibliography: async () =>
-        '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
+      getSourceReference: async () =>
+        "Author (2026). <i>Linked Zotero item</i>. Journal.",
       getPanelWidth: () => 28,
       setPanelWidth: () => {},
       getNoteTags: async () => [],
@@ -5201,9 +5194,8 @@ managerWin.Zotero = {
   },
   ZoteroKnowledgeBase: {
     api: {
-      onSourceStyleChange: () => () => {},
-      getSourceBibliography: async () =>
-        '<div class="csl-entry">Author (2026). <i>Linked Zotero item</i>. Journal.</div>',
+      getSourceReference: async () =>
+        "Author (2026). <i>Linked Zotero item</i>. Journal.",
       getNoteSort: () => managerSort,
       setNoteSort: (value) => {
         managerSort = value;
@@ -5775,7 +5767,7 @@ check(
       "manager-source-item",
     );
     assert.equal(box.querySelector("i").textContent, "Linked Zotero item");
-    assert.ok(box.querySelector(".csl-entry"));
+    assert.ok(box.querySelector(".source-reference"));
     assert.deepEqual(managerCalls.sources, ["SRC00001", 1]);
   },
 );

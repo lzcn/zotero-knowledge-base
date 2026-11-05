@@ -29,7 +29,7 @@ import {
   unregisterReaderClipping,
 } from "./modules/reader-clipping";
 import { registerPreferences, unregisterPreferences } from "./modules/settings";
-import { closeBibliographies } from "./modules/bibliography";
+import { closeSourceReferences } from "./modules/source-reference";
 import { registerItemPaneUI, unregisterItemPaneUI } from "./modules/item-pane";
 import {
   registerReaderToolbar,
@@ -329,7 +329,7 @@ async function releaseResources(): Promise<void> {
     unregisterReaderToolbar,
     unregisterReaderClipping,
     unregisterPreferences,
-    closeBibliographies,
+    closeSourceReferences,
     closeNativeMarkdown,
     closeNativeNotes,
     closeNoteSessions,

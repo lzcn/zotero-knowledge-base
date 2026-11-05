@@ -176,7 +176,7 @@ export default async function retiredFeaturesHost({
   try {
     await wait(
       () =>
-        preferences.document.getElementById("knowledge-base-source-style")
+        preferences.document.getElementById("knowledge-base-workbench-mode")
           ?.value,
       "Settings did not load",
     );

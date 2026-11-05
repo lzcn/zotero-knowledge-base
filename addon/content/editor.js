@@ -119,7 +119,6 @@ const relationGroups = [
   ["knowledge-base-editor-backlinks-label", "knowledge-base-editor-backlinks"],
 ];
 let unsubscribe = null;
-let unsubscribeSourceStyle = null;
 let sourceRenderVersion = 0;
 /** @type {"visual" | "source"} */
 let editorMode = "visual";
@@ -307,9 +306,6 @@ async function loadEditor() {
     )
       run(refreshSavedCard);
   });
-  unsubscribeSourceStyle = api.onSourceStyleChange(() =>
-    run(refreshSourceDisplay),
-  );
 }
 
 async function refreshSavedCard() {
@@ -1143,12 +1139,7 @@ async function refreshSourceDisplay() {
     return;
   }
   try {
-    await window.ZoteroKnowledgeBaseMarkdown.source(
-      display,
-      current,
-      api,
-      loaded,
-    );
+    await window.ZoteroKnowledgeBaseMarkdown.source(display, current, api);
   } catch (error) {
     if (version !== sourceRenderVersion || disposed) return;
     setStatus(
@@ -2128,7 +2119,6 @@ window.addEventListener("unload", () => {
     console.error(error);
   }
   unsubscribe?.();
-  unsubscribeSourceStyle?.();
   clearTimeout(previewTimer);
   clearTimeout(relationsTimer);
   clearTimeout(searchTimer);

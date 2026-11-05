@@ -9,11 +9,7 @@ pref-workbench-tab =
     .label = Zotero tab
 pref-workbench-window =
     .label = Separate window
-pref-source-heading = Source References
-source-item-required = Choose an existing Zotero bibliographic item as Source.
-pref-source-style = Bibliography style
-    .tooltiptext = Manage styles in Settings → Cite.
-source-style-missing = Choose an available citation style.
+source-item-required = Choose a Zotero item as Source.
 editor-source-format-failed = Could not format Source:
 personal-knowledge-title = Personal Knowledge
 
@@ -147,7 +143,7 @@ picker-nothing = Nothing to create
 
 # Markdown editing and links
 editor-src-selected = Use selected item
-editor-src-no-selection = Select a bibliographic item in Zotero first.
+editor-src-no-selection = Select a Zotero item first.
 editor-src-insert = Insert source link
 editor-reference-insert = Insert item or note reference
 editor-link-pick = Insert note link
@@ -474,6 +470,6 @@ graph-references-hint = References written in note text.
 
 note-details = Note details
 pref-native-note-takeover =
-    .label = Use KB for native notes
+    .label = Use Knowledge Base for native notes
 reader-more-tools = More tools
 native-note-switch-save = Save the open note before changing its editor.

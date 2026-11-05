@@ -6,48 +6,49 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const root = await mkdtemp(join(tmpdir(), "knowledge-base-csl-"));
+const root = await mkdtemp(join(tmpdir(), "knowledge-base-source-"));
 try {
   await build({
     stdin: {
       contents:
-        'export * from "./src/modules/bibliography.ts"; export {notifyDataChange} from "./src/modules/events.ts";',
+        'export * from "./src/modules/source-reference.ts"; export {notifyDataChange} from "./src/modules/events.ts";',
       resolveDir: process.cwd(),
     },
     bundle: true,
     platform: "node",
     format: "esm",
-    outfile: join(root, "bibliography.mjs"),
+    outfile: join(root, "source-reference.mjs"),
   });
   const dom = new JSDOM("<div id='source'></div>", {
     runScripts: "outside-only",
   });
-  const item = { id: 1, deleted: false, isNote: () => false };
-  let preference = "http://www.zotero.org/styles/apa";
-  let released = 0;
-  let fails = false;
+  const item = {
+    id: 1,
+    key: "ITEM0001",
+    libraryID: 1,
+    deleted: false,
+    isRegularItem: () => true,
+    getField: (field) => {
+      if (field === "title") return "A <concise> title";
+      if (field === "firstCreator") return "Yu";
+      if (field === "date") return "2023";
+      if (field === "publicationTitle") return "Journal";
+      return "";
+    },
+  };
+  let loads = 0;
   globalThis.Zotero = {
     Items: {
       getByLibraryAndKeyAsync: async () => item,
-      loadDataTypes: async () => {},
-    },
-    Libraries: { userLibraryID: 1 },
-    Prefs: { get: () => preference },
-    Styles: {
-      init: async () => {},
-      get: (id) =>
-        id.endsWith("/apa")
-          ? { getCiteProc: () => ({ free: () => released++ }) }
-          : null,
-    },
-    Cite: {
-      makeFormattedBibliographyOrCitationList: () => {
-        if (fails) throw new Error("CSL failure");
-        return '<div class="csl-entry" style="margin: 2em">Author. <i>Title</i>. <a href="https://example.com">DOI</a><script>bad()</script><span class="Z3988" title="private">metadata</span><img src="x" onerror="bad()"></div>';
+      loadDataTypes: async () => {
+        loads++;
       },
     },
-    getMainWindow: () => dom.window,
-    locale: "en-US",
+    Libraries: {
+      userLibraryID: 1,
+      get: () => ({ name: "My Library", libraryType: "user" }),
+    },
+    ItemFields: { getID: () => false },
   };
   globalThis.addon = {
     data: {
@@ -56,71 +57,74 @@ try {
       },
     },
   };
-  const bibliography = await import(
-    pathToFileURL(join(root, "bibliography.mjs"))
+  const reference = await import(
+    pathToFileURL(join(root, "source-reference.mjs"))
+  );
+  assert.equal(
+    reference.formatSourceReference({
+      creatorYear: "Yu 2023",
+      title: "A <concise> title",
+      publication: "Journal",
+    }),
+    "Yu 2023. <i>A &lt;concise&gt; title</i>. Journal.",
   );
   const initial = await Promise.all(
     Array.from({ length: 3 }, () =>
-      bibliography.getSourceBibliography("ITEM0001", 1),
+      reference.getSourceReference("ITEM0001", 1),
     ),
   );
   const html = initial[0];
   assert.deepEqual(initial, Array(3).fill(html));
-  assert.match(html, /<i>Title<\/i>/);
-  assert.match(html, /href="https:\/\/example.com"/);
-  assert.doesNotMatch(html, /metadata|Z3988|script|onerror|style=/);
-  assert.equal(released, 1);
-  assert.deepEqual(
-    await Promise.all(
-      Array.from({ length: 3 }, () =>
-        bibliography.getSourceBibliography("ITEM0001", 1),
-      ),
-    ),
-    Array(3).fill(html),
+  assert.equal(html, "Yu 2023. <i>A &lt;concise&gt; title</i>. Journal.");
+  assert.equal(loads, 1);
+  await reference.getSourceReference("ITEM0001", 1);
+  assert.equal(loads, 1);
+  reference.notifyDataChange({ fields: ["identity"] });
+  await reference.getSourceReference("ITEM0001", 1);
+  assert.equal(loads, 1);
+  reference.notifyDataChange({ fields: ["source"] });
+  item.getField = (field) =>
+    field === "title"
+      ? "Updated title"
+      : field === "firstCreator"
+        ? "Yu"
+        : field === "date"
+          ? "2024"
+          : field === "publicationTitle"
+            ? "Journal"
+            : "";
+  assert.equal(
+    await reference.getSourceReference("ITEM0001", 1),
+    "Yu 2024. <i>Updated title</i>. Journal.",
   );
-  assert.equal(released, 1);
-  bibliography.notifyDataChange({ fields: ["identity"] });
-  await bibliography.getSourceBibliography("ITEM0001", 1);
-  assert.equal(released, 1);
-  bibliography.notifyDataChange({ fields: ["source"] });
-  fails = true;
+  assert.equal(loads, 2);
+  item.isRegularItem = () => false;
+  reference.notifyDataChange({ fields: ["source"] });
   await assert.rejects(
-    bibliography.getSourceBibliography("ITEM0001", 1),
-    /CSL failure/,
+    reference.getSourceReference("ITEM0001", 1),
+    /source-item-required/,
   );
-  assert.equal(released, 2);
-  fails = false;
-  await bibliography.getSourceBibliography("ITEM0001", 1);
-  assert.equal(released, 3);
-  preference = "missing-style";
-  await assert.rejects(
-    bibliography.getSourceBibliography("ITEM0001", 1),
-    /source-style-missing/,
-  );
-  preference = "http://www.zotero.org/styles/apa";
-  bibliography.notifyDataChange({ fields: ["availability"] });
+  item.isRegularItem = () => true;
   item.deleted = true;
+  reference.notifyDataChange({ fields: ["source"] });
   await assert.rejects(
-    bibliography.getSourceBibliography("ITEM0001", 1),
+    reference.getSourceReference("ITEM0001", 1),
     /manager-source-missing/,
   );
-  item.deleted = false;
-  await bibliography.getSourceBibliography("ITEM0001", 1);
-  assert.equal(released, 4);
   console.log(
-    "PASS Shared CSL rendering preserves emphasis and links, invalidates on source/style/availability changes and retries failed renders with released engines",
+    "PASS Source references use concise exported item fields, share cached loads and reject notes or missing items",
   );
 
   dom.window.eval(await readFile("addon/content/markdown.js", "utf8"));
   let completeOld;
   const api = {
     loc: (key) => key,
-    getSourceBibliography: (key) =>
+    getSourceReference: (key) =>
       key === "OLD"
         ? new Promise((resolve) => {
             completeOld = resolve;
           })
-        : Promise.resolve('<div class="csl-entry">New <i>source</i></div>'),
+        : Promise.resolve("New <i>source</i>"),
     selectItem: async () => {},
   };
   const container = dom.window.document.getElementById("source");
@@ -178,14 +182,13 @@ try {
     container,
     { key: "EARLY", title: "Early", libraryID: 1 },
     api,
-    false,
   );
   container.click();
   await Promise.resolve();
   assert.deepEqual(selected[1], ["EARLY", 1]);
   release();
   console.log(
-    "PASS Single Source click opens the item, ignores double-click repeats and works before CSL initialization",
+    "PASS Single Source click opens the item, ignores double-click repeats and works before formatting finishes",
   );
 } finally {
   await rm(root, { recursive: true, force: true });

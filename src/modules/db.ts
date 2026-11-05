@@ -39,6 +39,7 @@ const SCHEMA_TABLES: string[] = [
   `CREATE TABLE IF NOT EXISTS note_save_operations (id TEXT PRIMARY KEY, card_id TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS note_keys (key TEXT PRIMARY KEY, card_id TEXT NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_notes (card_id TEXT PRIMARY KEY, note_key TEXT NOT NULL, library_id INTEGER NOT NULL, original_body TEXT NOT NULL, external INTEGER NOT NULL DEFAULT 0, UNIQUE(note_key, library_id))`,
+  `CREATE TABLE IF NOT EXISTS note_states (note_key TEXT NOT NULL, library_id INTEGER NOT NULL, modified TEXT NOT NULL, PRIMARY KEY (note_key, library_id)) WITHOUT ROWID`,
   `CREATE TABLE IF NOT EXISTS editor_drafts (id TEXT PRIMARY KEY, body TEXT NOT NULL, data TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS card_parents (card_id TEXT PRIMARY KEY, parent_id TEXT, CHECK(card_id <> parent_id))`,
   `CREATE TABLE IF NOT EXISTS meta (
@@ -531,6 +532,14 @@ function conn(): SqliteConnection {
 export async function exec(sql: string, params: unknown[] = []): Promise<void> {
   await conn().execute(sql, params);
   revision++;
+}
+
+/** Internal caches such as audit timestamps do not change note or link content. */
+export async function execInternal(
+  sql: string,
+  params: unknown[] = [],
+): Promise<void> {
+  await conn().execute(sql, params);
 }
 
 /** Map mozStorage column accessors to typed query results. */

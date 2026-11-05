@@ -88,8 +88,12 @@ export default async function settingsHost({
   settings.resizeTo(940, 1000);
   const doc = settings.document;
   await wait(
-    () => doc.getElementById("knowledge-base-source-style").value,
-    "Citation styles did not load",
+    () => doc.getElementById("knowledge-base-workbench-mode").value,
+    "Note settings did not load",
+  );
+  assert(
+    !doc.getElementById("knowledge-base-source-style"),
+    "Source style control remains",
   );
   await wait(
     () =>

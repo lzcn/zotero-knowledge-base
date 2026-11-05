@@ -131,8 +131,8 @@ function benchmarkStartup() {
         }
         if(editor?.knowledgeBaseCardId!==fixture.notes[0].id || !editor.eval('richEditor && !noteUnavailable && !libraryReadOnly && !recoveryPending'))throw new Error('Workbench did not load an editable original');
         result.firstRowsMs=firstRowsMs;result.editorReadyMs=Date.now()-started;result.openingSteps=Zotero.__knowledgeBaseOpeningSteps;
-        for(let i=0;i<800 && !editor.document.querySelector('#knowledge-base-src-display .csl-entry');i++)await pause(10);
-        if(!editor.document.querySelector('#knowledge-base-src-display .csl-entry'))throw new Error('Source bibliography did not finish');
+        for(let i=0;i<800 && !editor.document.querySelector('#knowledge-base-src-display i');i++)await pause(10);
+        if(!editor.document.querySelector('#knowledge-base-src-display i'))throw new Error('Source reference did not finish');
         result.sourceReadyMs=Date.now()-started;
         result.auditMs=[];
         for(let i=0;i<3;i++){const start=Date.now();await api.auditNativeNotes();result.auditMs.push(Date.now()-start);}
