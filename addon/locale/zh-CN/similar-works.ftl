@@ -7,8 +7,6 @@ similar-works-based-on-weak = 仅元数据
 similar-works-progress =
     .aria-label = 相似度计算进度
 
-similar-works-pref-limit =
-    .value = 首批显示数量
 similar-works-pref-index-heading = 缓存
 similar-works-pref-error = 缓存暂不可用
 similar-works-pref-index-value = { $known ->

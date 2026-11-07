@@ -63,10 +63,9 @@ editor-title-new = New Note
 editor-title-edit = Edit Note
 editor-source-label = Source
 reading-open = Read & Write
-clip-figure = Clip Figure to Note
-clip-note-required = Open an editable note beside the PDF first.
+clip-figure = Copy Figure
 clip-unavailable = This PDF view cannot capture a figure yet.
-clip-note-changed = The note changed while capturing. Select the figure again.
+clip-note-required = This note is not editable.
 clip-insert-failed = The figure could not be saved. Keep the note open and try again.
 reading-no-pdf = This note’s source has no PDF.
 reading-file-missing = The PDF is not available locally. Download it in Zotero first.
@@ -173,7 +172,7 @@ graph-open = Open
 graph-create = Create card
 graph-connections = Connections
 graph-search = Search notes…
-graph-hint = Click to select; double-click to open.
+graph-hint = Click to select. Double-click to open.
 graph-empty = No matching notes
 graph-stats = { $cards } notes · { $links } connections
 graph-kind-card = Note
@@ -227,7 +226,7 @@ editor-source-mode = Markdown source
 editor-unsaved = Waiting to save…
 editor-saving = Saving…
 editor-saved = Saved
-editor-save-conflict = Note changed elsewhere. Draft kept; reopen to merge.
+editor-save-conflict = Note changed elsewhere. Draft kept. Reopen to merge.
 editor-close-unsaved = Save changes or keep a draft before closing?
 editor-close-cancel = Cancel
 editor-save-close = Save and close
@@ -373,7 +372,7 @@ manager-open-note = Open note
 manager-open-note-window = Open in New Window
 manager-copy-note-link = Copy Note Link
 
-pref-ui-style = Appearance
+pref-ui-style = Style
 
 text-tools-normalize = Normalize
 text-tools-find = Find
@@ -398,9 +397,8 @@ text-search-replaced-line = replaced match on line $
 text-search-replaced-count = replaced $ matches
 
 
-settings-common = General
+settings-common = Appearance
 settings-tags = Tags
-settings-similar = Similar Items
 settings-notes = Notes
 
 
@@ -416,7 +414,7 @@ section-tags-existing = Existing
 section-tags-add-error = Could not add tags. Try again.
 section-tags-load-error = Could not load suggested tags. Select the item again.
 pref-template-manage =
-    .label = Manage…
+    .label = Templates…
 
 template-empty = No templates yet
 
@@ -432,8 +430,8 @@ menu-open-native-note = Open in Knowledge Base
 graph-view = Graph view
 
 excluded-placeholder =
-    .placeholder = @colored, reading*
-    .title = @colored excludes colored tags and * matches any text
+    .placeholder = @colored, @auto, reading*
+    .title = @auto hides automatic tags. @colored hides colored tags. * matches any text.
 status-heading = Status
 vectors-label = Cache
 vector-ready = Ready
@@ -452,15 +450,6 @@ pref-template-entity-option =
     .label = Entity
 
 
-settings-templates = Templates
-pref-template-literature =
-    .value = Literature
-pref-template-zettel =
-    .value = Zettel
-pref-template-thinking =
-    .value = Thinking
-pref-template-entity =
-    .value = Entity
 
 cache-progress =
     .aria-label = Cache progress
@@ -468,8 +457,14 @@ cache-progress =
 graph-outline-hint = Parent–child relationships you organize.
 graph-references-hint = References written in note text.
 
-note-details = Note details
 pref-native-note-takeover =
     .label = Use Knowledge Base for native notes
+    .tooltiptext = Use the shared editor in the sidebar, note tabs and note windows.
 reader-more-tools = More tools
 native-note-switch-save = Save the open note before changing its editor.
+
+pref-math-preview =
+    .label = Fix math preview (Zotero cards)
+    .tooltiptext = Render formulas in note cards without changing saved notes.
+pref-ui-notes =
+    .label = Notes

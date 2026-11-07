@@ -67,7 +67,7 @@ try {
   console.log(
     "PASS Generic pooling and CPU fallback after platform initialization failure",
   );
-  for (const mode of ["cpu", "coreml", "coreml"]) {
+  for (const mode of ["cpu", "coreml", "coreml-neural", "coreml-gpu"]) {
     const child = spawn(
       executable,
       [join(temporary, "model.onnx"), join(temporary, "coreml-cache"), mode],
@@ -100,12 +100,13 @@ try {
         child.stdin.write(JSON.stringify(input) + "\n");
         const result = await read();
         assert.ok(!result.error, result.error);
-        assert.equal(result.vector.length, 384);
-        assert.ok(result.vector.every(Number.isFinite));
+        const vector = result.vector;
+        assert.equal(vector.length, 384);
+        assert.ok(vector.every(Number.isFinite));
         assert.ok(
-          Math.abs(result.vector.reduce((sum, n) => sum + n * n, 0) - 1) < 1e-5,
+          Math.abs(vector.reduce((sum, n) => sum + n * n, 0) - 1) < 1e-5,
         );
-        vectors.push(result.vector);
+        vectors.push(vector);
         times.push(performance.now() - start);
       }
       const cosine = (a, b) => a.reduce((sum, n, i) => sum + n * b[i], 0);

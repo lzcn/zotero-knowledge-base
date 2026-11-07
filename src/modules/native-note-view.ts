@@ -1,7 +1,7 @@
 import { getString } from "../utils/locale";
 import { ensureManagedNote } from "./native-notes";
 import { mountEditor, clearEditor } from "./workbench";
-import { stopEditorView } from "./editor-views";
+import { closeEditorView, prepareEditorView } from "./editor-views";
 import { getNativeNoteTakeover } from "./preferences";
 
 export interface NativeEditorInstance {
@@ -15,6 +15,7 @@ interface NativeNoteView {
   browser: Browser;
   bind(instance: NativeEditorInstance): void;
   dispose(): void;
+  close(): Promise<void>;
 }
 const views = new Map<HTMLElement, NativeNoteView>();
 const owners = new WeakMap<NativeEditorInstance, HTMLElement>();
@@ -50,6 +51,7 @@ function createNativeNoteView(element: HTMLElement): NativeNoteView {
   browser.style.cssText = "flex: 1; min-width: 0; min-height: 0; width: 100%;";
   const display = element.style.display;
   let disposed = false;
+  let closing: Promise<void> | undefined;
   let restore: (() => void) | undefined;
   const forwarded = async (annotations: unknown[]) => {
     await browser.contentWindow.knowledgeBaseReady?.();
@@ -58,8 +60,7 @@ function createNativeNoteView(element: HTMLElement): NativeNoteView {
   };
   const observer = new doc.defaultView!.MutationObserver(() => {
     if (!element.isConnected) {
-      void stopEditorView(browser.contentWindow);
-      dispose();
+      void close().catch((error) => Zotero.logError(error));
     }
   });
   const dispose = () => {
@@ -73,9 +74,10 @@ function createNativeNoteView(element: HTMLElement): NativeNoteView {
     clearEditor(browser);
     browser.remove();
   };
+  const close = () =>
+    (closing ??= closeEditorView(browser.contentWindow, dispose));
   const unload = () => {
-    void stopEditorView(browser.contentWindow);
-    dispose();
+    void close().catch((error) => Zotero.logError(error));
   };
   doc.defaultView!.addEventListener("unload", unload, { once: true });
   const bind = (instance: NativeEditorInstance) => {
@@ -99,7 +101,7 @@ function createNativeNoteView(element: HTMLElement): NativeNoteView {
     childList: true,
     subtree: true,
   });
-  const view = { browser, bind, dispose };
+  const view = { browser, bind, dispose, close };
   views.set(element, view);
   return view;
 }
@@ -110,8 +112,7 @@ export function detachNativeNoteEditor(instance: NativeEditorInstance): void {
   if (!element || element.isConnected) return;
   const view = views.get(element);
   if (!view) return;
-  void stopEditorView(view.browser.contentWindow);
-  view.dispose();
+  void view.close().catch((error) => Zotero.logError(error));
 }
 
 export function nativeNoteEditorWindow(element: Element): Window | undefined {
@@ -121,11 +122,7 @@ export function nativeNoteEditorWindow(element: Element): Window | undefined {
 export async function stopNativeNoteViews(): Promise<void> {
   generation++;
   const closing = [...views.values()];
-  // A removed browser loses its promise callbacks. Drain its writes before removal.
-  await Promise.allSettled(
-    closing.map((view) => stopEditorView(view.browser.contentWindow)),
-  );
-  for (const view of closing) view.dispose();
+  await Promise.allSettled(closing.map((view) => view.close()));
 }
 
 /** Flush before changing editor ownership; a failed save keeps the current view. */
@@ -133,10 +130,7 @@ export async function prepareNativeNoteViews(): Promise<HTMLElement[]> {
   const elements = [...views.keys()];
   for (const element of elements) {
     const view = views.get(element);
-    if (
-      view &&
-      !(await view.browser.contentWindow.knowledgeBasePrepareNavigation?.())
-    )
+    if (view && !(await prepareEditorView(view.browser.contentWindow)))
       throw new Error(getString("native-note-switch-save"));
   }
   return elements;

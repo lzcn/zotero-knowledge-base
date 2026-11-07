@@ -2,6 +2,7 @@ interface TagExclusions {
   keys: Set<string>;
   patterns: RegExp[];
   colored: boolean;
+  automatic: boolean;
 }
 export const SWTagPolicy: {
   words(name: string): string[];

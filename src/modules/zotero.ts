@@ -315,18 +315,18 @@ export async function selectItem(
   key: string,
   libraryID: number | null,
 ): Promise<void> {
-  const id =
-    libraryID == null
-      ? false
-      : Zotero.Items.getIDFromLibraryAndKey(libraryID, key);
-  if (!id) throw new Error(`Zotero item not found: ${key}`);
-  const item = await Zotero.Items.getAsync(id);
+  const library = libraryID ?? Zotero.Libraries.userLibraryID;
+  const item = await Zotero.Items.getByLibraryAndKeyAsync(library, key);
   if (!item || item.isInTrash())
     throw new Error(`Zotero item not found: ${key}`);
+  const id = item.id;
   const win = Zotero.getMainWindow();
   win.focus();
   const pane = (win as unknown as { ZoteroPane?: ZoteroPaneStubs }).ZoteroPane;
   if (!pane) throw new Error("Zotero item pane is unavailable");
+  (
+    win as Window & { Zotero_Tabs: { select(id: string): void } }
+  ).Zotero_Tabs.select("zotero-pane");
   await pane.selectItem(id, { inLibraryRoot: true });
   win.focus();
 }

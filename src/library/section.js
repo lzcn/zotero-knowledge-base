@@ -587,7 +587,12 @@ var SWSection = {
     var queryWeak = corpus.docs.get(docKey)?.weak;
     if (this._stopped || body._swToken !== token) return;
     this.setStatus(body, queryWeak ? weakFlag : "", false);
-    const batch = SWResultLimit(SWPref("maxRecommendations", 20));
+    const batch = SWResultLimit(
+      Math.max(
+        10,
+        Math.min(40, Math.ceil((doc.defaultView?.innerHeight || 800) / 40)),
+      ),
+    );
     var signature = JSON.stringify([
       batch,
       rows.map((r) => [

@@ -1,3 +1,4 @@
+import { attachNotePreviews } from "./modules/note-preview";
 import { config, version } from "../package.json";
 import { getString, initLocale } from "./utils/locale";
 import { closeDB, initDB } from "./modules/db";
@@ -160,9 +161,17 @@ async function onMainWindowLoad(win: Window): Promise<void> {
   try {
     libraryRuntime.onWindowLoad(win);
     const doc = win.document;
+    const removeNotePreviews = attachNotePreviews(win);
+    windowCleanups.set(win, removeNotePreviews);
     doc.documentElement.toggleAttribute(
       "data-plugin-bear",
       Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true,
+    );
+    doc.documentElement.toggleAttribute(
+      "data-plugin-notes",
+      Zotero.Prefs.get("extensions.zotero.knowledge-base.notesStyle", true) ===
+        true &&
+        Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true,
     );
     const chromeWindow = win as Window & {
       MozXULElement: { insertFTLIfNeeded(path: string): void };
@@ -272,6 +281,7 @@ async function onMainWindowLoad(win: Window): Promise<void> {
     noteMenu.setAttribute("hidden", "true");
     popup.addEventListener("popupshowing", showing);
     windowCleanups.set(win, () => {
+      removeNotePreviews();
       ++noteRequest;
       popup.removeEventListener("popupshowing", showing);
     });

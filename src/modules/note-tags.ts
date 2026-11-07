@@ -84,7 +84,10 @@ const tagIndexes = new Map<
   { version: string; index: Promise<Map<string, string[]>> }
 >();
 async function getTagIndex(inherit = true): Promise<Map<string, string[]>> {
-  const version = `${getDatabaseGeneration()}:${getDatabaseRevision()}:${getTagRevision()}`;
+  const automatic = SWTagPolicy.exclusions(
+    Zotero.Prefs.get(EXCLUDED_TAGS, true),
+  ).automatic;
+  const version = `${getDatabaseGeneration()}:${getDatabaseRevision()}:${getTagRevision()}:${automatic}`;
   const cached = tagIndexes.get(inherit);
   if (cached?.version === version) return cached.index;
   const index = loadTagIndex(inherit).catch((error) => {
@@ -203,7 +206,12 @@ export async function getOwnNoteTags(
   const tags = new Set<string>();
   if (note && note.isNote() && !note.isInTrash()) {
     await Zotero.Items.loadDataTypes([note], ["tags"]);
-    note.getTags().forEach(({ tag }) => tags.add(tag));
+    const hideAuto = SWTagPolicy.exclusions(
+      Zotero.Prefs.get(EXCLUDED_TAGS, true),
+    ).automatic;
+    note.getTags().forEach(({ tag, type }) => {
+      if (!hideAuto || type !== 1) tags.add(tag);
+    });
   }
   if (cardID)
     for (const row of await getAll<{ tag: string }>(
@@ -270,6 +278,9 @@ export async function loadNativeTags(
     [...new Set([...notes, ...items.values()])],
     ["tags"],
   );
+  const hideAuto = SWTagPolicy.exclusions(
+    Zotero.Prefs.get(EXCLUDED_TAGS, true),
+  ).automatic;
   return new Map(
     notes.map((note) => {
       const tags = new Set<string>();
@@ -277,7 +288,9 @@ export async function loadNativeTags(
       let item: Zotero.Item | undefined = note;
       while (item && !visited.has(item)) {
         visited.add(item);
-        item.getTags().forEach(({ tag }) => tags.add(tag));
+        item.getTags().forEach(({ tag, type }) => {
+          if (!hideAuto || type !== 1) tags.add(tag);
+        });
         item = inherit ? items.get(item.parentItemID || 0) : undefined;
       }
       return [note, [...tags]];

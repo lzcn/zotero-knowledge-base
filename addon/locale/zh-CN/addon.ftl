@@ -57,10 +57,9 @@ editor-title-new = 新建笔记
 editor-title-edit = 编辑笔记
 editor-source-label = 来源
 reading-open = 边读边记
-clip-figure = 摘图到笔记
-clip-note-required = 请先在 PDF 旁打开一篇可编辑的笔记。
+clip-figure = 复制图片
 clip-unavailable = 当前 PDF 视图暂时无法摘图。
-clip-note-changed = 摘图时当前笔记已切换，请重新框选。
+clip-note-required = 当前笔记不可编辑。
 clip-insert-failed = 图片未能保存，请保持笔记打开后重试。
 reading-no-pdf = 此笔记的来源没有 PDF。
 reading-file-missing = PDF 尚未下载，请先在 Zotero 中下载。
@@ -347,7 +346,7 @@ manager-open-note = 打开笔记
 manager-open-note-window = 在新窗口打开
 manager-copy-note-link = 复制笔记链接
 
-pref-ui-style = 外观
+pref-ui-style = 样式
 
 text-tools-normalize = 整理格式
 text-tools-find = 查找
@@ -372,9 +371,8 @@ text-search-replaced-line = 已替换第 $ 行的匹配项
 text-search-replaced-count = 已替换 $ 处
 
 
-settings-common = 通用
+settings-common = 外观
 settings-tags = 标签
-settings-similar = 相似条目
 settings-notes = 笔记
 
 
@@ -390,7 +388,7 @@ section-tags-existing = 库内标签
 section-tags-add-error = 添加标签失败，请重试。
 section-tags-load-error = 推荐标签加载失败，请重新选择条目。
 pref-template-manage =
-    .label = 管理…
+    .label = 模板…
 
 template-empty = 暂无模板
 
@@ -406,8 +404,8 @@ menu-open-native-note = 在知识库中打开
 graph-view = 图谱视图
 
 excluded-placeholder =
-    .placeholder = @colored, 待读*
-    .title = @colored 排除彩色标签，* 匹配任意文字
+    .placeholder = @colored, @auto, 待读*
+    .title = @auto 隐藏自动标签。@colored 隐藏彩色标签。* 匹配任意文字。
 status-heading = 状态
 vectors-label = 缓存
 vector-ready = 就绪
@@ -426,15 +424,6 @@ pref-template-entity-option =
     .label = 实体
 
 
-settings-templates = 模板
-pref-template-literature =
-    .value = 文献笔记
-pref-template-zettel =
-    .value = 原子笔记
-pref-template-thinking =
-    .value = 思考笔记
-pref-template-entity =
-    .value = 实体
 
 cache-progress =
     .aria-label = 缓存进度
@@ -442,8 +431,14 @@ cache-progress =
 graph-outline-hint = 你手动整理的父子关系。
 graph-references-hint = 笔记正文中的引用。
 
-note-details = 笔记信息
 pref-native-note-takeover =
     .label = 原生笔记使用知识库编辑器
+    .tooltiptext = 在侧栏、笔记标签页和独立窗口中使用同一个编辑器。
 reader-more-tools = 更多工具
 native-note-switch-save = 请先保存当前笔记，再切换编辑器。
+
+pref-math-preview =
+    .label = 修复数学预览（Zotero 卡片）
+    .tooltiptext = 渲染笔记卡片中的公式，不改写已保存的笔记。
+pref-ui-notes =
+    .label = 备忘录

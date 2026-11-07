@@ -85,6 +85,12 @@ async function create(
     root.hidden = false;
     root.append(frame);
     await ready;
+    const sourceDoc = frame.contentDocument!;
+    for (const attribute of ["data-plugin-bear", "data-plugin-notes"])
+      sourceDoc.documentElement.toggleAttribute(
+        attribute,
+        document.documentElement.hasAttribute(attribute),
+      );
     root.hidden = hidden;
     return frame.contentWindow!.KnowledgeBaseMarkdownSource.mount(
       root,

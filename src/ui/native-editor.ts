@@ -1,3 +1,4 @@
+import { attachHeadingMath } from "./native-math";
 import { isAccelKey } from "./platform";
 import {
   attachMarkdownToggle,
@@ -147,6 +148,7 @@ async function create(
   options: NativeEditorOptions,
 ): Promise<NativeEditorController> {
   const { element } = options;
+  let documentHTML = options.item.getNote();
   element.mode = options.readOnly ? "view" : "edit";
   element.item = options.item;
   await element._initPromise;
@@ -157,6 +159,7 @@ async function create(
   let removeMarkdownToggle: ReturnType<typeof attachMarkdownToggle> | undefined;
   let removeNoteLink = () => {};
   let removeTextTools = () => {};
+  let removeHeadingMath: (() => void) | undefined;
   let sourceMode = false;
   let composing = false;
   let appearance: HTMLStyleElement | undefined;
@@ -410,6 +413,8 @@ async function create(
     removeMarkdownToggle?.();
     removeNoteLink();
     removeTextTools();
+    removeHeadingMath?.();
+    removeHeadingMath = undefined;
     if (!frame) return;
     frame.document.removeEventListener("input", input, true);
     frame.document.removeEventListener("paste", paste, true);
@@ -428,9 +433,18 @@ async function create(
   const attach = () => {
     ownedInstances.add(element.getCurrentInstance().instanceID);
     frame = element.getCurrentInstance()._iframeWindow;
+    removeHeadingMath = attachHeadingMath(frame, documentHTML);
     frame.document.documentElement.toggleAttribute(
       "data-plugin-bear",
       Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true,
+    );
+    frame.document.documentElement.toggleAttribute(
+      "data-plugin-notes",
+      Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true &&
+        Zotero.Prefs.get(
+          "extensions.zotero.knowledge-base.notesStyle",
+          true,
+        ) === true,
     );
     appearance = frame.document.createElement("style");
     appearance.id = "knowledge-base-note-appearance";
@@ -439,6 +453,7 @@ async function create(
       @import url("chrome://knowledge-base/content/ui.css");
       @import url("chrome://knowledge-base/content/note-headings.css");
       @import url("chrome://knowledge-base/content/note-layout.css");
+      :root { --color-background: var(--ui-bg); --material-background: var(--ui-bg); --material-toolbar: var(--ui-surface); --fill-primary: var(--ui-fg); }
       .toolbar { height: auto !important; padding-block: 5px; box-sizing: border-box; }
       .toolbar .toolbar-button { flex-shrink: 0; }
       .primary-editor {
@@ -575,11 +590,13 @@ async function create(
       detach();
       readOnly = value;
       element.mode = value ? "view" : "edit";
+      documentHTML = options.item.getNote();
       await element.initEditor();
       attach();
     },
     async reload() {
       detach();
+      documentHTML = options.item.getNote();
       await element.initEditor();
       attach();
     },

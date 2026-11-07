@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -12,15 +12,33 @@ export async function buildLibrary(stage, version) {
   const target = join(stage, "content/library");
   await mkdir(join(target, "scripts"), { recursive: true });
   const hash = createHash("sha256");
-  for (const name of (await readdir(source)).sort()) {
-    if (!name.endsWith(".js")) continue;
-    const bytes = await readFile(join(source, name));
+  const scripts = [
+    "storage",
+    "stemmer",
+    "tokenizer",
+    "search",
+    "search-cache",
+    "corpus",
+    "sources",
+    "indexer",
+    "semantic",
+    "tag-policy",
+    "tag-terms",
+    "tag-format",
+    "tags",
+    "tag-suggestions",
+    "retrieval-evidence",
+    "section",
+  ];
+  const parts = [];
+  for (const name of scripts) {
+    const bytes = await readFile(join(source, `${name}.js`));
     hash.update(name).update(bytes);
-    const output =
-      name === "search.js"
+    parts.push(
+      name === "search"
         ? (
             await build({
-              entryPoints: [join(source, name)],
+              entryPoints: [join(source, `${name}.js`)],
               bundle: true,
               write: false,
               platform: "browser",
@@ -29,9 +47,16 @@ export async function buildLibrary(stage, version) {
               footer: { js: "var SWSearch = SWSearchModule.SWSearch;" },
             })
           ).outputFiles[0].contents
-        : bytes;
-    await writeFile(join(target, "scripts", name), output);
+        : bytes,
+    );
   }
+  const runtime = await readFile(join(source, "runtime.js"));
+  hash.update("runtime").update(runtime);
+  await writeFile(join(target, "scripts/runtime.js"), runtime);
+  await writeFile(
+    join(target, "scripts/library.js"),
+    Buffer.concat(parts.flatMap((part) => [part, Buffer.from("\n;\n")])),
+  );
   await mkdir(join(target, "runtime"), { recursive: true });
   const worker = await build({
     entryPoints: [join(root, "src/ui/library/worker.js")],

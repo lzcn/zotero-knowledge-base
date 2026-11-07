@@ -1,4 +1,4 @@
-/* Shared visual values; keep this file identical in the three plugin packages. */
+/* Knowledge Base palettes share native control colors and note typography. */
 :root {
   --ui-bg: #fff;
   --ui-fg: #242424;
@@ -28,33 +28,46 @@
   }
 }
 
-/* Operational UI keeps system typography; Bear typography belongs to note content. */
+/* Neutral surfaces keep the document prominent in both notebook palettes. */
 :root[data-plugin-bear] {
   --ui-bg: #fff;
-  --ui-fg: #393735;
-  --ui-surface: #faf9f8;
-  --ui-border: #e9e7e4;
-  --ui-hover: #f3f1ef;
-  --ui-active: #f0edeb;
-  --ui-accent: #aa5962;
-  --ui-muted: #787470;
+  --ui-fg: #29292b;
+  --ui-surface: #f7f7f9;
+  --ui-border: #e7e7eb;
+  --ui-hover: #ededf1;
+  --ui-active: #f7e8eb;
+  --ui-accent: #b44659;
+  --ui-muted: #6f6f76;
   --ui-source: #5d7b70;
   --ui-danger: #b5515a;
   --ui-editor-font:
-    "Avenir Next", Avenir, "PingFang SC", "Microsoft YaHei", system-ui,
-    sans-serif;
+    -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC",
+    system-ui, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root[data-plugin-bear] {
-    --ui-bg: #242526;
-    --ui-fg: #e5e1dc;
-    --ui-surface: #2a2b2c;
-    --ui-border: #3b3c3d;
-    --ui-hover: #333435;
-    --ui-active: #393637;
-    --ui-accent: #d58e97;
-    --ui-muted: #b0aaa4;
+    --ui-bg: #1c1c1e;
+    --ui-fg: #f2f2f7;
+    --ui-surface: #242426;
+    --ui-border: #38383c;
+    --ui-hover: #303034;
+    --ui-active: #402b33;
+    --ui-accent: #ed9ba8;
+    --ui-muted: #aaaab2;
     --ui-source: #9db9aa;
     --ui-danger: #e49da4;
+  }
+}
+
+:root[data-plugin-notes] {
+  --ui-active: #fff0c6;
+  --ui-accent: #946200;
+  --ui-source: #746a51;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-plugin-notes] {
+    --ui-active: #44391d;
+    --ui-accent: #edc56b;
+    --ui-source: #c7ba96;
   }
 }

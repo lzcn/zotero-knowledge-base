@@ -15,131 +15,124 @@ type="text/css"?>
   persist="width height screenX screenY"
 >
   <script src="chrome://zotero/content/include.js" />
-  <script src="chrome://knowledge-base/content/ui.js" />
-  <script src="chrome://knowledge-base/content/markdown.js" />
-  <script src="chrome://knowledge-base/content/editor-formatting.js" />
   <script src="chrome://global/content/globalOverlay.js" />
   <script src="chrome://zotero/content/editMenuOverlay.js" />
   <script src="chrome://zotero/content/customElements.js" />
-  <script src="chrome://knowledge-base/content/native-editor.js?v=__styleVersion__" />
   <script src="chrome://knowledge-base/content/editor.js" />
   <html:div id="knowledge-base-editor-root">
     <html:header id="knowledge-base-editor-metadata">
-      <html:details id="knowledge-base-note-details">
-        <html:summary id="knowledge-base-note-details-label" />
-        <html:div class="note-metadata-fields">
-          <html:div id="knowledge-base-editor-toolbar">
-            <html:label id="knowledge-base-source-label" />
-            <html:div class="parent-value source-value">
-              <html:div
-                id="knowledge-base-src-display"
-                class="source-link metadata-value"
-              ></html:div>
-              <html:button
-                id="knowledge-base-src-pick"
-                class="metadata-change"
-                aria-controls="knowledge-base-src-drop"
+      <html:div class="note-metadata-fields">
+        <html:div id="knowledge-base-editor-toolbar">
+          <html:label id="knowledge-base-source-label" />
+          <html:div class="parent-value source-value">
+            <html:div
+              id="knowledge-base-src-display"
+              class="source-link metadata-value"
+            ></html:div>
+            <html:button
+              id="knowledge-base-src-pick"
+              class="metadata-change"
+              aria-controls="knowledge-base-src-drop"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" />
-                </svg>
-              </html:button>
-              <html:button
-                id="knowledge-base-read-note"
-                class="metadata-change"
-                hidden="hidden"
+                <path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" />
+              </svg>
+            </html:button>
+            <html:button
+              id="knowledge-base-read-note"
+              class="metadata-change"
+              hidden="hidden"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                  <path d="M13 3v18 M6 7h4 M6 11h4 M16 7h2 M16 11h2" />
-                </svg>
-              </html:button>
-            </html:div>
-          </html:div>
-          <html:div class="parent-control metadata-row">
-            <html:label id="knowledge-base-parent-label" />
-            <html:div class="parent-value">
-              <html:button
-                id="knowledge-base-parent-display"
-                class="metadata-selector"
-              />
-              <html:button
-                id="knowledge-base-parent-edit"
-                class="metadata-change"
-                aria-controls="knowledge-base-parent-picker"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" />
-                </svg>
-              </html:button>
-            </html:div>
-            <html:div id="knowledge-base-parent-picker" hidden="hidden">
-              <html:input
-                id="knowledge-base-parent-search"
-                type="search"
-                hidden="hidden"
-              />
-              <html:ul
-                id="knowledge-base-parent-results"
-                class="refs"
-                hidden="hidden"
-              />
-            </html:div>
-          </html:div>
-          <html:div class="metadata-row note-tags-row">
-            <html:label id="knowledge-base-tags-label" />
-            <html:div class="note-tag-values">
-              <html:div
-                id="knowledge-base-note-tags"
-                class="note-tags"
-                role="list"
-                hidden="hidden"
-              />
-              <html:div id="knowledge-base-tag-editor" hidden="hidden">
-                <html:div id="knowledge-base-own-tags" class="note-tags" />
-                <html:input id="knowledge-base-tag-input" type="text" />
-              </html:div>
-              <html:button
-                id="knowledge-base-tags-edit"
-                aria-controls="knowledge-base-tag-editor"
-              />
-            </html:div>
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <path d="M13 3v18 M6 7h4 M6 11h4 M16 7h2 M16 11h2" />
+              </svg>
+            </html:button>
           </html:div>
         </html:div>
-      </html:details>
+        <html:div class="parent-control metadata-row">
+          <html:label id="knowledge-base-parent-label" />
+          <html:div class="parent-value">
+            <html:button
+              id="knowledge-base-parent-display"
+              class="metadata-selector"
+            />
+            <html:button
+              id="knowledge-base-parent-edit"
+              class="metadata-change"
+              aria-controls="knowledge-base-parent-picker"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="m16 3 5 5-12 12-6 1 1-6Z M14 5l5 5" />
+              </svg>
+            </html:button>
+          </html:div>
+          <html:div id="knowledge-base-parent-picker" hidden="hidden">
+            <html:input
+              id="knowledge-base-parent-search"
+              type="search"
+              hidden="hidden"
+            />
+            <html:ul
+              id="knowledge-base-parent-results"
+              class="refs"
+              hidden="hidden"
+            />
+          </html:div>
+        </html:div>
+        <html:div class="metadata-row note-tags-row">
+          <html:label id="knowledge-base-tags-label" />
+          <html:div class="note-tag-values">
+            <html:div
+              id="knowledge-base-note-tags"
+              class="note-tags"
+              role="list"
+              hidden="hidden"
+            />
+            <html:div id="knowledge-base-tag-editor" hidden="hidden">
+              <html:div id="knowledge-base-own-tags" class="note-tags" />
+              <html:input id="knowledge-base-tag-input" type="text" />
+            </html:div>
+            <html:button
+              id="knowledge-base-tags-edit"
+              aria-controls="knowledge-base-tag-editor"
+            />
+          </html:div>
+        </html:div>
+      </html:div>
     </html:header>
     <html:div id="knowledge-base-src-drop" hidden="hidden">
       <html:input id="knowledge-base-src-search" type="search" />

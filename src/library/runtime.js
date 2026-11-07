@@ -42,28 +42,10 @@ var libraryRuntime = (() => {
   async function start() {
     if (started) return started;
     started = (async () => {
-      for (const file of [
-        "storage",
-        "stemmer",
-        "tokenizer",
-        "search",
-        "search-cache",
-        "corpus",
-        "sources",
-        "indexer",
-        "semantic",
-        "tag-policy",
-        "tag-terms",
-        "tag-format",
-        "tags",
-        "tag-suggestions",
-        "retrieval-evidence",
-        "section",
-      ])
-        Services.scriptloader.loadSubScript(
-          SWHost.rootURI + "scripts/" + file + ".js",
-          scope,
-        );
+      Services.scriptloader.loadSubScript(
+        SWHost.rootURI + "scripts/library.js",
+        scope,
+      );
       const service = Components.classes[
         "@mozilla.org/addons/addon-manager-startup;1"
       ].getService(Components.interfaces.amIAddonManagerStartup);

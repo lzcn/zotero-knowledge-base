@@ -233,6 +233,23 @@ function rowToZettel(row: ZettelRow, outgoing = 0, incoming = 0): Zettel {
   };
 }
 
+/** Resolve titles for relation labels without loading full cards or link counts. */
+export async function getZettelTitles(
+  ids: string[],
+): Promise<Map<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const titles = new Map<string, string>();
+  for (let offset = 0; offset < unique.length; offset += 500) {
+    const batch = unique.slice(offset, offset + 500);
+    const rows = await getAll<{ id: string; title: string }>(
+      `SELECT id, title FROM zettels WHERE id IN (${batch.map(() => "?").join(",")})`,
+      batch,
+    );
+    for (const row of rows) titles.set(row.id, row.title);
+  }
+  return titles;
+}
+
 export async function getZettel(id: string): Promise<Zettel | null> {
   const row = await getOne<ZettelRow>(`SELECT * FROM zettels WHERE id = ?`, [
     id,

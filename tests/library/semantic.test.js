@@ -501,20 +501,26 @@ test("tag-name inference reuses the paper vector and cached tags, serializes wit
   let running = 0,
     peak = 0,
     requests = 0;
-  semantic._native = {};
-  semantic._nativeEncode = async (texts) => {
-    running++;
-    peak = Math.max(peak, running);
-    requests++;
+  let current;
+  semantic._native = {
+    stdin: {
+      write: async (line) => {
+        current = JSON.parse(line).text;
+        running++;
+        peak = Math.max(peak, running);
+        requests++;
+      },
+    },
+  };
+  semantic._request = async (_type, { texts }) => ({
+    inputs: texts.map((text) => ({ text })),
+  });
+  semantic._nativeReply = async () => {
     await new Promise((resolve) => setImmediate(resolve));
     running--;
-    return {
-      vectors: texts.map((text) => {
-        const v = Array(384).fill(0);
-        v[text === "Relevant" ? 0 : 1] = 1;
-        return v;
-      }),
-    };
+    const vector = Array(384).fill(0);
+    vector[current === "Relevant" ? 0 : 1] = 1;
+    return { vector, backend: "cpu" };
   };
   const [scores] = await Promise.all([
     semantic.tagSimilarity({}, ["Relevant", "Other"]),
@@ -522,9 +528,9 @@ test("tag-name inference reuses the paper vector and cached tags, serializes wit
   ]);
   assert.deepEqual(Array.from(scores), [1, 0]);
   assert.equal(peak, 1);
-  assert.equal(requests, 2);
+  assert.equal(requests, 3);
   await semantic.tagSimilarity({}, ["Relevant", "Other"]);
-  assert.equal(requests, 2, "tag names should not be encoded again");
+  assert.equal(requests, 3, "tag names should not be encoded again");
   assert.equal(
     await semantic.tagSimilarity({}, ["Missing"], () => false),
     null,
@@ -905,4 +911,87 @@ test("background inference pacing follows work duration and remains bounded", as
   assert.deepEqual(rests, [2000, 20, 250]);
   assert.equal(semantic.status.state, "idle");
   assert.equal(semantic._queued.size, 0);
+});
+
+test("foreground inference overtakes a multi-chunk document at the next safe boundary", async () => {
+  const { semantic } = fixture();
+  semantic._enabled = true;
+  const order = [];
+  let release, started;
+  const first = new Promise((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let current;
+  semantic._native = {
+    stdin: {
+      write: async (line) => {
+        current = JSON.parse(line).text;
+        order.push(current);
+        if (current === "background-1") started();
+      },
+    },
+  };
+  semantic._request = async (_type, { texts }) => ({
+    inputs: texts.map((text) => ({ text })),
+  });
+  semantic._nativeReply = async () => {
+    if (current === "background-1") await gate;
+    const vector = Array(384).fill(0);
+    vector[0] = current === "foreground" ? 10 : Number(current.slice(-1));
+    return { vector, backend: "cpu" };
+  };
+  const background = semantic._encode([
+    "background-1",
+    "background-2",
+    "background-3",
+  ]);
+  await first;
+  const foreground = semantic._encode(["foreground"], () => true, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  release();
+  const [bg, fg] = await Promise.all([background, foreground]);
+  assert.deepEqual(order, [
+    "background-1",
+    "foreground",
+    "background-2",
+    "background-3",
+  ]);
+  assert.deepEqual(
+    Array.from(bg.vectors, (vector) => vector[0]),
+    [1, 2, 3],
+  );
+  assert.equal(fg.vectors[0][0], 10);
+});
+
+test("pausing rejects queued foreground and background chunks before any write", async () => {
+  const { semantic } = fixture();
+  semantic._enabled = true;
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const running = semantic._scheduleInference(() => gate, false);
+  const waiting = Promise.allSettled([
+    semantic._scheduleInference(
+      () => assert.fail("stale foreground write"),
+      true,
+    ),
+    semantic._scheduleInference(
+      () => assert.fail("stale background write"),
+      false,
+    ),
+  ]);
+  semantic.pause();
+  release();
+  await running;
+  const results = await waiting;
+  assert.ok(
+    results.every(
+      (result) =>
+        result.status === "rejected" && /paused/.test(result.reason.message),
+    ),
+  );
 });

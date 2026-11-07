@@ -88,11 +88,7 @@ export function attachReaderToolbarLayout(doc: Document): () => void {
     if (!toolbar.contains(event.target as Node)) close();
   };
   const action = (event: Event) => {
-    if (
-      (event.target as Element).closest?.(
-        "#knowledge-base-clip-figure, #knowledge-base-reader-button",
-      )
-    )
+    if ((event.target as Element).closest?.("#knowledge-base-reader-button"))
       close();
   };
   const key = (event: KeyboardEvent) => {

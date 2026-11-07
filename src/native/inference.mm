@@ -5,7 +5,8 @@
 #include <vector>
 #include <cmath>
 #include <memory>
-#include <sys/resource.h>
+#include <string>
+#include <pthread/qos.h>
 #include "coreml-backend.h"
 #include "embedding.h"
 
@@ -18,11 +19,17 @@ static void reply(NSDictionary *value) {
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
     if (argc < 3 || argc > 4) return 2;
-    setpriority(PRIO_PROCESS, 0, 10);
-    const bool accelerated = argc != 4 || std::string(argv[3]) != "cpu";
+    pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0);
+    const std::string mode = argc == 4 ? argv[3] : "coreml";
+    const bool accelerated = mode != "cpu";
+    const char *units = mode == "coreml-neural" ? "CPUAndNeuralEngine"
+        : mode == "coreml-gpu" ? "CPUAndGPU" : "ALL";
     std::string cache = argv[2];
     try {
-      InferenceBackend model(argv[1], accelerated ? coreMLBackend(cache) : InferenceBackend::Factory{}, "coreml+cpu");
+      InferenceBackend model(
+          argv[1],
+          accelerated ? coreMLBackend(cache, units) : InferenceBackend::Factory{},
+          accelerated ? "coreml+cpu" : "cpu");
       reply(@{@"ready": @YES, @"backend": @(model.backend())});
       std::string line;
       while (std::getline(std::cin, line)) {
@@ -32,6 +39,10 @@ int main(int argc, const char *argv[]) {
             NSData *bytes = [NSData dataWithBytes:line.data() length:line.size()];
             NSDictionary *request = [NSJSONSerialization JSONObjectWithData:bytes options:0 error:nil];
             if (![request isKindOfClass:NSDictionary.class]) throw std::runtime_error("Invalid request");
+            const int scheduling = pthread_set_qos_class_self_np(
+                [request[@"priority"] isEqual:@"foreground"]
+                    ? QOS_CLASS_USER_INITIATED : QOS_CLASS_UTILITY, 0);
+            if (scheduling) std::cerr << "Unable to set inference QoS: " << scheduling << std::endl;
             NSArray *ids = request[@"input_ids"], *mask = request[@"attention_mask"];
             NSArray *types = request[@"token_type_ids"];
             if (![ids isKindOfClass:NSArray.class] || ![mask isKindOfClass:NSArray.class] ||

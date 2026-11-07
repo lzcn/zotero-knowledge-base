@@ -32,7 +32,7 @@ await build({
 const windows = [];
 function document() {
   const dom = new JSDOM(
-    '<div class="toolbar"><div class="end"><div class="custom-sections"></div></div></div>',
+    '<div class="toolbar"><div class="start"><button id="next"></button><input id="pageNumber"></div><div class="end"><div class="custom-sections"></div></div></div>',
   );
   windows.push(dom.window);
   return dom.window.document;
@@ -109,7 +109,10 @@ function button(doc) {
 }
 function render(doc, clear = true) {
   const target = doc.querySelector(".custom-sections");
-  if (clear) target.replaceChildren();
+  if (clear) {
+    target.replaceChildren();
+    button(doc)?.remove();
+  }
   listeners.get("renderToolbar")({
     reader: globalThis.Zotero.Reader._readers.find(
       (reader) => reader._iframeWindow?.document === doc,
@@ -128,7 +131,8 @@ try {
   registerReaderToolbar();
   assert.equal(listeners.size, 1);
   for (const doc of [first, second]) {
-    assert.ok(button(doc).closest(".toolbar .custom-sections"));
+    assert.equal(button(doc).nextElementSibling?.id, "pageNumber");
+    assert.equal(button(doc).previousElementSibling?.id, "next");
     assert.equal(button(doc).className, "toolbar-button");
     assert.equal(button(doc).getAttribute("aria-label"), "Knowledge Base");
     assert.equal(button(doc).querySelector("img").width, 20);
@@ -151,7 +155,7 @@ try {
     first.querySelectorAll("#knowledge-base-reader-button").length,
     1,
   );
-  assert.equal(first.querySelectorAll(".section").length, 1);
+  assert.equal(first.querySelectorAll(".section").length, 0);
   const third = document();
   globalThis.readerTest.label = "知识库";
   render(third);

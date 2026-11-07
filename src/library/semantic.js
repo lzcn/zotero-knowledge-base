@@ -176,9 +176,9 @@ var SWSemantic = {
           break;
         const key = this._queue.shift();
         this._queued.delete(key);
-        this._priority.delete(key);
+        const foreground = this._priority.delete(key);
         const started = Date.now();
-        await this._build(key, generation);
+        await this._build(key, generation, foreground);
         // Pace actual inference work instead of adding three seconds per paper.
         // Idle callbacks and bounded rests keep foreground selection responsive.
         await this._rest(
@@ -229,7 +229,7 @@ var SWSemantic = {
     }
   },
 
-  async _build(key, generation = this._generation) {
+  async _build(key, generation = this._generation, foreground = false) {
     const doc = this.corpus.docs.get(key);
     if (!doc || this.vectors.get(key)?.hash === doc.hash) return;
     const slash = key.indexOf("/");
@@ -264,7 +264,11 @@ var SWSemantic = {
       return;
     await this._init();
     this.status.state = "indexing";
-    const result = await this._encode(texts);
+    const result = await this._encode(
+      texts,
+      () => this.corpus.docs.get(key)?.hash === doc.hash,
+      foreground,
+    );
     const vector = this.pool(
       result.vectors,
       texts.map((_, i) => (i === 0 ? 3 : 1)),
@@ -297,22 +301,43 @@ var SWSemantic = {
     }
   },
 
-  _encoding: Promise.resolve(),
-  _encode(texts, active = () => true) {
-    const generation = this._generation;
-    const pending = this._encoding.then(() => {
-      if (
-        this._stopped ||
-        !this._enabled ||
-        generation !== this._generation ||
-        !active()
-      )
-        throw new Error("Semantic encoding cancelled");
-      if (!this._native) throw new Error("Native inference is not ready");
-      return this._nativeEncode(texts, generation, active);
+  _inferenceQueues: [[], []],
+  _inferenceRunning: null,
+
+  _encode(texts, active = () => true, foreground = false) {
+    return this._nativeEncode(texts, this._generation, active, foreground);
+  },
+
+  /** One native pipe exchange at a time; interactive work wins at chunk boundaries. */
+  _scheduleInference(work, foreground) {
+    const pending = new Promise((resolve, reject) => {
+      this._inferenceQueues[foreground ? 0 : 1].push({ work, resolve, reject });
     });
-    this._encoding = pending.catch(() => null);
+    this._pumpInference();
     return pending;
+  },
+
+  _pumpInference() {
+    if (this._inferenceRunning) return;
+    this._inferenceRunning = this._drainInference().finally(() => {
+      this._inferenceRunning = null;
+      if (this._inferenceQueues.some((queue) => queue.length))
+        this._pumpInference();
+    });
+  },
+
+  async _drainInference() {
+    let job;
+    while (
+      (job =
+        this._inferenceQueues[0].shift() || this._inferenceQueues[1].shift())
+    ) {
+      try {
+        job.resolve(await job.work());
+      } catch (error) {
+        job.reject(error);
+      }
+    }
   },
 
   _tagVectors: new Map(),
@@ -368,6 +393,7 @@ var SWSemantic = {
           const result = await this._encode(
             batch.map((name) => name.replace(/^#\s*/u, "")),
             valid,
+            true,
           );
           if (!valid()) return null;
           batch.forEach((name, i) => {
@@ -1108,21 +1134,36 @@ var SWSemantic = {
     }
   },
 
-  async _nativeEncode(texts, generation, active) {
+  async _nativeEncode(texts, generation, active, foreground = false) {
     const process = this._native;
+    if (
+      this._stopped ||
+      !this._enabled ||
+      generation !== this._generation ||
+      !active() ||
+      !process
+    )
+      throw new Error("Semantic encoding cancelled");
     const { inputs } = await this._request("tokenize", { texts });
     const vectors = [];
     for (const input of inputs) {
-      if (
-        this._stopped ||
-        !this._enabled ||
-        generation !== this._generation ||
-        !active() ||
-        this._native !== process
-      )
-        throw new Error("Native inference cancelled");
-      await process.stdin.write(JSON.stringify(input) + "\n");
-      const result = await this._nativeReply(process);
+      const result = await this._scheduleInference(async () => {
+        if (
+          this._stopped ||
+          !this._enabled ||
+          generation !== this._generation ||
+          !active() ||
+          this._native !== process
+        )
+          throw new Error("Native inference cancelled");
+        await process.stdin.write(
+          JSON.stringify({
+            ...input,
+            priority: foreground ? "foreground" : "background",
+          }) + "\n",
+        );
+        return this._nativeReply(process);
+      }, foreground);
       if (
         !Array.isArray(result.vector) ||
         result.vector.length !== this.dimensions ||
@@ -1273,6 +1314,9 @@ var SWSemantic = {
     const extracting = this._extracting;
     this._native = null;
     this._extracting = null;
+    for (const queue of this._inferenceQueues) {
+      for (const job of queue.splice(0)) job.reject(new Error(reason));
+    }
     if (native || extracting)
       this._nativeExit = Promise.allSettled([
         this._nativeExit,
@@ -1307,6 +1351,7 @@ var SWSemantic = {
     this._nativeExit = Promise.allSettled([
       this._nativeExit,
       initializing,
+      this._inferenceRunning,
     ]).then(() => undefined);
     this.status.state = "stopped";
   },

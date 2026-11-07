@@ -759,7 +759,7 @@ startup = async function(data) {
       tagDialog.close();
 
       const settings = Zotero.Utilities.Internal.openPreferences("knowledge-base-preferences");
-      await waitFor(() => settings.document.getElementById("knowledge-base-workbench-mode")?.value && settings.document.getElementById("similar-works-limit"), "Unified settings did not load");
+      await waitFor(() => settings.document.getElementById("knowledge-base-workbench-mode")?.value && settings.document.getElementById("knowledge-base-template-manage"), "Unified settings did not load");
       settings.resizeTo(940,1000);
       await new Promise(resolve=>setTimeout(resolve,100));
       const panes = Zotero.PreferencePanes.pluginPanes.filter(pane => pane.pluginID === "knowledge-base@lzcn");
@@ -778,7 +778,7 @@ startup = async function(data) {
       const snapshot = originalStatus();
       sharedAPI.getLibraryStatus = () => ({...snapshot, state:"idle", indexedItems:10, totalItems:10, queuedItems:0, indexProgress:{phase:"ready",done:10,total:10}, vectorTotal:10, semantic:{state:"indexing",indexedItems:2,queuedItems:8,error:null}});
       for (let n = 0; n < 50 && settings.document.getElementById("similar-works-cache-progress").value !== 2; n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (settings.document.getElementById("similar-works-cache-progress").value !== 2 || settings.document.getElementById("similar-works-cache-progress").hidden || settings.document.getElementById('knowledge-base-open-data') || !settings.document.getElementById('knowledge-base-literature-template')) throw new Error("Settings did not show the compact Cache status");
+      if (settings.document.getElementById("similar-works-cache-progress").value !== 2 || settings.document.getElementById("similar-works-cache-progress").hidden || settings.document.getElementById('knowledge-base-open-data') || !settings.document.getElementById('knowledge-base-template-manage')) throw new Error("Settings did not show the compact Cache status");
       if (${JSON.stringify(process.env.SW_HOST_SCREENSHOT || "")}) {
         const image = await settings.browsingContext.currentWindowGlobal.drawSnapshot(undefined, 1, "white");
         const canvas = settings.document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
@@ -788,16 +788,11 @@ startup = async function(data) {
         await IOUtils.write(${JSON.stringify(process.env.SW_HOST_SCREENSHOT || "")}, new Uint8Array(await blob.arrayBuffer()));
       }
       await capture('settings',settings);
-      const limit = await waitFor(() => settings.document.getElementById("similar-works-limit"), "Similar Items controls did not load");
-      if (settings.getComputedStyle(limit).fontFamily.includes('Avenir Next')) throw new Error('Settings inherited the Bear font');
+      if (settings.document.getElementById("similar-works-limit")) throw new Error("Manual result batching remains exposed");
+      const excludedTags = settings.document.getElementById("similar-works-excluded-tags");
+      if (settings.getComputedStyle(excludedTags).fontFamily.includes('Avenir Next')) throw new Error('Settings inherited the Bear font');
       if([...settings.document.styleSheets].some(sheet=>sheet.href?.includes('similar-works/content/ui.css')))throw new Error('Settings loaded the operational theme stylesheet');
-      if (settings.document.getElementById('similar-works-ui-style')) throw new Error('Settings expose an appearance picker');
       sharedAPI.getLibraryStatus = originalStatus;
-      limit.value = "15";
-      limit.dispatchEvent(new settings.Event("change", { bubbles: true }));
-      if (Number(Zotero.Prefs.get(limit.getAttribute("preference"), true)) !== 15) throw new Error("Settings selection was not saved");
-      limit.value = "20";
-      limit.dispatchEvent(new settings.Event("change", { bubbles: true }));
       await capture('settings-similar',settings);
       const formatStyle = settings.document.getElementById("similar-works-tag-style");
       const formatHash = settings.document.getElementById("similar-works-tag-hashtag");

@@ -32,8 +32,19 @@ let keyCheckTimer = null;
 let dirty = false;
 let loaded = false;
 let editorLoad = null;
+// Native hosts call these methods across the editor document boundary.
+window.save = save;
+window.setEditorMode = setEditorMode;
+window.openNoteLink = openNoteLink;
 window.knowledgeBaseReady = load;
-window.knowledgeBaseInsertAnnotations = async (annotations) => {
+const annotationWrites = new Set();
+const annotationWaits = new Set();
+window.knowledgeBaseInsertAnnotations = (annotations) => {
+  const pending = insertAnnotations(annotations);
+  annotationWrites.add(pending);
+  return pending.finally(() => annotationWrites.delete(pending));
+};
+async function insertAnnotations(annotations) {
   await load();
   if (disposed || libraryReadOnly || recoveryPending || noteUnavailable) {
     throw new Error(api.loc("clip-note-required"));
@@ -50,21 +61,44 @@ window.knowledgeBaseInsertAnnotations = async (annotations) => {
           .imageAttachmentKey,
     )
     .filter(Boolean);
-  for (let n = 0; n < 250; n++) {
-    if (disposed || window.knowledgeBaseStopping) return;
+  const ready = () => {
+    if (disposed || window.knowledgeBaseStopping) return "cancelled";
     const html = richEditor.getHTML();
-    if (
-      html !== before &&
+    return html !== before &&
       imageKeys.every((key) => html.includes(`data-attachment-key="${key}"`))
-    ) {
-      richEditor.captureChanges();
-      if (!(await save(false))) throw new Error(api.loc("clip-insert-failed"));
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 20));
+      ? html
+      : null;
+  };
+  let html = ready();
+  if (html === null) {
+    const frame = $("knowledge-base-rich-frame").getCurrentInstance()
+      ._iframeWindow;
+    html = await new Promise((resolve) => {
+      const observer = new window.MutationObserver(() => {
+        const current = ready();
+        if (current) finish(current);
+      });
+      const timer = setTimeout(() => finish(null), 5000);
+      const finish = (value) => {
+        observer.disconnect();
+        annotationWaits.delete(cancel);
+        clearTimeout(timer);
+        resolve(value);
+      };
+      const cancel = () => finish("cancelled");
+      annotationWaits.add(cancel);
+      observer.observe(frame.document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+      });
+    });
   }
-  throw new Error(api.loc("clip-insert-failed"));
-};
+  if (html === "cancelled" || disposed || window.knowledgeBaseStopping) return;
+  if (!html) throw new Error(api.loc("clip-insert-failed"));
+  richEditor.captureChanges();
+  if (!(await save(false))) throw new Error(api.loc("clip-insert-failed"));
+}
 window.knowledgeBaseRequestClose = async () => {
   await load();
   await closeIfClean();
@@ -82,11 +116,13 @@ const draftId = args.draftId || imageDraftId;
 window.knowledgeBaseDraftId = draftId;
 window.knowledgeBaseFlushDraft = persistDraft;
 window.knowledgeBaseStopEditor = () => {
+  for (const cancel of annotationWaits) cancel();
   richEditor?.destroy();
   $("knowledge-base-editor-body").destroy?.();
 };
 window.knowledgeBaseCardId = zettelId;
 window.knowledgeBasePrepareNavigation = async () => {
+  while (annotationWrites.size) await Promise.all([...annotationWrites]);
   await tagWrite;
   if (disposed) return false;
   if (noteUnavailable) {
@@ -463,12 +499,6 @@ function toggleParentPicker() {
 }
 
 function applyLocale() {
-  $("knowledge-base-note-details-label").textContent = api.loc("note-details");
-  $("knowledge-base-note-details").open = !!args.editTags;
-  $("knowledge-base-note-details").addEventListener("toggle", () => {
-    if (!$("knowledge-base-note-details").open)
-      $("knowledge-base-src-drop").hidden = true;
-  });
   const type = $("knowledge-base-note-type");
   type.title = api.loc("note-type-change");
   type.setAttribute("aria-label", api.loc("note-type-change"));
@@ -1537,14 +1567,12 @@ async function refreshRelations() {
     parentId ? api.getZettel(parentId) : null,
     zettelId ? api.getZettel(zettelId) : null,
   ]);
-  const linkedTitles = new Map();
-  await Promise.all(
-    outgoing
-      .filter((link) => link.targetId)
-      .map(async (link) => {
-        const card = await api.getZettel(link.targetId);
-        if (card?.title) linkedTitles.set(link.targetId, card.title);
-      }),
+  const linkedTitles = new Map(
+    Object.entries(
+      await api.getZettelTitles(
+        outgoing.flatMap((link) => (link.targetId ? [link.targetId] : [])),
+      ),
+    ),
   );
   if (version !== relationsVersion) return;
 
@@ -2049,6 +2077,7 @@ async function closeIfClean() {
   closing = true;
   clearTimeout(autosaveTimer);
   try {
+    while (annotationWrites.size) await Promise.all([...annotationWrites]);
     if (editorMode === "visual") richEditor?.captureChanges();
     if (dirty || saving) {
       const prompt = Services.prompt;

@@ -1,3 +1,4 @@
+import { attachHeadingMath } from "../ui/native-math";
 import { config } from "../../package.json";
 import { attachTextTools, textToolLabels } from "../ui/text-tools";
 import {
@@ -76,6 +77,9 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
   if (attaching.has(instance) || controllers.has(instance)) return;
   attaching.add(instance);
   try {
+    const originalHTML = instance._item?.isNote()
+      ? instance._item.getNote()
+      : "";
     await instance._initPromise;
     if (
       stopped ||
@@ -110,6 +114,10 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       !notes()._editorInstances.includes(instance)
     )
       return;
+    const removeHeadingMath = attachHeadingMath(
+      instance._iframeWindow,
+      originalHTML || item.getNote(),
+    );
     const container = frame.parentElement!;
     const bar = doc.createXULElement("hbox") as HTMLElement;
     bar.classList.add("knowledge-base-native-markdown");
@@ -523,7 +531,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       async restore() {
         // Rebuild an open native editor before re-enabling its writer on plugin disable.
         const rebuild =
-          sourceMode &&
+          (sourceMode || !!removeHeadingMath) &&
           !Zotero.closing &&
           !win.closed &&
           element.isConnected &&
@@ -545,6 +553,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         container.style.position = previousPosition;
         removeMarkdownToggle();
         removeTextTools();
+        removeHeadingMath?.();
         bar.remove();
         source?.destroy();
         source?.remove();
@@ -647,6 +656,6 @@ export async function setNativeNoteTakeover(enabled: boolean): Promise<void> {
         ).initEditor();
     }
   } finally {
-    initNativeMarkdown();
+    if (addon.data.alive) initNativeMarkdown();
   }
 }

@@ -480,6 +480,33 @@ try {
   assert.equal(editorViews.stopEditorView(pendingFlush), flushed);
   completeFlush();
   await flushed;
+  let released = false;
+  let finishClosing;
+  const closingWrite = new Promise((resolve) => {
+    finishClosing = resolve;
+  });
+  const closingEditor = { knowledgeBaseFlushDraft: () => closingWrite };
+  const closePending = editorViews.closeEditorView(closingEditor, () => {
+    released = true;
+  });
+  await Promise.resolve();
+  assert.equal(
+    released,
+    false,
+    "Closing destroyed the document before its write completed",
+  );
+  finishClosing();
+  await closePending;
+  assert.equal(released, true);
+  const preparing = {
+    knowledgeBaseReady: async () => {},
+    knowledgeBasePrepareNavigation: async () => false,
+  };
+  assert.equal(
+    await editorViews.prepareEditorView(preparing),
+    false,
+    "A cancelled save allowed navigation",
+  );
   console.log(
     "PASS Embedded and independent editors stop once and retain their pending draft writes when cleanup fails",
   );

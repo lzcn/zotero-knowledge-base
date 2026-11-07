@@ -30,6 +30,12 @@ declare global {
     knowledgeBaseCardId?: string | null;
     knowledgeBaseInsertAnnotations?: (annotations: unknown[]) => Promise<void>;
     knowledgeBaseReady?: () => Promise<void>;
+    save?: (closeAfter: boolean) => Promise<boolean>;
+    setEditorMode?: (
+      mode: "visual" | "source",
+      persist?: boolean,
+    ) => Promise<void>;
+    openNoteLink?: (href: string) => Promise<void>;
     knowledgeBaseRequestClose?: () => Promise<void>;
     knowledgeBaseEditTags?: () => Promise<void>;
     knowledgeBaseRefreshNotes?: () => void;

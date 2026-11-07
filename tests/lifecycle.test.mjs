@@ -44,6 +44,7 @@ await build({
       export const closeWorkbenches = () => {
         if (state().fail === "closeWorkbenches") throw new Error("Workbench close failed");
       };
+      export const attachNotePreviews = () => () => {};
       export const initLocale = () => {};
       export const getString = (key) => key;
       export const initDB = () => run("initDB");

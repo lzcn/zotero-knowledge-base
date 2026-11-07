@@ -366,8 +366,8 @@ async function initialize(label, dataDir, prepare) {
     missing.join(", "),
   );
   check(
-    "all 11 indexes present",
-    schema.indexes.length === 11,
+    "all 13 indexes present",
+    schema.indexes.length === 13,
     `got ${schema.indexes.length}`,
   );
   return schema;
@@ -1270,6 +1270,27 @@ if (currentSchema) {
       read?.body === "links to [[Beta]]" &&
       read?.annotation_key === "ANNKEY1" &&
       read?.item_key === "ITEMKEY1",
+  );
+
+  const titles = await zettel.getZettelTitles([alphaId, betaId, "missing"]);
+  check(
+    "Relation titles load in one batch and omit missing cards",
+    titles.get(alphaId) === "Alpha" &&
+      titles.get(betaId) === "Beta" &&
+      !titles.has("missing"),
+  );
+
+  const largeTitles = await zettel.getZettelTitles([
+    ...Array.from({ length: 501 }, (_, index) => `missing-title-${index}`),
+    alphaId,
+    betaId,
+    alphaId,
+  ]);
+  check(
+    "Relation title batches preserve targets beyond 500 IDs",
+    largeTitles.get(alphaId) === "Alpha" &&
+      largeTitles.get(betaId) === "Beta" &&
+      largeTitles.size === 2,
   );
 
   const outgoing = await zettel.getOutgoing(alphaId);
@@ -2543,6 +2564,8 @@ await db.initDB();
 await db.closeDB();
 const ordinary = new DatabaseSync(ordinaryFile);
 ordinary.exec(`
+  DROP INDEX IF EXISTS idx_zettels_type_updated;
+  DROP INDEX IF EXISTS idx_zettels_type_title;
   ALTER TABLE zettels DROP COLUMN note_type;
   ALTER TABLE zettels ADD COLUMN note_type TEXT NOT NULL DEFAULT 'note' CHECK(note_type IN ('note','literature','zettel','thinking','entity'));
   UPDATE zettels SET note_type='thinking' WHERE id='20260101010102';

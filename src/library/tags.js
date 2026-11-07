@@ -396,7 +396,13 @@ var SWTags = {
     const rules = managed
       ? this.exclusions(libraryID)
       : SWTagPolicy.exclusions("");
-    return [...new Set(tags.map((tag) => tag.tag))]
+    return [
+      ...new Set(
+        tags
+          .filter((tag) => !rules.automatic || tag.type !== 1)
+          .map((tag) => tag.tag),
+      ),
+    ]
       .filter((name) => !SWTagPolicy.excludes(name, rules))
       .sort((a, b) => a.localeCompare(b));
   },

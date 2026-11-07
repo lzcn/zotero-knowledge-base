@@ -148,16 +148,20 @@ test("library retrieval is owned by Knowledge Base and ships assets without mode
   const manifest = JSON.parse(strFromU8(files["manifest.json"]));
   assert.equal(manifest.applications.zotero.id, "knowledge-base@lzcn");
   assert.equal(manifest.applications.zotero.strict_min_version, "10.0");
-  assert.ok(files["content/library/scripts/storage.js"]);
+  assert.ok(files["content/library/scripts/library.js"]);
+  assert.match(
+    strFromU8(files["content/library/scripts/library.js"]),
+    /var SWStorage/,
+  );
   assert.ok(files["content/library/runtime/worker.js"]);
   assert.ok(files["locale/zh-CN/similar-works.ftl"]);
-  assert.match(
+  assert.doesNotMatch(
     strFromU8(files["prefs.js"]),
     /extensions\.zotero\.similar-works\.maxRecommendations/,
   );
   assert.match(
     strFromU8(files["content/scripts/knowledge-base.js"]),
-    /common-preferences\.js/,
+    /preferences\.js/,
   );
   for (const name of Object.keys(files)) {
     assert.ok(!/^(tests|scripts|src)\//.test(name), name);

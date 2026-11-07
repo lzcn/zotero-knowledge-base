@@ -17,10 +17,7 @@ window.KnowledgeBaseCommonPreferences = (() => {
     const token = generation;
     const api = Zotero.ZoteroKnowledgeBase.api;
     const style = doc.getElementById("knowledge-base-ui-style");
-    style.value =
-      Zotero.Prefs.get("extensions.zotero.plugin-ui.bear", true) === true
-        ? "bear"
-        : "minimal";
+    style.value = window.ZoteroPluginUI.style();
     if (!style.dataset.bound) {
       style.dataset.bound = "true";
       style.addEventListener("command", () =>

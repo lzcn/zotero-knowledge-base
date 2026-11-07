@@ -1,5 +1,7 @@
 /* global pref */
 pref("extensions.zotero.knowledge-base.nativeNoteTakeover", true);
+pref("extensions.zotero.knowledge-base.mathPreview", true);
+pref("extensions.zotero.knowledge-base.notesStyle", false);
 pref("extensions.zotero.knowledge-base.workbenchMode", "tab");
 pref("extensions.zotero.knowledge-base.editorMode", "visual");
 pref(
@@ -16,7 +18,6 @@ pref("extensions.zotero.knowledge-base.graph.localDepth", 1);
 pref("extensions.zotero.knowledge-base.noteSort", "updated-desc");
 
 // User settings and internal indexing defaults.
-pref("extensions.zotero.similar-works.maxRecommendations", 20);
 pref("extensions.zotero.similar-works.minimumSimilarity", "0.05");
 pref("extensions.zotero.similar-works.minTokenLength", 2);
 pref("extensions.zotero.similar-works.maxTextChars", 1200000);

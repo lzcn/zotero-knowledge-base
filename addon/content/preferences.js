@@ -169,63 +169,6 @@ window.KnowledgeBasePreferences = (() => {
       const api = Zotero.ZoteroKnowledgeBase.api;
       const error = doc.getElementById("knowledge-base-preferences-error");
       try {
-        const types =
-          /** @type {import("../../src/modules/note-types").NoteType[]} */ ([
-            "literature",
-            "zettel",
-            "thinking",
-            "entity",
-          ]);
-        const templates = types.map((type) => ({
-          type,
-          menu: getMenu(doc, "knowledge-base-" + type + "-template"),
-        }));
-        const refreshTemplates = () => {
-          const settings = api.getLiteratureTemplateSettings();
-          for (const { type, menu } of templates) {
-            const popup = menu.querySelector("menupopup");
-            popup.replaceChildren();
-            for (const entry of [
-              { id: "", name: api.loc("template-none") },
-              ...settings.templates,
-            ]) {
-              const option = doc.createXULElement("menuitem");
-              option.setAttribute("value", entry.id);
-              option.setAttribute("label", entry.name);
-              popup.append(option);
-            }
-            menu.value = api.getNoteTemplate(type) || "";
-          }
-        };
-        refreshTemplates();
-        for (const { type, menu } of templates)
-          bindMenu(menu, menu.value, (value) =>
-            api.setNoteTemplate(type, value || null),
-          );
-        const container = doc.querySelector(".settings-templates");
-        if (!menus.has(container)) {
-          menus.add(container);
-          const observers = [
-            "literatureTemplates",
-            ...types
-              .filter((type) => type !== "literature")
-              .map((type) => "templates." + type),
-          ].map((key) =>
-            Zotero.Prefs.registerObserver(
-              "extensions.zotero.knowledge-base." + key,
-              refreshTemplates,
-              true,
-            ),
-          );
-          doc.defaultView.addEventListener(
-            "unload",
-            () => {
-              for (const observer of observers)
-                Zotero.Prefs.unregisterObserver(observer);
-            },
-            { once: true },
-          );
-        }
         const manage = doc.getElementById("knowledge-base-template-manage");
         if (!menus.has(manage)) {
           menus.add(manage);
@@ -240,6 +183,26 @@ window.KnowledgeBasePreferences = (() => {
           });
         }
         bindGraphControls(doc, api);
+        const mathPreview = /** @type {XULCheckboxElement} */ (
+          /** @type {unknown} */ (
+            doc.getElementById("knowledge-base-math-preview")
+          )
+        );
+        mathPreview.checked =
+          Zotero.Prefs.get(
+            "extensions.zotero.knowledge-base.mathPreview",
+            true,
+          ) !== false;
+        if (!menus.has(mathPreview)) {
+          menus.add(mathPreview);
+          mathPreview.addEventListener("command", () =>
+            Zotero.Prefs.set(
+              "extensions.zotero.knowledge-base.mathPreview",
+              mathPreview.checked,
+              true,
+            ),
+          );
+        }
         const takeover = /** @type {XULCheckboxElement} */ (
           /** @type {unknown} */ (
             doc.getElementById("knowledge-base-native-note-takeover")

@@ -34,7 +34,7 @@ let trashVersion = 0;
 let menuVersion = 0;
 /** @type {import("../../src/modules/native-notes").TrashNote[]} */
 let trashNotes = [];
-const history = [];
+const navigationHistory = [];
 let historyIndex = -1;
 const scrollPositions = new Map();
 
@@ -1326,17 +1326,17 @@ function select(id, { record = true, mounted = false, reveal = true } = {}) {
     });
   if (selectedId)
     scrollPositions.set(selectedId, $("knowledge-base-preview").scrollTop);
-  if (record && history[historyIndex] !== id) {
-    history.splice(historyIndex + 1);
-    history.push(id);
-    historyIndex = history.length - 1;
+  if (record && navigationHistory[historyIndex] !== id) {
+    navigationHistory.splice(historyIndex + 1);
+    navigationHistory.push(id);
+    historyIndex = navigationHistory.length - 1;
   }
   document
     .getElementById("knowledge-base-back")
     .toggleAttribute("disabled", historyIndex <= 0);
   document
     .getElementById("knowledge-base-forward")
-    .toggleAttribute("disabled", historyIndex >= history.length - 1);
+    .toggleAttribute("disabled", historyIndex >= navigationHistory.length - 1);
   selectedId = id;
   if (reveal) revealRow(id);
   updateActions();
@@ -1360,8 +1360,8 @@ async function navigateHistory(direction) {
   if (deleting) return;
   let index = historyIndex + direction;
   let card;
-  while (index >= 0 && index < history.length) {
-    card = await api.getZettel(history[index]);
+  while (index >= 0 && index < navigationHistory.length) {
+    card = await api.getZettel(navigationHistory[index]);
     if (
       card &&
       !["trashed", "missing"].includes((await api.getNoteHealth(card.id)).note)

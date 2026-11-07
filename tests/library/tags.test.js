@@ -1325,3 +1325,24 @@ test("neighbor votes count explicit aliases once per paper and reuse the support
   item.names = ["Graph Neural Networks"];
   assert.equal(api.recommend(item, rows).length, 0);
 });
+
+test("automatic exclusions hide automatic memberships and keep manual names", async () => {
+  const { api, context } = fixture();
+  context.SWPref = (key, fallback) =>
+    key === "excludedTags" ? "@AUTO" : fallback;
+  context.Zotero.Tags.getAll = async () => [
+    { tag: "Manual", type: 0 },
+    { tag: "Automatic", type: 1 },
+    { tag: "Shared", type: 1 },
+    { tag: "Shared", type: 0 },
+  ];
+  assert.deepEqual(Array.from(await api.catalog(1, true)), [
+    "Manual",
+    "Shared",
+  ]);
+  assert.deepEqual(Array.from(await api.catalog(1)), [
+    "Automatic",
+    "Manual",
+    "Shared",
+  ]);
+});

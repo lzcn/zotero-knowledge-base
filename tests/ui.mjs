@@ -506,6 +506,7 @@ items.set(20, {
 });
 let selection;
 let focusCount = 0;
+let selectedTab = "knowledge-base";
 const searches = [];
 globalThis.Zotero = {
   ItemFields: { getID: (field) => (field === "citationKey" ? 1 : false) },
@@ -523,6 +524,10 @@ globalThis.Zotero = {
         item.loaded = true;
       });
     },
+    getByLibraryAndKeyAsync: async (libraryID, key) =>
+      [...items.values()].find(
+        (item) => item.libraryID === libraryID && item.key === key,
+      ),
     getIDFromLibraryAndKey: (libraryID, key) =>
       [...items.values()].find(
         (item) => item.libraryID === libraryID && item.key === key,
@@ -558,8 +563,18 @@ globalThis.Zotero = {
   },
   getMainWindow: () => ({
     focus: () => focusCount++,
+    Zotero_Tabs: {
+      select: (tab) => {
+        selectedTab = tab;
+      },
+    },
     ZoteroPane: {
       selectItem: async (id, options) => {
+        assert.equal(
+          selectedTab,
+          "zotero-pane",
+          "A hidden library list cannot complete its first selection",
+        );
         await wait();
         selection = { id, options };
       },
@@ -1151,60 +1166,6 @@ assert.equal(
   prefsWin.document.getElementById("knowledge-base-open-data"),
   null,
 );
-assert.equal(
-  prefsWin.document.getElementById("knowledge-base-literature-template")
-    ?.localName,
-  "menulist",
-);
-
-check(
-  "Every note type has an independent, synchronized template selector",
-  () => {
-    const api = prefsWin.Zotero.ZoteroKnowledgeBase.api;
-    const assignments = new Map();
-    for (const type of ["literature", "zettel", "thinking", "entity"]) {
-      const menu = prefsWin.document.getElementById(
-        `knowledge-base-${type}-template`,
-      );
-      assert.equal(menu.localName, "menulist");
-      assert.equal(menu.value, "");
-      const id = api.createLiteratureTemplate(type);
-      api.updateLiteratureTemplate(id, { name: type, body: `## ${type}` });
-      assert.equal(menu.value, id, "Manager changes must update Settings");
-      menu.value = "";
-      prefsCommand(menu);
-      assert.equal(api.getNoteTemplate(type), null);
-      menu.value = id;
-      prefsCommand(menu);
-      assignments.set(type, id);
-      for (const [assignedType, assignedID] of assignments)
-        assert.equal(api.getNoteTemplate(assignedType), assignedID);
-      api.updateLiteratureTemplate(id, { name: `${type} revised` });
-      assert.equal(
-        menu.querySelector(`[value="${id}"]`).getAttribute("label"),
-        `${type} revised`,
-      );
-    }
-    api.setNoteTemplate("entity", assignments.get("zettel"));
-    assert.equal(
-      prefsWin.document.getElementById("knowledge-base-entity-template").value,
-      assignments.get("zettel"),
-    );
-    api.deleteLiteratureTemplate(assignments.get("zettel"));
-    assert.equal(
-      prefsWin.document.getElementById("knowledge-base-zettel-template").value,
-      "",
-    );
-    assert.equal(
-      prefsWin.document.getElementById("knowledge-base-entity-template").value,
-      "",
-    );
-    for (const [type, id] of assignments) {
-      if (type !== "zettel") api.deleteLiteratureTemplate(id);
-    }
-  },
-);
-
 const templateDOM = new JSDOM(
   await readFile(path.join(ROOT, "addon/content/templates.xhtml"), "utf8"),
   { contentType: "application/xhtml+xml", runScripts: "outside-only" },
@@ -1501,6 +1462,8 @@ async function editor(args = {}, overrides = {}) {
       markdown.renderMarkdown(body, htmlWindow, assets.resolveAssetURL),
     richTextToMarkdown: (html) => rich_text.richTextToMarkdown(html),
     getZettel: async () => null,
+    getZettelTitles: async (ids) =>
+      Object.fromEntries(ids.map((id) => [id, "Target card"])),
     copyNoteReference: (reference) => calls.open.push(`[[${reference}]]`),
     getFamily: async () => ({ parent: null, children: [] }),
     getParentCandidates: async () => [],

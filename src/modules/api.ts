@@ -117,6 +117,7 @@ import {
   getUnresolvedRefs,
   getUnresolvedSources,
   getZettel,
+  getZettelTitles,
   listByItem,
   listZettels,
   searchZettels,
@@ -484,6 +485,10 @@ export const api = {
   async getZettel(id: string): Promise<Zettel | null> {
     const note = await getZettel(id);
     return note ? (await withNoteReferences([note]))[0] : null;
+  },
+
+  async getZettelTitles(ids: string[]): Promise<Record<string, string>> {
+    return Object.fromEntries(await getZettelTitles(ids));
   },
 
   async getOutgoing(id: string): Promise<ResolvedLink[]> {

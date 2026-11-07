@@ -619,6 +619,7 @@ export default async function textToolsHost({
   assert(await inline.save(false), "Could not save formatted note");
   main.resizeTo(1100, 900);
   const noteID = inline.eval("nativeNoteID");
+  await knowledgeBase.api.setNativeNoteTakeover(false);
   const ordinary = new Zotero.Item("note");
   ordinary.libraryID = Zotero.Libraries.userLibraryID;
   ordinary.setNote(

@@ -7,8 +7,6 @@ similar-works-based-on-weak = metadata only
 similar-works-progress =
     .aria-label = Similarity calculation progress
 
-similar-works-pref-limit =
-    .value = Initial results
 similar-works-pref-index-heading = Cache
 similar-works-pref-error = Cache unavailable
 similar-works-pref-index-value = { $known ->
@@ -137,7 +135,7 @@ similar-works-tags-format-unchanged = Unchanged
 similar-works-tags-format-structured = Keep structure
 similar-works-tags-format-invalid = Invalid name
 similar-works-tags-format-protected = Excluded
-similar-works-tags-format-collision = Name conflict; merge separately
+similar-works-tags-format-collision = Name conflict. Merge separately
 similar-works-tags-invalid-format = Choose Sentence case or Title Case in Settings.
 similar-works-tags-formatted = Formatted { $count } tags.
 
@@ -149,6 +147,6 @@ similar-works-tags-semantic-error = Semantic matching unavailable: { $message }
 similar-works-tags-review-group =
     .label = Review group
     .aria-label = Review tags around { $name }
-similar-works-tags-review-semantic = Similar meaning; review before merging
+similar-works-tags-review-semantic = Similar meaning. Review before merging
 
 similar-works-tags-new-name = New name

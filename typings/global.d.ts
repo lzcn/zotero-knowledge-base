@@ -43,3 +43,9 @@ declare const libraryRuntime: {
   onWindowLoad(win: Window): void;
   onWindowUnload(win: Window): void;
 };
+
+interface nsIXPCComponents_Classes {
+  "@mozilla.org/image/tools;1": {
+    getService(iid: nsJSIID<imgITools>): imgITools;
+  };
+}

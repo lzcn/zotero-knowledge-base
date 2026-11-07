@@ -77,7 +77,9 @@ function addButton(
   button.addEventListener("click", open);
   win.addEventListener("unload", dispose, { once: true });
   buttons.set(doc, { button, dispose });
-  append(button);
+  const pageNumber = doc.querySelector(".toolbar #pageNumber");
+  if (pageNumber) pageNumber.before(button);
+  else append(button);
 }
 
 function renderToolbar(

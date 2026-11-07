@@ -85,6 +85,8 @@ const SCHEMA_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_zettels_title_folded ON zettels(title_folded)`,
   `CREATE INDEX IF NOT EXISTS idx_links_unresolved_ref ON links(ref_folded) WHERE target_id IS NULL`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_updated ON zettels(updated_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_zettels_type_updated ON zettels(note_type, updated_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_zettels_type_title ON zettels(note_type, title_folded)`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_item ON zettels(item_key)`,
   `CREATE INDEX IF NOT EXISTS idx_zettels_annotation ON zettels(annotation_key)`,
 ];

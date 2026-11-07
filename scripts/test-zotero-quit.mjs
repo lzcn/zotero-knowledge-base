@@ -12,7 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { unzipSync, zipSync, strFromU8, strToU8 } from "fflate";
 
 const binary =
@@ -24,12 +24,14 @@ const graphViewsOnly = args.includes("--graph-views");
 const noteTypesOnly = args.includes("--note-types");
 const readerToolbarOnly = args.includes("--reader-toolbar");
 const readingViewOnly = args.includes("--reading-view");
+const mathOnly = args.includes("--math");
 const textToolsOnly = args.includes("--text-tools");
 const workbenchOnly = args.includes("--workbench");
 const metadataOnly = args.includes("--metadata");
 const viewsOnly = args.includes("--views");
 const retiredOnly = args.includes("--retired-features");
 const editingHost =
+  mathOnly ||
   readingViewOnly ||
   settingsOnly ||
   graphViewsOnly ||
@@ -42,23 +44,25 @@ const editingHost =
     ? (
         await readFile(
           new URL(
-            readingViewOnly
-              ? "./reading-view-host.mjs"
-              : settingsOnly
-                ? "./settings-host.mjs"
-                : graphViewsOnly
-                  ? "./graph-views-host.mjs"
-                  : noteTypesOnly
-                    ? "./note-types-host.mjs"
-                    : retiredOnly
-                      ? "./retired-features-host.mjs"
-                      : viewsOnly
-                        ? "./views-host.mjs"
-                        : metadataOnly
-                          ? "./metadata-host.mjs"
-                          : workbenchOnly
-                            ? "./workbench-host.mjs"
-                            : "./text-tools-host.mjs",
+            mathOnly
+              ? "./math-host.mjs"
+              : readingViewOnly
+                ? "./reading-view-host.mjs"
+                : settingsOnly
+                  ? "./settings-host.mjs"
+                  : graphViewsOnly
+                    ? "./graph-views-host.mjs"
+                    : noteTypesOnly
+                      ? "./note-types-host.mjs"
+                      : retiredOnly
+                        ? "./retired-features-host.mjs"
+                        : viewsOnly
+                          ? "./views-host.mjs"
+                          : metadataOnly
+                            ? "./metadata-host.mjs"
+                            : workbenchOnly
+                              ? "./workbench-host.mjs"
+                              : "./text-tools-host.mjs",
             import.meta.url,
           ),
           "utf8",
@@ -73,6 +77,7 @@ const templatesOnly = args.includes("--templates");
 const linksOnly = args.includes("--links");
 const relationsOnly = args.includes("--relations");
 const connectionsOnly =
+  mathOnly ||
   readingViewOnly ||
   settingsOnly ||
   args.includes("--retired-features") ||
@@ -114,14 +119,28 @@ await mkdir(join(profile, "extensions"), { recursive: true });
 await mkdir(data);
 await mkdir(hostTemp);
 const readerPDF = join(root, "reader.pdf");
-if (readerToolbarOnly || readingViewOnly) {
-  const stream = "BT /F1 20 Tf 40 700 Td (Knowledge Base reader toolbar) Tj ET";
+if (readerToolbarOnly || readingViewOnly || mathOnly) {
+  const stream =
+    "BT /F1 16 Tf 40 775 Td (Knowledge Base reader toolbar) Tj ET\nq 240 0 0 120 40 640 cm /Figure Do Q\nBT /F1 12 Tf 40 620 Td (Figure 1: embedded color image) Tj ET";
+  const image =
+    Array.from({ length: 80 * 40 }, (_, i) => {
+      const x = i % 80,
+        y = Math.floor(i / 80);
+      return x < 40
+        ? y < 20
+          ? "e04030"
+          : "30b060"
+        : y < 20
+          ? "3060e0"
+          : "e0a030";
+    }).join("") + ">";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> /XObject << /Figure 6 0 R >> >> /Contents 5 0 R >>",
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     "<< /Length " + stream.length + " >>\nstream\n" + stream + "\nendstream",
+    `<< /Type /XObject /Subtype /Image /Width 80 /Height 40 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /ASCIIHexDecode /Length ${image.length} >>\nstream\n${image}\nendstream`,
   ];
   let pdf = "%PDF-1.4\n";
   const offsets = [0];
@@ -131,12 +150,12 @@ if (readerToolbarOnly || readingViewOnly) {
   });
   const xref = pdf.length;
   pdf +=
-    "xref\n0 6\n0000000000 65535 f \n" +
+    "xref\n0 7\n0000000000 65535 f \n" +
     offsets
       .slice(1)
       .map((offset) => String(offset).padStart(10, "0") + " 00000 n \n")
       .join("") +
-    "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" +
+    "trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n" +
     xref +
     "\n%%EOF\n";
   await writeFile(readerPDF, pdf);
@@ -285,12 +304,12 @@ function runQuitTest() {
         setTimeout(run, 250);
         return;
       }
-      if (${readingViewOnly || settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
+      if (${mathOnly || readingViewOnly || settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
         const test = ${editingHost || "null"};
         restarting = await IOUtils.exists(${JSON.stringify(marker)});
         await test({Zotero, ChromeUtils, IOUtils, PathUtils, Services, Components, setTimeout,
           readerPDF:${JSON.stringify(readerPDF)}, marker:${JSON.stringify(marker)}, restartMarker:${JSON.stringify(restartMarker)},
-          screenshots:${JSON.stringify(process.env.KNOWLEDGE_BASE_HOST_SCREENSHOTS || "")}, aiRequests:${JSON.stringify(aiRequests)}});
+          benchmark:${readingViewOnly && args.includes("--benchmark")}, screenshots:${JSON.stringify(process.env.KNOWLEDGE_BASE_HOST_SCREENSHOTS || "")}, aiRequests:${JSON.stringify(aiRequests)}});
         return;
       }
       if (${readerToolbarOnly}) {
@@ -300,8 +319,8 @@ function runQuitTest() {
         const checkButton=async(reader)=>{
           const doc=reader._iframeWindow.document;
           const button=doc.getElementById('knowledge-base-reader-button');
-          await waitFor(()=>doc.querySelectorAll('#knowledge-base-clip-figure').length===1,'Figure clipping button is missing or duplicated');
-          if(doc.querySelectorAll('#knowledge-base-reader-button').length!==1 || !button.closest('.toolbar .custom-sections') || button.title!==Zotero.ZoteroKnowledgeBase.api.loc('menu-open-manager') || button.getAttribute('aria-label')!==button.title || !button.classList.contains('toolbar-button'))throw new Error('Reader button is missing, duplicated or unnamed');
+          if(doc.querySelector('#knowledge-base-clip-figure'))throw new Error('Figure clipping icon was retained');
+          if(doc.querySelectorAll('#knowledge-base-reader-button').length!==1 || button.nextElementSibling?.id!=='pageNumber' || button.title!==Zotero.ZoteroKnowledgeBase.api.loc('menu-open-manager') || button.getAttribute('aria-label')!==button.title || !button.classList.contains('toolbar-button'))throw new Error('Reader button is missing, duplicated or unnamed');
           await waitFor(()=>button.querySelector('img').complete && button.querySelector('img').naturalWidth>0,'Reader icon failed to load');
           const bounds=button.getBoundingClientRect();if(bounds.width<26 || bounds.height<26)throw new Error('Reader button does not use native toolbar geometry');
           return button;
@@ -324,6 +343,21 @@ function runQuitTest() {
         const first=await Zotero.Attachments.importFromFile({file:${JSON.stringify(readerPDF)},parentItemID:paper.id});
         const reader=await openReader(first.id);
         const initialButton=await checkButton(reader);
+        const view=reader._internalReader._primaryView;await view.initializedPromise;
+        await waitFor(()=>view._pdfRenderer,'PDF capture renderer did not initialize');
+        main.focus();view._iframeWindow.focus();await pause(100);
+        Services.clipboard.emptyClipboard(Services.clipboard.kGlobalClipboard);
+        const originalAdd=view._onAddAnnotation;
+        reader._iframeWindow.dispatchEvent(new reader._iframeWindow.KeyboardEvent('keydown',{key:'X',shiftKey:true,metaKey:Zotero.isMac,ctrlKey:!Zotero.isMac,bubbles:true,cancelable:true}));
+        await waitFor(()=>view._onAddAnnotation!==originalAdd,'Capture without an open note did not arm');
+        const canvas=await waitFor(()=>view._iframeWindow.document.querySelector('.page canvas'),'PDF page did not render');
+        const page=canvas.getBoundingClientRect(), outer=reader._iframe.getBoundingClientRect(), inner=view._iframe.getBoundingClientRect();
+        const x=outer.left+inner.left+page.left+45,y=outer.top+inner.top+page.top+50;
+        main.windowUtils.sendMouseEvent('mousedown',x,y,0,1,0,false,0.5,1,false,false,1);await pause(30);
+        main.windowUtils.sendMouseEvent('mousemove',x+230,y+110,0,1,0,false,0.5,1,false,false,1);await pause(30);
+        main.windowUtils.sendMouseEvent('mouseup',x+230,y+110,0,1,0,false,0,1,false,false,0);
+        await waitFor(()=>Services.clipboard.hasDataMatchingFlavors(['image/png'],Services.clipboard.kGlobalClipboard),'Capture without a note did not copy PNG');
+        if(view._onAddAnnotation!==originalAdd || first.getAnnotations().length || (await Zotero.ZoteroKnowledgeBase.api.listZettels()).length)throw new Error('Clipboard capture changed the library or retained the image interceptor');
         initialButton.click();await waitFor(()=>main.document.querySelector('.knowledge-base-workbench'),'Reader button did not open Knowledge Base');
         const {AddonManager}=ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
         const extension=await AddonManager.getAddonByID('knowledge-base@lzcn');
@@ -3217,6 +3251,10 @@ try {
     console.log(
       "PASS Real Zotero shared note editor in sidebar, tab and window; live takeover setting, compact metadata, responsive toolbars, figure capture, saved edits, cleanup failure recovery and restart.",
     );
+  else if (mathOnly)
+    console.log(
+      "PASS Real Zotero heading math, native cards, Markdown, saves, cleanup and restart.",
+    );
   else if (textToolsOnly)
     console.log(
       "PASS Real Zotero text tools: native/Markdown math rendering, selected formatting, protected code and links, idempotence, one-step undo/redo, find and replace, ordinary notes, autosave and restart.",
@@ -3272,6 +3310,17 @@ try {
       "Native editor snapshot timing (ms): " +
         JSON.stringify(state.editorSnapshotTiming),
     );
+  }
+  if (state.readingMetrics) {
+    console.log(JSON.stringify(state.readingMetrics, null, 2));
+    const report = process.env.KNOWLEDGE_BASE_READING_BENCHMARK_OUTPUT;
+    if (report) {
+      await mkdir(dirname(resolve(report)), { recursive: true });
+      await writeFile(
+        resolve(report),
+        JSON.stringify(state.readingMetrics, null, 2) + "\n",
+      );
+    }
   }
   passed = true;
 } finally {

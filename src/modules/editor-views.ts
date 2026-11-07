@@ -88,3 +88,27 @@ export function stopEditorView(
   }
   return writing;
 }
+
+/** All hosts use the document's save/cancellation rules before navigation. */
+export async function prepareEditorView(
+  editor: Window | null | undefined,
+): Promise<boolean> {
+  if (!editor) return true;
+  await editor.knowledgeBaseReady?.();
+  if (editor.knowledgeBaseStopping) return false;
+  if (editor.knowledgeBasePrepareNavigation)
+    return editor.knowledgeBasePrepareNavigation();
+  return editor.save ? editor.save(false) : true;
+}
+
+/** Keep the document alive until its recovery write has completed. */
+export async function closeEditorView(
+  editor: Window | null | undefined,
+  dispose: () => void,
+): Promise<void> {
+  try {
+    await stopEditorView(editor);
+  } finally {
+    dispose();
+  }
+}

@@ -1,8 +1,8 @@
 /* Shared by the native editor, Markdown and read-only note surfaces. */
 :root {
-  --knowledge-base-note-width: 1280px;
+  --knowledge-base-note-width: 960px;
   --knowledge-base-note-gutter: 32px;
-  --knowledge-base-note-top: 20px;
+  --knowledge-base-note-top: 28px;
   --knowledge-base-note-bottom: 80px;
 }
 

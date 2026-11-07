@@ -1,6 +1,5 @@
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
-import { nativeNoteEditorWindow } from "./native-note-view";
 
 interface Annotation {
   type: string;
@@ -16,20 +15,11 @@ interface PDFView {
     _renderAnnotationImage(annotation: Annotation): Promise<string>;
   };
 }
-interface NativeTarget {
-  _item: Zotero.Item;
-  _readOnly: boolean;
-  insertAnnotations(annotations: unknown[]): Promise<void>;
-}
-interface NativeNote extends HTMLElement {
-  item: Zotero.Item;
-  getCurrentInstance(): NativeTarget;
-}
 type ClipReader = Omit<
   _ZoteroTypes.ReaderInstance,
   "_window" | "_internalReader"
 > & {
-  _window: Window & { ZoteroContextPane?: { activeEditor?: NativeNote } };
+  _window: Window;
   _internalReader: {
     _primaryView: PDFView;
     _secondaryView?: PDFView;
@@ -60,24 +50,9 @@ export function withoutAnnotationCitations(
   return root.innerHTML;
 }
 
-function attach(
-  reader: ClipReader,
-  doc: Document,
-  append: (button: HTMLButtonElement) => void,
-): void {
+function attach(reader: ClipReader, doc: Document): void {
   if (!registered || reader.type !== "pdf") return;
   controls.get(doc)?.();
-  const button = doc.createElement("button");
-  button.id = "knowledge-base-clip-figure";
-  button.className = "toolbar-button";
-  button.type = "button";
-  button.tabIndex = -1;
-  button.title =
-    getString("clip-figure") + (Zotero.isMac ? " (⌘⇧X)" : " (Ctrl+Shift+X)");
-  button.setAttribute("aria-label", button.title);
-  button.innerHTML =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6M8 12h8m-4-4v8"/></svg>';
-  append(button);
   let disposed = false;
   let busy = false;
   let cancel: (() => void) | undefined;
@@ -92,7 +67,6 @@ function attach(
         String(error instanceof Error ? error.message : error),
       );
   };
-  const active = () => reader._window.ZoteroContextPane?.activeEditor;
   const start = async () => {
     if (disposed || busy) return;
     if (cancel) {
@@ -100,17 +74,7 @@ function attach(
       return;
     }
     await reader._initPromise;
-    if (disposed) return;
-    const target = active();
-    const instance = target?.getCurrentInstance();
-    if (
-      !target ||
-      !instance ||
-      instance._readOnly ||
-      !target.item?.isEditable()
-    )
-      throw new Error(getString("clip-note-required"));
-    const noteID = target.item.id;
+    if (disposed || busy || cancel) return;
     const internal = reader._internalReader;
     const pdfViews = [internal._primaryView, internal._secondaryView].filter(
       (view): view is PDFView => !!view?._pdfRenderer,
@@ -130,7 +94,6 @@ function attach(
           reader._iframeWindow!,
         ),
       );
-      button.removeAttribute("aria-pressed");
       cancel = undefined;
     };
     for (const [view, original] of originals) {
@@ -140,33 +103,90 @@ function attach(
             return original.call(view, annotation, select);
           cancel?.();
           busy = true;
-          button.disabled = true;
-          const current = () =>
-            !disposed &&
-            version === operation &&
-            active() === target &&
-            target.item.id === noteID &&
-            target.getCurrentInstance() === instance;
+          const current = () => !disposed && version === operation;
           void (async () => {
             const image =
               await view._pdfRenderer._renderAnnotationImage(annotation);
-            if (!current()) throw new Error(getString("clip-note-changed"));
-            if (!image) throw new Error(getString("clip-unavailable"));
+            if (!current()) return;
+            if (!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(image))
+              throw new Error(getString("clip-unavailable"));
+            if (!reader.itemID) throw new Error(getString("clip-unavailable"));
+            const attachment = await Zotero.Items.getAsync(reader.itemID);
+            if (!current()) return;
+            if (!attachment) throw new Error(getString("clip-unavailable"));
+            const img = doc.createElement("img");
+            img.src = image;
+            img.setAttribute(
+              "data-annotation",
+              encodeURIComponent(
+                JSON.stringify({
+                  attachmentURI: Zotero.URI.getItemURI(attachment),
+                  position: annotation.position,
+                  pageLabel: annotation.pageLabel,
+                }),
+              ),
+            );
+            const rect = annotation.position.rects[0];
+            if (rect)
+              img.width = Math.max(1, Math.round(Math.abs(rect[2] - rect[0])));
             const clipped = {
               ...JSON.parse(JSON.stringify(annotation)),
               image,
               attachmentItemID: reader.itemID,
             };
-            // No annotation item is ever created: the note stores the PDF position itself.
             delete clipped.id;
-            const kb = nativeNoteEditorWindow(target);
-            if (kb) await kb.knowledgeBaseInsertAnnotations?.([clipped]);
-            else await instance.insertAnnotations([clipped]);
+            const bytes = Uint8Array.from(
+              doc.defaultView!.atob(image.split(",")[1]),
+              (char) => char.charCodeAt(0),
+            );
+            const nativeImage = Components.classes["@mozilla.org/image/tools;1"]
+              .getService(Components.interfaces.imgITools)
+              .decodeImageFromArrayBuffer(bytes.buffer, "image/png");
+            let copied = false;
+            const copy = (event: ClipboardEvent) => {
+              if (!event.clipboardData) return;
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              event.clipboardData.setData(
+                "text/html",
+                `<p>${img.outerHTML}</p>`,
+              );
+              event.clipboardData.setData(
+                "zotero/annotation",
+                JSON.stringify([clipped]),
+              );
+              event.clipboardData.mozSetDataAt(
+                "application/x-moz-nativeimage",
+                nativeImage,
+                0,
+              );
+              copied = true;
+            };
+            // A native copy event serializes custom flavors for subsequent paste events.
+            const copyDoc = doc;
+            const focused = copyDoc.activeElement as HTMLElement | null;
+            const selection = copyDoc.createElement("textarea");
+            selection.value = " ";
+            selection.style.cssText = "position:fixed;left:-10000px;top:0";
+            copyDoc.body.append(selection);
+            copyDoc.defaultView!.addEventListener("copy", copy, true);
+            try {
+              copyDoc.defaultView!.focus();
+              selection.focus({ preventScroll: true });
+              selection.select();
+              copyDoc.execCommand("copy");
+            } finally {
+              copyDoc.defaultView!.removeEventListener("copy", copy, true);
+              selection.remove();
+              focused?.focus({ preventScroll: true });
+            }
+            if (!copied) throw new Error(getString("clip-unavailable"));
           })()
-            .catch(fail)
+            .catch((error) => {
+              if (current()) fail(error);
+            })
             .finally(() => {
               busy = false;
-              if (!disposed) button.disabled = false;
             });
           return undefined;
         },
@@ -177,16 +197,16 @@ function attach(
     internal.setTool(
       Components.utils.cloneInto({ type: "image" }, reader._iframeWindow!),
     );
-    button.setAttribute("aria-pressed", "true");
   };
   const click = () => {
     void start().catch(fail);
   };
   const key = (event: KeyboardEvent) => {
-    if (event.key === "Escape" && cancel) {
+    if (event.key === "Escape" && (cancel || busy)) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      cancel();
+      operation++;
+      cancel?.();
       return;
     }
     if (
@@ -206,7 +226,6 @@ function attach(
     event.stopImmediatePropagation();
     click();
   };
-  button.addEventListener("click", click);
   void reader._initPromise
     .then(async () => {
       await reader._internalReader._primaryView.initializedPromise;
@@ -229,11 +248,6 @@ function attach(
     cancel?.();
     for (const win of keyWindows) win.removeEventListener("keydown", key, true);
     doc.defaultView?.removeEventListener("unload", dispose);
-    button.removeEventListener("click", click);
-    const parent = button.parentElement;
-    button.remove();
-    if (parent?.classList.contains("section") && !parent.childNodes.length)
-      parent.remove();
     if (controls.get(doc) === dispose) controls.delete(doc);
   };
   doc.defaultView?.addEventListener("unload", dispose, { once: true });
@@ -241,7 +255,7 @@ function attach(
 }
 
 function render(event: _ZoteroTypes.Reader.EventParams<"renderToolbar">): void {
-  attach(event.reader as unknown as ClipReader, event.doc, event.append);
+  attach(event.reader as unknown as ClipReader, event.doc);
 }
 
 export function registerReaderClipping(): void {
@@ -265,14 +279,7 @@ export function registerReaderClipping(): void {
   Zotero.Reader.registerEventListener("renderToolbar", render, config.addonID);
   for (const reader of Zotero.Reader._readers) {
     const doc = reader._iframeWindow?.document;
-    const target = doc?.querySelector(".toolbar .custom-sections");
-    if (!doc || !target) continue;
-    attach(reader as unknown as ClipReader, doc, (button) => {
-      const section = doc.createElement("div");
-      section.className = "section";
-      section.append(button);
-      target.append(section);
-    });
+    if (doc) attach(reader as unknown as ClipReader, doc);
   }
 }
 

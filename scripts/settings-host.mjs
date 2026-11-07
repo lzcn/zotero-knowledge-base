@@ -66,12 +66,26 @@ export default async function settingsHost({
     quit();
     return;
   }
-  for (const type of ["literature", "zettel", "thinking", "entity"])
-    await api.saveZettel({
-      title: type,
-      body: "Original body",
-      noteType: type,
-    });
+  const examples = {
+    literature: [
+      "读懂一篇论文",
+      "先理解问题，再记录方法与证据。把自己的判断和原文结论分开。",
+    ],
+    zettel: [
+      "让想法彼此连接",
+      "一张笔记只保留一个清楚的想法。通过链接，逐渐形成自己的知识网络。",
+    ],
+    thinking: [
+      "保留思考的过程",
+      "记录尚未解决的问题，也记录下一次阅读时需要寻找的线索。",
+    ],
+    entity: [
+      "让笔记回到阅读本身",
+      "## 清楚地表达一个想法\n\n阅读时，把值得留下的洞见写成自己的话。适当的留白，让复杂的研究也能从容展开。\n\n## 从理解走向连接\n\n- 记录问题背后的动机\n- 区分观察、证据与判断\n- 用链接连接相关想法\n\n> 好的笔记，让下一次思考有一个清楚的起点。",
+    ],
+  };
+  for (const [noteType, [title, body]] of Object.entries(examples))
+    await api.saveZettel({ title, body, noteType });
   const template = api.createLiteratureTemplate();
   api.updateLiteratureTemplate(template, {
     name: "Reading",
@@ -81,8 +95,7 @@ export default async function settingsHost({
     "knowledge-base-preferences",
   );
   await wait(
-    () =>
-      settings.document.getElementById("knowledge-base-literature-template"),
+    () => settings.document.getElementById("knowledge-base-template-manage"),
     "Settings did not load",
   );
   settings.resizeTo(940, 1000);
@@ -95,26 +108,35 @@ export default async function settingsHost({
     !doc.getElementById("knowledge-base-source-style"),
     "Source style control remains",
   );
+  assert(
+    !doc.getElementById("similar-works-limit"),
+    "Manual result batching remains exposed",
+  );
+  assert(
+    !doc.querySelector("[data-template-type]"),
+    "Settings still repeats every template selector",
+  );
+  const mathPreview = doc.getElementById("knowledge-base-math-preview");
   await wait(
-    () =>
-      doc.getElementById("knowledge-base-literature-template")?.value ===
-      template,
-    "Template choice did not load",
-  ).catch((error) => {
-    throw new Error(
-      String(error) +
-        " " +
-        JSON.stringify({
-          expected: template,
-          value: doc.getElementById("knowledge-base-literature-template")
-            ?.value,
-          html: doc.getElementById("knowledge-base-literature-template")
-            ?.outerHTML,
-          error: doc.getElementById("knowledge-base-preferences-error")
-            ?.textContent,
-        }),
+    () => mathPreview?.checked && mathPreview.getAttribute("label"),
+    "Math preview checkbox did not initialize",
+  );
+  assert(
+    mathPreview?.checked && !mathPreview.getAttribute("label").includes(";"),
+    "Math preview option is missing or verbose",
+  );
+  for (const enabled of [false, true]) {
+    mathPreview.checked = enabled;
+    mathPreview.dispatchEvent(new settings.Event("command", { bubbles: true }));
+    await wait(
+      () =>
+        Zotero.Prefs.get(
+          "extensions.zotero.knowledge-base.mathPreview",
+          true,
+        ) === enabled,
+      "Math preview setting did not save",
     );
-  });
+  }
   const takeover = doc.getElementById("knowledge-base-native-note-takeover");
   assert(
     takeover?.checked && takeover.getAttribute("label"),
@@ -130,7 +152,7 @@ export default async function settingsHost({
   }
   const groups = [...doc.querySelectorAll(".plugin-preferences .main-section")];
   assert(
-    groups.length === 7 &&
+    groups.length === 5 &&
       new Set(
         groups.map(
           (group) =>
@@ -177,55 +199,14 @@ export default async function settingsHost({
       excluded.placeholder.length < 50,
     "Excluded tags retain long helper text",
   );
-  const menu = doc.getElementById("knowledge-base-literature-template");
-  menu.value = "";
-  menu.dispatchEvent(new settings.Event("command", { bubbles: true }));
-  assert(
-    api.getNoteTemplate("literature") === null,
-    "Main template choice was not saved",
-  );
-  menu.value = template;
-  menu.dispatchEvent(new settings.Event("command", { bubbles: true }));
   const assigned = { literature: { id: template, body: "## Reading" } };
   for (const noteType of ["zettel", "thinking", "entity"]) {
-    const control = doc.getElementById(
-      "knowledge-base-" + noteType + "-template",
-    );
-    assert(control, "Missing template selector: " + noteType);
-    assert(!control.value, "Unassigned type inherited a template: " + noteType);
-    const id = api.createLiteratureTemplate(noteType);
-    const body = "## " + noteType;
+    const id = api.createLiteratureTemplate(noteType),
+      body = "## " + noteType;
     api.updateLiteratureTemplate(id, { name: noteType, body });
-    await wait(
-      () => control.value === id,
-      "Created template was not synchronized",
-    );
-    control.value = "";
-    control.dispatchEvent(new settings.Event("command", { bubbles: true }));
-    assert(
-      api.getNoteTemplate(noteType) === null,
-      "Could not clear " + noteType,
-    );
-    control.value = id;
-    control.dispatchEvent(new settings.Event("command", { bubbles: true }));
-    assert(
-      api.getNoteTemplate(noteType) === id &&
-        api.getNewNoteBody(noteType) === body &&
-        api.getNewNoteBody("literature") === "## Reading",
-      "Template choices are not independent: " + noteType,
-    );
+    api.setNoteTemplate(noteType, id);
     assigned[noteType] = { id, body };
   }
-  const templateMenus = [...doc.querySelectorAll("[data-template-type]")];
-  const boxes = templateMenus.map((control) => control.getBoundingClientRect());
-  assert(
-    boxes.every(
-      (box) =>
-        Math.abs(box.x - boxes[0].x) < 2 &&
-        Math.abs(box.width - boxes[0].width) < 2,
-    ),
-    "Template selectors are not aligned",
-  );
   api.setNoteTemplate("entity", null);
   doc.getElementById("knowledge-base-template-manage").click();
   const manager = await wait(
@@ -303,21 +284,6 @@ export default async function settingsHost({
   api.setNoteTemplate("entity", assigned.entity.id);
   await wait(
     () =>
-      doc.getElementById("knowledge-base-entity-template").value ===
-      assigned.entity.id,
-    "Settings did not reflect the external assignment",
-  );
-  api.updateLiteratureTemplate(assigned.entity.id, { name: "Entity notes" });
-  await wait(
-    () =>
-      doc
-        .getElementById("knowledge-base-entity-template")
-        .querySelector('[value="' + assigned.entity.id + '"]')
-        ?.getAttribute("label") === "Entity notes",
-    "Settings retained the old template name",
-  );
-  await wait(
-    () =>
       doc
         .getElementById("knowledge-base-note-counts")
         .textContent.includes("4"),
@@ -384,6 +350,60 @@ export default async function settingsHost({
   await wait(
     () => doc.getElementById("similar-works-cache-progress").value === 3,
     "Feature cache loading was hidden behind an idle semantic state",
+  );
+  api.openEditor({ zettelId: (await api.listZettels())[0].id });
+  const main = Zotero.getMainWindow();
+  const current = () =>
+    main.document
+      .querySelector(".knowledge-base-workbench")
+      ?.contentWindow?.document.getElementById(
+        "knowledge-base-workbench-editor",
+      )?.contentWindow;
+  const note = await wait(
+    () => current()?.knowledgeBaseReady && current(),
+    "Appearance editor did not open",
+  );
+  await note.knowledgeBaseReady();
+  const appearance = doc.getElementById("knowledge-base-ui-style");
+  appearance.value = "notes";
+  appearance.dispatchEvent(new settings.Event("command", { bubbles: true }));
+  assert(
+    appearance.value === "notes",
+    "Notes style selection did not stay selected",
+  );
+  await wait(
+    () => note.document.documentElement.hasAttribute("data-plugin-notes"),
+    "Notes style did not update the open note",
+  );
+  assert(
+    !doc.getElementById("knowledge-base-custom-css") &&
+      !appearance.querySelector('[value="paper"]'),
+    "Retired appearance controls remain",
+  );
+  const card = await api.getZettel((await api.listZettels())[0].id);
+  const originalBody = card.body;
+  await note.setEditorMode("source");
+  const sourceDocument = note.document
+    .getElementById("knowledge-base-editor-body")
+    .querySelector("iframe").contentDocument;
+  assert(
+    sourceDocument.documentElement.hasAttribute("data-plugin-notes"),
+    "New Markdown editors did not inherit Notes style",
+  );
+  await note.setEditorMode("visual");
+  const before = await note.save(false);
+  assert(before, "Appearance changes prevented saving");
+  await capture(main, "notes-style");
+  appearance.value = "bear";
+  appearance.dispatchEvent(new settings.Event("command", { bubbles: true }));
+  await wait(
+    () => !note.document.documentElement.hasAttribute("data-plugin-notes"),
+    "Bear retained the Notes palette",
+  );
+  await capture(main, "bear-style");
+  assert(
+    (await api.getZettel(card.id)).body === originalBody,
+    "Appearance changes modified saved note content",
   );
   const plain = doc.querySelector(".plugin-preferences");
   for (const width of [940, 720]) {

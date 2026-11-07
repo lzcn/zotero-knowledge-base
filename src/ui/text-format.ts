@@ -172,13 +172,17 @@ function wholeDisplay(text: string) {
 }
 
 /** Replace only recognized prose spans, retaining every unrelated node and mark. */
-export function normalizeRichMath(view: RichTextView): number {
+export function normalizeRichMath(
+  view: RichTextView,
+  headingsOnly = false,
+): number {
   const { state } = view;
   if (!state.schema.nodes.math_inline || !state.schema.nodes.math_display)
     throw new Error("The note editor does not support math nodes.");
-  const scope = state.selection.empty
-    ? null
-    : { from: state.selection.from, to: state.selection.to };
+  const scope =
+    headingsOnly || state.selection.empty
+      ? null
+      : { from: state.selection.from, to: state.selection.to };
   const blocks: { node: any; pos: number; parent: any; index: number }[] = [];
   state.doc.descendants(
     (node: any, pos: number, parent: any, index: number) => {
@@ -186,6 +190,7 @@ export function normalizeRichMath(view: RichTextView): number {
       parent = parent?.wrappedJSObject || parent;
       if (node.type.spec.code || (node.isAtom && !node.isText)) return false;
       if (node.isTextblock) {
+        if (headingsOnly && node.type.name !== "heading") return false;
         blocks.push({ node, pos, parent, index });
         return false;
       }
@@ -252,9 +257,10 @@ export function normalizeRichMath(view: RichTextView): number {
       )
       .filter(
         (span) =>
-          !scope ||
-          (pos + 1 + span.start >= scope.from &&
-            pos + 1 + span.end <= scope.to),
+          !(node.type.name === "heading" && span.display) &&
+          (!scope ||
+            (pos + 1 + span.start >= scope.from &&
+              pos + 1 + span.end <= scope.to)),
       );
     if (!spans.length) continue;
     let content = node.content.cut(0, 0),
@@ -283,9 +289,11 @@ export function normalizeRichMath(view: RichTextView): number {
   if (!edits.length) return 0;
   // The native history key separates this command from preceding/following typing.
   const transaction = state.tr.setMeta("closeHistory$", true);
+  if (headingsOnly) transaction.setMeta("addToHistory", false);
   for (const edit of edits.reverse())
     transaction.replaceWith(edit.from, edit.to, edit.fragment);
   view.dispatch(transaction);
-  view.dispatch(view.state.tr.setMeta("closeHistory$", true));
+  if (!headingsOnly)
+    view.dispatch(view.state.tr.setMeta("closeHistory$", true));
   return edits.reduce((count, edit) => count + edit.count, 0);
 }

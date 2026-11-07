@@ -17,10 +17,19 @@ var SWTagPolicy = {
   },
 
   exclusions(value, coloredNames = []) {
-    const rules = { keys: new Set(), patterns: [], colored: false };
+    const rules = {
+      keys: new Set(),
+      patterns: [],
+      colored: false,
+      automatic: false,
+    };
     for (const token of String(value || "").split(/[,，\r\n]+/u)) {
       if (token.trim().toLowerCase() === "@colored") {
         rules.colored = true;
+        continue;
+      }
+      if (token.trim().toLowerCase() === "@auto") {
+        rules.automatic = true;
         continue;
       }
       const key = SWTagPolicy.key(token);

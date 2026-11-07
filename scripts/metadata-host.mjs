@@ -42,7 +42,10 @@ export default async function metadataHost({
       );
     }, "Metadata editor did not open");
     await editor.knowledgeBaseReady();
-    editor.document.getElementById("knowledge-base-note-details").open = true;
+    assert(
+      !editor.document.querySelector("#knowledge-base-editor-metadata summary"),
+      "Metadata retained a disclosure control",
+    );
     await wait(
       () => editor.document.documentElement.getBoundingClientRect().width > 0,
       "Metadata editor has not been shown",

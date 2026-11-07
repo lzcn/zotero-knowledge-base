@@ -1,7 +1,7 @@
 import { config } from "../../package.json";
 import { isAccelKey } from "../ui/platform";
 import { getDOMWindow } from "../utils/dom";
-import { stopEditorView } from "./editor-views";
+import { stopEditorView, prepareEditorView } from "./editor-views";
 import type { EditorArgs, ManagerArgs } from "./api";
 
 interface Browser extends Element {
@@ -224,9 +224,7 @@ export async function mountEditor(
     const current = browser.contentWindow;
     if (args.zettelId && current?.knowledgeBaseCardId === args.zettelId)
       return true;
-    if (current?.knowledgeBasePrepareNavigation) {
-      if (!(await current.knowledgeBasePrepareNavigation())) return false;
-    } else if (current?.save && !(await current.save(false))) return false;
+    if (!(await prepareEditorView(current))) return false;
     if (version !== mounts.get(element) || !element.isConnected) return false;
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {

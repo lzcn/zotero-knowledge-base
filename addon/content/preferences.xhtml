@@ -16,6 +16,7 @@
         <menupopup>
           <menuitem value="minimal" label="Minimal" />
           <menuitem value="bear" label="Bear" />
+          <menuitem value="notes" data-l10n-id="knowledge-base-pref-ui-notes" />
         </menupopup>
       </menulist>
     </hbox>
@@ -26,6 +27,11 @@
       native="true"
       id="knowledge-base-native-note-takeover"
       data-l10n-id="knowledge-base-pref-native-note-takeover"
+    />
+    <checkbox
+      native="true"
+      id="knowledge-base-math-preview"
+      data-l10n-id="knowledge-base-pref-math-preview"
     />
     <hbox class="preference-row" align="center">
       <label
@@ -43,61 +49,6 @@
             data-l10n-id="knowledge-base-pref-workbench-window"
           />
         </menupopup>
-      </menulist>
-    </hbox>
-  </vbox>
-  <vbox class="main-section settings-templates">
-    <html:h3 data-l10n-id="knowledge-base-settings-templates" />
-    <hbox class="preference-row" align="center">
-      <label
-        control="knowledge-base-literature-template"
-        data-l10n-id="knowledge-base-pref-template-literature"
-      />
-      <menulist
-        native="true"
-        id="knowledge-base-literature-template"
-        data-template-type="literature"
-      >
-        <menupopup />
-      </menulist>
-    </hbox>
-    <hbox class="preference-row" align="center">
-      <label
-        control="knowledge-base-zettel-template"
-        data-l10n-id="knowledge-base-pref-template-zettel"
-      />
-      <menulist
-        native="true"
-        id="knowledge-base-zettel-template"
-        data-template-type="zettel"
-      >
-        <menupopup />
-      </menulist>
-    </hbox>
-    <hbox class="preference-row" align="center">
-      <label
-        control="knowledge-base-thinking-template"
-        data-l10n-id="knowledge-base-pref-template-thinking"
-      />
-      <menulist
-        native="true"
-        id="knowledge-base-thinking-template"
-        data-template-type="thinking"
-      >
-        <menupopup />
-      </menulist>
-    </hbox>
-    <hbox class="preference-row" align="center">
-      <label
-        control="knowledge-base-entity-template"
-        data-l10n-id="knowledge-base-pref-template-entity"
-      />
-      <menulist
-        native="true"
-        id="knowledge-base-entity-template"
-        data-template-type="entity"
-      >
-        <menupopup />
       </menulist>
     </hbox>
     <hbox class="template-actions">
@@ -195,23 +146,6 @@
         rows="2"
         preference="extensions.zotero.similar-works.excludedTags"
         data-l10n-id="knowledge-base-excluded-placeholder"
-      />
-    </hbox>
-  </vbox>
-  <vbox class="main-section settings-similar">
-    <html:h3 data-l10n-id="knowledge-base-settings-similar" />
-    <hbox class="preference-row" align="center">
-      <label
-        control="similar-works-limit"
-        data-l10n-id="similar-works-pref-limit"
-      />
-      <html:input
-        id="similar-works-limit"
-        type="number"
-        min="1"
-        max="100"
-        class="preference-number"
-        preference="extensions.zotero.similar-works.maxRecommendations"
       />
     </hbox>
   </vbox>

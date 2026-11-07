@@ -298,7 +298,7 @@ test("permanent deletion uses notifier identity; startup prunes stale and child 
   assert.equal(h.corpus.n, 0);
 });
 
-test("sidebar ranks top K in same library, preserves rows during indexing, and navigates each row", async () => {
+test("sidebar ranks relevant papers in the same library and preserves navigation during indexing", async () => {
   const h = harness();
   const query = h.item(1, "neural machine learning"),
     a = h.item(2, "neural machine learning"),
@@ -341,10 +341,14 @@ test("sidebar ranks top K in same library, preserves rows during indexing, and n
   assert.equal(h.body.querySelector("input[type=checkbox]"), null);
   h.prefs.set("similar-works.maxRecommendations", 1);
   await h.SWSection.renderBody(props, true);
-  assert.equal(h.body.querySelectorAll(".sw-row").length, 1);
+  assert.equal(
+    h.body.querySelectorAll(".sw-row").length,
+    2,
+    "Result batching is automatic",
+  );
   h.prefs.set("similar-works.allowMetadataOnlyRecommendations", false);
   await h.SWSection.renderBody(props, true);
-  assert.equal(h.body.querySelectorAll(".sw-row").length, 1);
+  assert.equal(h.body.querySelectorAll(".sw-row").length, 2);
   assert.equal(h.errors.length, 0);
 });
 
@@ -799,17 +803,39 @@ test("embedded module loads Zotero globals and closes SQLite on shutdown", async
         env.loaded = scope;
         scope.require = require;
         if (!vm.isContext(scope)) vm.createContext(scope);
-        vm.runInContext(
-          fs.readFileSync(
-            path.join(
-              __dirname,
-              "../../src/library",
-              uri.replace(/^scripts\//, ""),
-            ),
-            "utf8",
-          ),
-          scope,
-        );
+        const relative = uri.replace(/^scripts\//, "");
+        const source =
+          relative === "library.js"
+            ? [
+                "storage",
+                "stemmer",
+                "tokenizer",
+                "search",
+                "search-cache",
+                "corpus",
+                "sources",
+                "indexer",
+                "semantic",
+                "tag-policy",
+                "tag-terms",
+                "tag-format",
+                "tags",
+                "tag-suggestions",
+                "retrieval-evidence",
+                "section",
+              ]
+                .map((name) =>
+                  fs.readFileSync(
+                    path.join(__dirname, "../../src/library", `${name}.js`),
+                    "utf8",
+                  ),
+                )
+                .join("\n;\n")
+            : fs.readFileSync(
+                path.join(__dirname, "../../src/library", relative),
+                "utf8",
+              );
+        vm.runInContext(source, scope);
       },
     },
   };
@@ -1255,9 +1281,9 @@ test("qualified results load beyond the initial batch and stale observers cannot
     "Refresh keeps the current paging callback valid",
   );
   assert.equal(h.body.querySelector(".sw-more"), null);
-  h.prefs.set("similar-works.maxRecommendations", 1);
+  h.doc.defaultView.innerHeight = 400;
   await h.SWSection._presentMatches(props, matches, "1/KEY1", 2);
-  assert.equal(h.body.querySelectorAll(".sw-row").length, 1);
+  assert.equal(h.body.querySelectorAll(".sw-row").length, 10);
   const stale = observers.at(-1);
   h.SWSection.setStatus(h.body, "New selection");
   stale.callback([{ isIntersecting: true }]);
