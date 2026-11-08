@@ -17,6 +17,7 @@ export const requiredFiles = [
   "content/preferences.css",
   "content/note-headings.css",
   "content/note-layout.css",
+  "content/note-typography.css",
   "content/ui.js",
   "prefs.js",
   "content/section.css",

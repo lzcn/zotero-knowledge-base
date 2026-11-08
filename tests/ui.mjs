@@ -1310,8 +1310,27 @@ prefsCommand(prefsWin.document.getElementById("knowledge-base-add-group"));
 await wait();
 const newRow = groupRows()[1];
 const groupTag = newRow.querySelector(".graph-group-tag");
+assert.equal(groupTag.localName, "input");
+assert.ok(
+  [...groupTag.list.options].some(
+    (option) => option.value === "Machine learning",
+  ),
+);
+groupTag.value = "  自定义 Graph 分组  ";
+groupTag.dispatchEvent(
+  new prefsWin.KeyboardEvent("keyup", { key: "Enter", isComposing: true }),
+);
+assert.equal(preferences.getGraphGroups()[1].tag, "");
+groupTag.dispatchEvent(new prefsWin.KeyboardEvent("keyup", { key: "Enter" }));
+assert.equal(preferences.getGraphGroups()[1].tag, "自定义 Graph 分组");
+assert.equal(groupTag.value, "自定义 Graph 分组");
+assert.ok(
+  [...groupTag.list.options].some(
+    (option) => option.value === "自定义 Graph 分组",
+  ),
+);
 groupTag.value = "中文 标签";
-prefsCommand(groupTag);
+groupTag.dispatchEvent(new prefsWin.Event("change"));
 const groupColor = newRow.querySelector(".graph-group-color");
 groupColor.value = "#117744";
 groupColor.dispatchEvent(new prefsWin.Event("change"));
@@ -1481,6 +1500,10 @@ async function editor(args = {}, overrides = {}) {
     searchItems: async () => sources,
     getSelectedSource: async () => sources[0],
     listZettels: async () => [{ id: "20261001000000", title: "Target card" }],
+    searchZettelSummaries: async (query, options) => ({
+      items: await api.listZettels(query),
+      cursor: null,
+    }),
     discardEditorDraft: async () => {},
     saveEditorDraft: async () => {},
     getEditorDraft: async () => null,
@@ -1552,6 +1575,7 @@ async function editor(args = {}, overrides = {}) {
         setSourceMode: (value) => {
           options.element.setAttribute("data-source-mode", String(value));
         },
+        getCaretRect: () => ({ left: 50, top: 100, bottom: 120 }),
         getTypography: () => ({
           "font-family": "sans-serif",
           "font-size": "14px",
@@ -1687,6 +1711,144 @@ completionEditor.win.__nativeEditorOptions.onNoteKeydown(
 check("Escape dismisses note completion without closing the editor", () =>
   assert.equal(completionEditor.$("knowledge-base-link-drop").hidden, true),
 );
+await completionEditor.win.__editorEval('setEditorMode("source", false)');
+completionBody.value = "Keep [[Target|my wording";
+completionBody.setSelectionRange(
+  completionBody.value.length,
+  completionBody.value.length,
+);
+completionBody.dispatchEvent(
+  new completionEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+completionBody.dispatchEvent(
+  new completionEditor.win.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+await wait();
+check("Inline aliases survive candidate selection", () =>
+  assert.equal(completionBody.value, "Keep [[20261001000000|my wording]]"),
+);
+completionBody.value = "Selected wording";
+completionBody.setSelectionRange(0, completionBody.value.length);
+completionEditor.win.__editorEval("openCardPicker()");
+await wait();
+completionEditor.$("knowledge-base-link-results").firstElementChild.click();
+check("The link picker preserves selected prose as the display label", () =>
+  assert.equal(completionBody.value, "[[20261001000000|Selected wording]]"),
+);
+for (const literal of [
+  "`[[literal`",
+  "```\n[[literal\n```",
+  "$[[literal$",
+  "$$\n[[literal\n$$",
+]) {
+  completionBody.value = literal;
+  const cursor = literal.indexOf("literal") + 7;
+  completionBody.setSelectionRange(cursor, cursor);
+  completionBody.dispatchEvent(
+    new completionEditor.win.Event("input", { bubbles: true }),
+  );
+  await wait();
+  check(
+    "Literal code or math does not open a note picker: " +
+      literal.split("\n")[0],
+    () =>
+      assert.equal(completionEditor.$("knowledge-base-link-drop").hidden, true),
+  );
+}
+completionBody.value = "[[";
+completionBody.setSelectionRange(2, 2);
+completionBody.dispatchEvent(
+  new completionEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+const staleOption = completionEditor.$(
+  "knowledge-base-link-results",
+).firstElementChild;
+completionBody.value = "Newer content";
+staleOption.click();
+check("An outdated candidate cannot overwrite newer Markdown", () =>
+  assert.equal(completionBody.value, "Newer content"),
+);
+const completionAPI = completionEditor.win.Zotero.ZoteroKnowledgeBase.api;
+const normalCompletionSearch = completionAPI.searchZettelSummaries;
+let finishSlowCompletion;
+completionAPI.searchZettelSummaries = (query) =>
+  query === "Slow"
+    ? new Promise((resolve) => {
+        finishSlowCompletion = resolve;
+      })
+    : Promise.resolve({
+        items: [{ id: "FAST", title: "Newest result" }],
+        cursor: null,
+      });
+completionBody.value = "[[Slow";
+completionBody.setSelectionRange(6, 6);
+completionBody.dispatchEvent(
+  new completionEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+const pendingCompletionEnter = new completionEditor.win.KeyboardEvent(
+  "keydown",
+  { key: "Enter", bubbles: true, cancelable: true },
+);
+completionBody.dispatchEvent(pendingCompletionEnter);
+check(
+  "Enter waits for pending note suggestions instead of adding a paragraph",
+  () => {
+    assert.equal(pendingCompletionEnter.defaultPrevented, true);
+    assert.equal(completionBody.value, "[[Slow");
+  },
+);
+completionBody.value = "[[Fast";
+completionBody.setSelectionRange(6, 6);
+completionBody.dispatchEvent(
+  new completionEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+finishSlowCompletion({
+  items: [{ id: "SLOW", title: "Stale result" }],
+  cursor: null,
+});
+await wait();
+check("Late note searches cannot replace newer suggestions", () =>
+  assert.match(
+    completionEditor.$("knowledge-base-link-results").textContent,
+    /FAST/,
+  ),
+);
+completionEditor.win.__editorEval("closeCardPicker()");
+let composingSearches = 0;
+completionAPI.searchZettelSummaries = async () => {
+  composingSearches++;
+  return { items: [], cursor: null };
+};
+const compositionWindow = completionBody.querySelector("iframe").contentWindow;
+compositionWindow.document.querySelector(".cm-content").dispatchEvent(
+  new compositionWindow.CompositionEvent("compositionstart", {
+    bubbles: true,
+  }),
+);
+completionBody.value = "[[标";
+completionBody.setSelectionRange(3, 3);
+completionBody.dispatchEvent(
+  new completionEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+check("Note completion waits for committed IME text", () =>
+  assert.equal(composingSearches, 0),
+);
+compositionWindow.document
+  .querySelector(".cm-content")
+  .dispatchEvent(
+    new compositionWindow.CompositionEvent("compositionend", { bubbles: true }),
+  );
+await wait();
+completionAPI.searchZettelSummaries = normalCompletionSearch;
 completionEditor.win.close();
 check(
   "LaTeX blocks protect equals signs and underscores from heading styling",
@@ -1813,7 +1975,12 @@ const relationEditor = await editor(
       children: [{ id: "CHILD", title: "Child idea" }],
     }),
     getBacklinks: async () => [
-      { sourceId: "INCOMING", sourceTitle: "Incoming idea", ref: "RELATION" },
+      {
+        sourceId: "INCOMING",
+        sourceTitle: "Incoming idea",
+        ref: "RELATION",
+        context: "Context that explains why this note is linked.",
+      },
     ],
     getDraftLinks: async () => [
       { targetId: "TARGET", display: "Linked idea", ref: "TARGET" },
@@ -1834,6 +2001,12 @@ check(
       false,
     );
     backlinks.click();
+    assert.equal(
+      relationEditor
+        .$("knowledge-base-editor-backlinks")
+        .querySelector(".backlink-context").textContent,
+      "Context that explains why this note is linked.",
+    );
     assert.equal(relationEditor.$("knowledge-base-editor-family").hidden, true);
     assert.equal(
       relationEditor.$("knowledge-base-editor-backlinks").hidden,
@@ -3917,6 +4090,56 @@ check(
     );
   },
 );
+const arrows = await editor(
+  {},
+  {
+    listZettels: async () => [
+      { id: "FIRST", title: "Duplicate title" },
+      { id: "SECOND", title: "Duplicate title" },
+    ],
+  },
+);
+const arrowBody = arrows.$("knowledge-base-editor-body");
+arrowBody.value = "[[";
+arrowBody.setSelectionRange(2, 2);
+arrowBody.focus();
+const writingFocus =
+  arrowBody.querySelector("iframe").contentDocument.activeElement;
+arrowBody.dispatchEvent(new arrows.win.Event("input", { bubbles: true }));
+await wait();
+arrowBody.dispatchEvent(
+  new arrows.win.KeyboardEvent("keydown", {
+    key: "ArrowDown",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check(
+  "Arrows change the active suggestion without leaving the writing surface",
+  () => {
+    assert.equal(
+      arrows
+        .$("knowledge-base-link-results")
+        .children[1].getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(
+      arrowBody.querySelector("iframe").contentDocument.activeElement,
+      writingFocus,
+    );
+  },
+);
+arrowBody.dispatchEvent(
+  new arrows.win.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check("Enter inserts the chosen suggestion rather than the first result", () =>
+  assert.equal(arrowBody.value, "[[SECOND]]"),
+);
+arrows.win.close();
 const literaturePicker = await editor(
   {},
   {
@@ -3989,7 +4212,15 @@ check(
   "Reference picker can be reached by keyboard and distinguishes title from stable ID",
   () => {
     const row = ed.$("knowledge-base-link-results").firstElementChild;
-    assert.equal(ed.win.document.activeElement, row);
+    assert.equal(
+      ed.win.document.activeElement,
+      ed.$("knowledge-base-link-search"),
+    );
+    assert.equal(row.getAttribute("aria-selected"), "true");
+    assert.equal(
+      row.querySelector(".link-option-reference").textContent,
+      "20261001000000",
+    );
     assert.equal(
       row.querySelector(".note-reference-text").textContent,
       "Target card",

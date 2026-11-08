@@ -304,7 +304,9 @@ pref-graph-label-length = Title length
 pref-graph-label-length-unit = characters
 pref-add-group =
     .label = New group
-graph-group-tag = Choose tag
+graph-group-tag = Tag
+graph-group-tag-placeholder = Choose or type a tag
+graph-group-tag-hint = Set graph colors for matching note tags.
 graph-group-color = Group color
 graph-group-up = Move up
 graph-group-remove = Remove group
@@ -464,7 +466,15 @@ reader-more-tools = More tools
 native-note-switch-save = Save the open note before changing its editor.
 
 pref-math-preview =
-    .label = Fix math preview (Zotero cards)
-    .tooltiptext = Render formulas in note cards without changing saved notes.
+    .label = Math preview (notes and annotations)
+    .tooltiptext = Render formulas in Zotero note cards and PDF annotation comments. Click a comment to edit its LaTeX. Saved content stays unchanged.
 pref-ui-notes =
     .label = Notes
+
+reader-open-literature = Open Literature Note
+reader-create-literature-mac = Command-click to create a Literature Note.
+reader-create-literature-ctrl = Ctrl-click to create a Literature Note.
+
+settings-enhancement = Enhancement
+
+editor-link-keys = ↑↓ Choose · Enter Insert · Esc Close

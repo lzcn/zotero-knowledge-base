@@ -1,10 +1,13 @@
+import { attachReaderMath } from "./reader-math";
 import { attachReaderToolbarLayout } from "./reader-toolbar-layout";
 import { config } from "../../package.json";
 import { getString } from "../utils/locale";
+import { isAccelKey } from "../ui/platform";
+import { onDataChange } from "./events";
 
 const buttons = new Map<
   Document,
-  { button: HTMLButtonElement; dispose(): void }
+  { button: HTMLButtonElement; refresh(): Promise<void>; dispose(): void }
 >();
 let registered = false;
 let iconURL = "";
@@ -17,7 +20,10 @@ function addButton(
 ): void {
   if (!registered) return;
   const previous = buttons.get(doc);
-  if (previous?.button.isConnected) return;
+  if (previous?.button.isConnected) {
+    void previous.refresh().catch(Zotero.logError);
+    return;
+  }
   previous?.dispose();
   const win = doc.defaultView!;
   const button = doc.createElement("button");
@@ -25,8 +31,6 @@ function addButton(
   button.className = "toolbar-button";
   button.type = "button";
   button.tabIndex = -1;
-  button.title = getString("menu-open-manager");
-  button.setAttribute("aria-label", button.title);
   const icon = doc.createElement("img");
   icon.src = iconURL;
   icon.width = icon.height = 20;
@@ -34,38 +38,105 @@ function addButton(
   icon.draggable = false;
   button.append(icon);
   const removeLayout = attachReaderToolbarLayout(doc);
+  const removeMath = attachReaderMath(doc);
   let disposed = false;
-  const open = async () => {
-    if (button.disabled || disposed) return;
+  let stateVersion = 0;
+  let sourceKey: string | undefined;
+  const active = () => !disposed && registered;
+  const report = (error: unknown) => {
+    if (active())
+      Zotero.logError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+  };
+  const setState = (hasNote: boolean, canCreate = false) => {
+    button.dataset.hasLiteratureNote = String(hasNote);
+    icon.style.filter = hasNote ? "none" : "grayscale(1)";
+    icon.style.opacity = hasNote ? "1" : "0.5";
+    button.title = getString(
+      hasNote ? "reader-open-literature" : "menu-open-manager",
+    );
+    if (canCreate && !hasNote)
+      button.title +=
+        "\n" +
+        getString(
+          Zotero.isMac
+            ? "reader-create-literature-mac"
+            : "reader-create-literature-ctrl",
+        );
+    button.setAttribute("aria-label", button.title);
+  };
+  const context = async () => {
+    const attachment = reader.itemID
+      ? await Zotero.Items.getAsync(reader.itemID)
+      : undefined;
+    const source = attachment?.parentItemID
+      ? await Zotero.Items.getAsync(attachment.parentItemID)
+      : attachment;
+    if (!active() || !source?.isRegularItem() || source.deleted) return {};
+    const note = (
+      await addon.api.listByItem(source.key, source.libraryID)
+    ).find((note) => note.source_note);
+    return { source, note };
+  };
+  const refresh = async () => {
+    const version = ++stateVersion;
+    const { source, note } = await context();
+    if (!active() || version !== stateVersion) return;
+    sourceKey = source?.key;
+    setState(!!note, !!source);
+  };
+  setState(false);
+  const open = async (event: MouseEvent) => {
+    if (event.button !== 0 || button.disabled || !active()) return;
     const version = ++openVersion;
     button.disabled = true;
     try {
-      const attachment = reader.itemID
-        ? await Zotero.Items.getAsync(reader.itemID)
-        : undefined;
-      const source = attachment?.parentItemID
-        ? await Zotero.Items.getAsync(attachment.parentItemID)
-        : attachment;
-      if (disposed || !registered || version !== openVersion) return;
-      const note = source?.isRegularItem()
-        ? (await addon.api.listByItem(source.key, source.libraryID)).find(
-            (note) => note.source_note,
-          )
-        : undefined;
-      if (!disposed && registered && version === openVersion)
-        addon.api.openManager(note ? { selectId: note.id } : {});
-    } catch (error) {
-      if (!disposed)
-        Zotero.logError(
-          error instanceof Error ? error : new Error(String(error)),
+      const { source, note } = await context();
+      if (!active() || version !== openVersion) return;
+      let id = note?.id;
+      if (!id && source && isAccelKey(event))
+        id = await addon.api.ensureLiteratureNote(
+          source.key,
+          source.libraryID,
+          () => !active(),
         );
+      if (!active()) return;
+      ++stateVersion;
+      sourceKey = source?.key;
+      setState(!!id, !!source);
+      if (version === openVersion)
+        addon.api.openManager(id ? { selectId: id } : {});
+    } catch (error) {
+      report(error);
     } finally {
       if (!disposed) button.disabled = false;
     }
   };
+  const unsubscribe = onDataChange((change) => {
+    if (
+      !change.all &&
+      change.fields.length &&
+      !change.fields.some(
+        (field) => field === "source" || field === "availability",
+      )
+    )
+      return;
+    if (
+      !change.all &&
+      sourceKey &&
+      change.itemKeys.length &&
+      !change.itemKeys.includes(sourceKey)
+    )
+      return;
+    void refresh().catch(report);
+  });
   const dispose = () => {
     disposed = true;
+    ++stateVersion;
+    unsubscribe();
     removeLayout();
+    removeMath();
     button.removeEventListener("click", open);
     win.removeEventListener("unload", dispose);
     const section = button.parentElement;
@@ -76,10 +147,11 @@ function addButton(
   };
   button.addEventListener("click", open);
   win.addEventListener("unload", dispose, { once: true });
-  buttons.set(doc, { button, dispose });
+  buttons.set(doc, { button, refresh, dispose });
   const pageNumber = doc.querySelector(".toolbar #pageNumber");
   if (pageNumber) pageNumber.before(button);
   else append(button);
+  void refresh().catch(report);
 }
 
 function renderToolbar(

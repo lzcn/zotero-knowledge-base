@@ -172,9 +172,13 @@ type="text/css"?>
       <html:div id="knowledge-base-command-list" role="menu" />
     </html:div>
     <html:div id="knowledge-base-link-drop" hidden="hidden">
-      <html:input id="knowledge-base-link-search" type="search" />
+      <html:input
+        id="knowledge-base-link-search"
+        type="search"
+        aria-controls="knowledge-base-link-results"
+      />
       <html:div id="knowledge-base-link-status" class="muted" role="status" />
-      <html:ul id="knowledge-base-link-results" class="refs" />
+      <html:ul id="knowledge-base-link-results" class="refs" role="listbox" />
     </html:div>
     <html:div id="knowledge-base-editor-content">
       <html:div id="knowledge-base-editor-workspace">

@@ -278,7 +278,9 @@ pref-graph-label-length = 标题长度
 pref-graph-label-length-unit = 个字符
 pref-add-group =
     .label = 新建分组
-graph-group-tag = 选择标签
+graph-group-tag = 标签
+graph-group-tag-placeholder = 选择或输入标签
+graph-group-tag-hint = 为匹配的笔记标签设置图谱颜色。
 graph-group-color = 分组颜色
 graph-group-up = 上移
 graph-group-remove = 移除分组
@@ -438,7 +440,15 @@ reader-more-tools = 更多工具
 native-note-switch-save = 请先保存当前笔记，再切换编辑器。
 
 pref-math-preview =
-    .label = 修复数学预览（Zotero 卡片）
-    .tooltiptext = 渲染笔记卡片中的公式，不改写已保存的笔记。
+    .label = 数学预览（笔记和批注）
+    .tooltiptext = 在 Zotero 笔记卡片和 PDF 批注评论中显示公式。点击评论可编辑 LaTeX，保存内容保持原样。
 pref-ui-notes =
     .label = 备忘录
+
+reader-open-literature = 打开文献笔记
+reader-create-literature-mac = Command＋点击新建文献笔记。
+reader-create-literature-ctrl = Ctrl＋点击新建文献笔记。
+
+settings-enhancement = 增强
+
+editor-link-keys = ↑↓ 选择 · Enter 插入 · Esc 关闭

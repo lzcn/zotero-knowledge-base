@@ -13,7 +13,11 @@ import {
   openSearchPanel,
   closeSearchPanel,
 } from "@codemirror/search";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import {
+  HighlightStyle,
+  syntaxHighlighting,
+  syntaxTree,
+} from "@codemirror/language";
 import { configureNodeLabels, zNodeField } from "./markdown-nodes";
 import { markdownMath } from "./markdown-math";
 import { tags } from "@lezer/highlight";
@@ -45,6 +49,8 @@ export interface MarkdownSource extends HTMLElement {
   setRangeText(text: string, start?: number, end?: number, mode?: string): void;
   setTypography(properties: Record<string, string>): void;
   normalizeMath(): number;
+  canInsertNoteLink(): boolean;
+  getCaretRect(): { left: number; top: number; bottom: number } | null;
   openSearch(replace?: boolean): void;
   toggleSearch(): void;
   destroy(): void;
@@ -160,6 +166,8 @@ function mount(
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !writing)
             root.dispatchEvent(new Event("input", { bubbles: true }));
+          else if (update.selectionSet && !writing)
+            root.dispatchEvent(new Event("select"));
         }),
         EditorView.theme({
           "&": {
@@ -331,6 +339,32 @@ function mount(
       },
     },
   });
+  root.canInsertNoteLink = () => {
+    for (
+      let node = syntaxTree(view.state).resolveInner(
+        view.state.selection.main.head,
+        -1,
+      );
+      node;
+      node = node.parent!
+    ) {
+      if (/Code|Math|HTML/.test(node.name)) return false;
+    }
+    return true;
+  };
+  root.getCaretRect = () => {
+    const caret = view.coordsAtPos(view.state.selection.main.head);
+    if (!caret) return null;
+    const host =
+      root.ownerDocument === document
+        ? null
+        : root.querySelector("iframe")?.getBoundingClientRect();
+    return {
+      left: (host?.left || 0) + caret.left,
+      top: (host?.top || 0) + caret.top,
+      bottom: (host?.top || 0) + caret.bottom,
+    };
+  };
   root.setSelectionRange = (start, end) =>
     view.dispatch({
       selection: { anchor: position(start), head: position(end) },
@@ -495,10 +529,13 @@ function mount(
     });
     return edits.length;
   };
+  const scroll = () => root.dispatchEvent(new Event("scroll"));
+  view.scrollDOM.addEventListener("scroll", scroll);
   root.destroy = () => {
     if (destroyed) return;
     destroyed = true;
     detachEvents();
+    view.scrollDOM.removeEventListener("scroll", scroll);
     view.destroy();
   };
   return root;

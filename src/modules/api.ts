@@ -35,6 +35,7 @@ import {
   nativePreviewHTML,
   isExternalNote,
   ensureLiteratureNote,
+  ensurePersonalKnowledgeParent,
   ensureManagedNote,
   setNoteTag,
   getNoteHealth,
@@ -223,6 +224,10 @@ export const api = {
   markdownNoteHTML,
   markdownDocumentHTML,
   isExternalNote,
+  async showPersonalKnowledge(shouldStop = () => false): Promise<void> {
+    const parent = await ensurePersonalKnowledgeParent(shouldStop);
+    if (!shouldStop()) await selectItem(parent.key, parent.libraryID);
+  },
   async openLiteratureNote(key: string, libraryID: number): Promise<void> {
     const id = await ensureLiteratureNote(key, libraryID);
     api.openEditor({ zettelId: id });

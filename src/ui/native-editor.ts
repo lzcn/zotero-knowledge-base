@@ -49,6 +49,7 @@ interface NativeEditorView {
       insert(position: number, node: unknown): NativeEditorView["state"]["tr"];
     };
   };
+  coordsAtPos?(position: number): { left: number; top: number; bottom: number };
   dispatch(transaction: unknown): void;
 }
 
@@ -140,6 +141,7 @@ export interface NativeEditorController {
   reload(): Promise<void>;
   insertHTML(html: string): void;
   insertNoteLink(reference: string): Promise<boolean>;
+  getCaretRect(): { left: number; top: number; bottom: number } | null;
   focus(): void;
   destroy(): void;
 }
@@ -255,6 +257,9 @@ async function create(
     if ((next?.query ?? null) !== previous)
       options.onNoteQuery(next?.query ?? null);
   };
+  const scrollNoteQuery = () => {
+    if (linkQuery) options.onNoteQuery(linkQuery.query);
+  };
   const replaceNoteLink = async (
     reference: string,
     range: LinkRange,
@@ -271,7 +276,12 @@ async function create(
     const { view } = range;
     const { state } = view;
     const marks = state.selection.$from.marks();
-    const label = alias.join("|").trim();
+    const selected = state.selection.empty
+      ? ""
+      : state.doc.textBetween(range.from, range.to, "\n", "\ufffc");
+    const label =
+      alias.join("|").trim() ||
+      (!/[[\]\r\n]/.test(selected) ? selected.trim() : "");
     const attributes = frame.wrappedJSObject.JSON.parse(
       JSON.stringify({
         href: target.href,
@@ -419,6 +429,7 @@ async function create(
     frame.document.removeEventListener("input", input, true);
     frame.document.removeEventListener("paste", paste, true);
     frame.document.removeEventListener("selectionchange", updateLinkQuery);
+    frame.document.removeEventListener("scroll", scrollNoteQuery, true);
     frame.document.removeEventListener(
       "compositionstart",
       compositionStart,
@@ -453,13 +464,13 @@ async function create(
       @import url("chrome://knowledge-base/content/ui.css");
       @import url("chrome://knowledge-base/content/note-headings.css");
       @import url("chrome://knowledge-base/content/note-layout.css");
+      @import url("chrome://knowledge-base/content/note-typography.css");
       :root { --color-background: var(--ui-bg); --material-background: var(--ui-bg); --material-toolbar: var(--ui-surface); --fill-primary: var(--ui-fg); }
       .toolbar { height: auto !important; padding-block: 5px; box-sizing: border-box; }
       .toolbar .toolbar-button { flex-shrink: 0; }
       .primary-editor {
         --editor-padding-block: var(--knowledge-base-note-top);
         --editor-padding-inline: var(--knowledge-base-note-gutter);
-        font-family: var(--ui-editor-font) !important;
         width: 100% !important;
         max-width: var(--knowledge-base-note-width) !important;
         box-sizing: border-box;
@@ -467,14 +478,6 @@ async function create(
         padding-inline: var(--editor-padding-inline) !important;
         padding-block: var(--editor-padding-block) var(--knowledge-base-note-bottom) !important;
       }
-      .primary-editor p, .primary-editor li { line-height: 1.7; }
-      .primary-editor p { margin-block: 0 .85em; }
-      .primary-editor h1, .primary-editor h2, .primary-editor h3 {
-        font-family: inherit; font-weight: 600; line-height: 1.35;
-      }
-      .primary-editor h1 { font-size: 1.8em; letter-spacing: -.02em; }
-      .primary-editor h2 { font-size: 1.4em; }
-      .primary-editor h3 { font-size: 1.15em; }
     `;
     frame.document.head.append(appearance);
     const noteToolbar = frame.document.querySelector(".toolbar");
@@ -538,6 +541,7 @@ async function create(
     frame.document.addEventListener("input", input, true);
     frame.document.addEventListener("paste", paste, true);
     frame.document.addEventListener("selectionchange", updateLinkQuery);
+    frame.document.addEventListener("scroll", scrollNoteQuery, true);
     frame.document.addEventListener("compositionstart", compositionStart, true);
     frame.document.addEventListener("compositionend", compositionEnd, true);
     frame.document.addEventListener("keydown", keydown, true);
@@ -580,6 +584,7 @@ async function create(
     getTypography: () => ({
       ...getNativeTypography(frame),
       "font-family": "var(--ui-editor-font)",
+      "line-height": "var(--ui-prose-leading)",
       "max-width": "var(--knowledge-base-note-width)",
       "padding-inline": "var(--knowledge-base-note-gutter)",
       "padding-block": "var(--knowledge-base-note-top)",
@@ -611,6 +616,20 @@ async function create(
       element
         .getCurrentInstance()
         ._postMessage({ action: "insertHTML", html: root.innerHTML });
+    },
+    getCaretRect() {
+      const view =
+        frame?.wrappedJSObject._currentEditorInstance?._editorCore?.view;
+      const caret = view?.coordsAtPos?.(view.state.selection.from);
+      if (!caret) return null;
+      const host =
+        frame.frameElement?.getBoundingClientRect() ||
+        element.getBoundingClientRect();
+      return {
+        left: host.left + caret.left,
+        top: host.top + caret.top,
+        bottom: host.top + caret.bottom,
+      };
     },
     async insertNoteLink(reference) {
       const range = linkQuery || linkSelection();

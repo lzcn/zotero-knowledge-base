@@ -2,7 +2,7 @@
 :root {
   --ui-bg: #fff;
   --ui-fg: #242424;
-  --ui-surface: #f7f7f8;
+  --ui-surface: #fff;
   --ui-border: #e4e4e7;
   --ui-hover: #f0f0f2;
   --ui-active: #e9edf4;
@@ -11,7 +11,17 @@
   --ui-source: #527561;
   --ui-danger: #b63742;
   --ui-font: system-ui, sans-serif;
-  --ui-editor-font: system-ui, sans-serif;
+  --ui-editor-font:
+    "Helvetica Neue", Arial, "PingFang SC", system-ui, sans-serif;
+  --ui-heading-font: var(--ui-editor-font);
+  --ui-heading-weight: 600;
+  --ui-prose-leading: 1.7;
+  --ui-paragraph-space: 0.85em;
+  --ui-h1-size: 1.8em;
+  --ui-h2-size: 1.4em;
+  --ui-h3-size: 1.15em;
+  --ui-math-size: 1.1em;
+  --ui-equation-space: 1em;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -32,7 +42,7 @@
 :root[data-plugin-bear] {
   --ui-bg: #fff;
   --ui-fg: #29292b;
-  --ui-surface: #f7f7f9;
+  --ui-surface: #fff;
   --ui-border: #e7e7eb;
   --ui-hover: #ededf1;
   --ui-active: #f7e8eb;
@@ -41,8 +51,8 @@
   --ui-source: #5d7b70;
   --ui-danger: #b5515a;
   --ui-editor-font:
-    -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC",
-    system-ui, sans-serif;
+    "Avenir Next", Avenir, "PingFang SC", "Segoe UI", system-ui, sans-serif;
+  --ui-heading-weight: 500;
 }
 @media (prefers-color-scheme: dark) {
   :root[data-plugin-bear] {
@@ -63,6 +73,9 @@
   --ui-active: #fff0c6;
   --ui-accent: #946200;
   --ui-source: #746a51;
+  --ui-editor-font:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", system-ui,
+    sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root[data-plugin-notes] {

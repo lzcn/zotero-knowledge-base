@@ -61,6 +61,27 @@ window.KnowledgeBasePreferences = (() => {
     menus.add(addGroup);
     const groups = api.getGraphGroups();
     const groupList = doc.getElementById("knowledge-base-graph-groups");
+    const suggestions = doc.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "datalist",
+    );
+    suggestions.id = "knowledge-base-graph-tag-options";
+    groupList.before(suggestions);
+    const updateSuggestions = () => {
+      suggestions.replaceChildren();
+      for (const value of new Set([
+        ...tags,
+        ...groups.map((group) => group.tag),
+      ])) {
+        if (!value) continue;
+        const option = doc.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "option",
+        );
+        option.value = value;
+        suggestions.append(option);
+      }
+    };
     const save = () => {
       try {
         api.setGraphGroups(groups);
@@ -72,31 +93,33 @@ window.KnowledgeBasePreferences = (() => {
       }
     };
     const render = () => {
+      updateSuggestions();
       groupList.replaceChildren();
       groups.forEach((group, index) => {
         const row = doc.createXULElement("hbox");
         row.classList.add("graph-group-row");
         row.setAttribute("align", "center");
         row.setAttribute("style", "margin-block: 3px");
-        const tag = /** @type {XULMenuListElement} */ (
-          /** @type {unknown} */ (doc.createXULElement("menulist"))
+        const tag = /** @type {HTMLInputElement} */ (
+          doc.createElementNS("http://www.w3.org/1999/xhtml", "input")
         );
+        tag.type = "text";
         tag.classList.add("graph-group-tag");
-        tag.setAttribute("native", "true");
-        tag.setAttribute("style", "flex: 1; min-width: 12em; max-width: 32em");
+        tag.setAttribute("list", suggestions.id);
         tag.setAttribute("aria-label", api.loc("graph-group-tag"));
-        const popup = doc.createXULElement("menupopup");
-        for (const value of [...new Set(["", ...tags, group.tag])]) {
-          const option = doc.createXULElement("menuitem");
-          option.setAttribute("value", value);
-          option.setAttribute("label", value || api.loc("graph-group-tag"));
-          popup.append(option);
-        }
-        tag.append(popup);
+        tag.placeholder = api.loc("graph-group-tag-placeholder");
+        tag.title = api.loc("graph-group-tag-hint");
         tag.value = group.tag;
-        tag.addEventListener("command", () => {
-          group.tag = tag.value;
+        const commitTag = () => {
+          group.tag = tag.value.trim();
+          tag.value = group.tag;
           save();
+          updateSuggestions();
+        };
+        tag.addEventListener("change", commitTag);
+        tag.addEventListener("keyup", (event) => {
+          if (event.key !== "Enter" || event.isComposing) return;
+          commitTag();
         });
         const color = /** @type {HTMLInputElement} */ (
           doc.createElementNS("http://www.w3.org/1999/xhtml", "input")

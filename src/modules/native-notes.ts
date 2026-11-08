@@ -965,6 +965,50 @@ export function discoverNativeNotes(): Promise<void> {
   return discovery;
 }
 
+async function personalKnowledgeParent(
+  libraryID: number,
+  shouldStop = () => false,
+): Promise<Zotero.Item> {
+  const checkActive = () => {
+    if (shouldStop()) throw new Error("NOTE_SESSION_CLOSED");
+  };
+  checkActive();
+  const pref = `extensions.zotero.knowledge-base.notes.parent.${libraryID}`;
+  const key = Zotero.Prefs.get(pref, true);
+  let personal =
+    typeof key === "string"
+      ? await Zotero.Items.getByLibraryAndKeyAsync(libraryID, key)
+      : null;
+  checkActive();
+  if (personal && !personal.isRegularItem())
+    throw new Error("Personal knowledge parent is not a regular item");
+  if (!personal || personal.deleted) {
+    const library = Zotero.Libraries.get(libraryID);
+    if (!library || !library.editable) throw new Error("NOTE_READ_ONLY");
+    if (!personal) {
+      personal = new Zotero.Item("document");
+      personal.libraryID = libraryID;
+      personal.setField("title", getString("personal-knowledge-title"));
+    } else personal.deleted = false;
+    await personal.save({ skipSelect: true });
+    checkActive();
+    Zotero.Prefs.set(pref, personal.key, true);
+  }
+  return personal;
+}
+
+/** Reuse the same parent as unsourced Knowledge Base notes. */
+export function ensurePersonalKnowledgeParent(
+  shouldStop = () => false,
+): Promise<Zotero.Item> {
+  return Zotero.DB.executeTransaction(() =>
+    personalKnowledgeParent(
+      Zotero.Libraries.userLibraryID,
+      () => stopping || shouldStop(),
+    ),
+  );
+}
+
 async function organizeNativeNote(
   note: Zotero.Item,
   input: Pick<SaveCardInput, "itemKey" | "libraryID">,
@@ -1015,25 +1059,7 @@ async function organizeNativeNote(
   await Zotero.DB.executeTransaction(async () => {
     let destination = parent;
     if (!destination) {
-      const pref = `extensions.zotero.knowledge-base.notes.parent.${note.libraryID}`;
-      const key = Zotero.Prefs.get(pref, true);
-      let personal =
-        typeof key === "string"
-          ? await Zotero.Items.getByLibraryAndKeyAsync(note.libraryID, key)
-          : null;
-      if (personal && !personal.isRegularItem())
-        throw new Error("Personal knowledge parent is not a regular item");
-      if (!personal) {
-        personal = new Zotero.Item("document");
-        personal.libraryID = note.libraryID;
-        personal.setField("title", getString("personal-knowledge-title"));
-        await personal.save({ skipSelect: true });
-        Zotero.Prefs.set(pref, personal.key, true);
-      } else if (personal.deleted) {
-        personal.deleted = false;
-        await personal.save({ skipSelect: true });
-      }
-      destination = personal.id;
+      destination = (await personalKnowledgeParent(note.libraryID)).id;
     }
     if (note.parentItemID === destination) return;
     // Zotero otherwise moves a standalone note's collections onto its parent.
@@ -1899,21 +1925,40 @@ export async function isExternalNote(id: string): Promise<boolean> {
 export async function ensureLiteratureNote(
   itemKey: string,
   libraryID: number,
+  shouldStop = () => false,
 ): Promise<string> {
+  const checkActive = () => {
+    if (stopping || shouldStop()) throw new Error("NOTE_SESSION_CLOSED");
+  };
+  checkActive();
   const source = await Zotero.Items.getByLibraryAndKeyAsync(libraryID, itemKey);
+  checkActive();
   if (!source || !source.isRegularItem() || source.deleted)
     throw new Error("LITERATURE_SOURCE_REQUIRED");
   // Serialize discovery and creation on the plugin connection.
   const id = await transaction(async () => {
+    checkActive();
     const found = await getOne<{ id: string }>(
       "SELECT id FROM zettels WHERE source_note = 1 AND item_key = ? AND library_id = ?",
       [itemKey, libraryID],
     );
-    if (found) return found.id;
+    checkActive();
+    if (found) {
+      const unavailable = await getOne<{ card_id: string }>(
+        "SELECT card_id FROM unavailable_notes WHERE card_id = ?",
+        [found.id],
+      );
+      checkActive();
+      if (!unavailable) return found.id;
+      // Keep the trashed record and its links while reserving a new active source note.
+      await exec("UPDATE zettels SET source_note = 0 WHERE id = ?", [found.id]);
+      checkActive();
+    }
     const reserved = await getAll<{ id: string }>(
       "SELECT id FROM zettels UNION SELECT key AS id FROM note_keys UNION SELECT card_id AS id FROM note_save_operations",
     );
     const id = newZettelID(new Set(reserved.map((row) => row.id)));
+    checkActive();
     const now = Date.now();
     await exec(
       "INSERT INTO zettels (id, title, title_folded, body, item_key, library_id, source_note, note_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, 'literature', ?, ?)",
@@ -1932,6 +1977,7 @@ export async function ensureLiteratureNote(
       "INSERT INTO card_parents (card_id, parent_id) VALUES (?, NULL)",
       [id],
     );
+    checkActive();
     return id;
   });
   await refreshItemCount(itemKey);

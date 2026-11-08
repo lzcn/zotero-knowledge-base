@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const workspace = await mkdtemp(join(tmpdir(), "knowledge-base-reader-"));
 const output = join(workspace, "reader.mjs");
+const entry = join(workspace, "entry.mjs");
+await writeFile(
+  entry,
+  `export * from ${JSON.stringify(join(process.cwd(), "src/modules/reader-toolbar.ts"))};\nexport { notifyDataChange } from ${JSON.stringify(join(process.cwd(), "src/modules/events.ts"))};`,
+);
 await build({
-  entryPoints: ["src/modules/reader-toolbar.ts"],
+  entryPoints: [entry],
   bundle: true,
   platform: "node",
   format: "esm",
@@ -23,7 +28,8 @@ await build({
           namespace: "reader-test",
         }));
         builder.onLoad({ filter: /.*/, namespace: "reader-test" }, () => ({
-          contents: "export const getString = () => readerTest.label;",
+          contents:
+            "export const getString = key => key === 'menu-open-manager' ? readerTest.label : key;",
         }));
       },
     },
@@ -62,11 +68,23 @@ const items = new Map([
 ]);
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 globalThis.readerTest = { label: "Knowledge Base" };
+const creations = [];
 globalThis.addon = {
   api: {
     openManager: (args) => {
       opened++;
       openedArgs.push(args);
+    },
+    ensureLiteratureNote: async (key, libraryID, shouldStop) => {
+      assert.equal(shouldStop(), false);
+      const id = "created-" + libraryID;
+      creations.push([key, libraryID]);
+      notes.set(libraryID, [
+        ...(notes.get(libraryID) || []),
+        { id, source_note: 1 },
+      ]);
+      notifyDataChange({ fields: ["source"], itemKeys: [key] });
+      return id;
     },
     listByItem: async (key, libraryID) => {
       lookups.push([key, libraryID]);
@@ -75,6 +93,13 @@ globalThis.addon = {
   },
 };
 globalThis.Zotero = {
+  getMainWindow: () => first.defaultView,
+  Prefs: {
+    get: () => true,
+    registerObserver: () => 1,
+    unregisterObserver: () => {},
+  },
+  isMac: true,
   Items: { getAsync: async (id) => items.get(id) },
   logError: (error) => {
     throw error;
@@ -101,9 +126,8 @@ globalThis.Zotero = {
     },
   },
 };
-const { registerReaderToolbar, unregisterReaderToolbar } = await import(
-  pathToFileURL(output).href
-);
+const { registerReaderToolbar, unregisterReaderToolbar, notifyDataChange } =
+  await import(pathToFileURL(output).href);
 function button(doc) {
   return doc.getElementById("knowledge-base-reader-button");
 }
@@ -141,6 +165,9 @@ try {
       /^data:image\/svg\+xml,/,
     );
   }
+  await tick();
+  assert.equal(button(first).dataset.hasLiteratureNote, "true");
+  assert.equal(button(second).querySelector("img").style.filter, "none");
   button(first).click();
   await tick();
   assert.equal(opened, 1);
@@ -180,6 +207,77 @@ try {
     {},
     "A Zettel was treated as its source Literature Note",
   );
+  notifyDataChange({ fields: ["availability"], itemKeys: ["SAMEKEY"] });
+  await tick();
+  assert.equal(button(first).dataset.hasLiteratureNote, "false");
+  assert.equal(button(first).querySelector("img").style.filter, "grayscale(1)");
+  button(first).dispatchEvent(
+    new first.defaultView.MouseEvent("click", { ctrlKey: true, bubbles: true }),
+  );
+  await tick();
+  assert.equal(creations.length, 0, "macOS Control-click created a note");
+  assert.deepEqual(openedArgs.at(-1), {});
+  const commandClick = (doc, options = { metaKey: true }) =>
+    button(doc).dispatchEvent(
+      new doc.defaultView.MouseEvent("click", { ...options, bubbles: true }),
+    );
+  commandClick(first);
+  commandClick(first);
+  await tick();
+  assert.deepEqual(creations, [["SAMEKEY", 1]]);
+  assert.deepEqual(openedArgs.at(-1), { selectId: "created-1" });
+  assert.equal(button(first).dataset.hasLiteratureNote, "true");
+  commandClick(first);
+  await tick();
+  assert.equal(creations.length, 1, "Existing Literature Note was duplicated");
+  notes.set(2, []);
+  globalThis.Zotero.isMac = false;
+  commandClick(second, { metaKey: true });
+  await tick();
+  assert.equal(creations.length, 1, "Windows Meta-click created a note");
+  commandClick(second, { ctrlKey: true });
+  await tick();
+  assert.deepEqual(creations.at(-1), ["SAMEKEY", 2]);
+  assert.deepEqual(openedArgs.at(-1), { selectId: "created-2" });
+  globalThis.Zotero.isMac = true;
+  const interrupted = document();
+  globalThis.Zotero.Reader._readers.push({
+    itemID: 11,
+    _iframeWindow: interrupted.defaultView,
+  });
+  render(interrupted);
+  await tick();
+  notes.set(1, []);
+  const ensure = globalThis.addon.api.ensureLiteratureNote;
+  let finishCreation;
+  let cancelledCreation = false;
+  globalThis.addon.api.ensureLiteratureNote = async (
+    _key,
+    _library,
+    shouldStop,
+  ) => {
+    await new Promise((resolve) => {
+      finishCreation = resolve;
+    });
+    cancelledCreation = shouldStop();
+    if (cancelledCreation) throw new Error("NOTE_SESSION_CLOSED");
+    return "unexpected-note";
+  };
+  commandClick(interrupted);
+  await tick();
+  const beforeClose = opened;
+  interrupted.defaultView.dispatchEvent(
+    new interrupted.defaultView.Event("unload"),
+  );
+  finishCreation();
+  await tick();
+  assert.equal(cancelledCreation, true);
+  assert.equal(
+    opened,
+    beforeClose,
+    "Closing a PDF allowed delayed creation navigation",
+  );
+  globalThis.addon.api.ensureLiteratureNote = ensure;
   const closing = button(third);
   third.defaultView.dispatchEvent(new third.defaultView.Event("unload"));
   assert.equal(closing.isConnected, false);

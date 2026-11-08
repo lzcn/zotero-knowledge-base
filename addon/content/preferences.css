@@ -72,6 +72,25 @@
 .plugin-preferences textarea {
   resize: vertical;
 }
+.plugin-preferences .graph-group-row {
+  flex-wrap: nowrap;
+}
+.plugin-preferences .graph-group-tag {
+  flex: 1 1 12em;
+  width: 12em;
+  min-width: 0;
+  max-width: 32em;
+  padding: 4px 7px;
+  border: 1px solid var(--settings-border);
+  border-radius: 5px;
+  background: var(--material-background, Field);
+  color: var(--fill-primary, FieldText);
+  font: inherit;
+}
+.plugin-preferences .graph-group-tag:focus-visible {
+  outline: 2px solid var(--color-accent, Highlight);
+  outline-offset: -1px;
+}
 
 .plugin-preferences .template-actions {
   margin-top: 4px;

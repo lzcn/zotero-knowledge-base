@@ -4,10 +4,14 @@
 
 import { exec, getAll, getOne, transaction, type ZettelRow } from "./db";
 import { saveParent, removeParent } from "./hierarchy";
-import { parseCardLinks } from "./markdown";
+import { parseCardLinks, noteLinkContext } from "./markdown";
 import { notifyDataChange, type DataField } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
-import { getNoteReferences, invalidateNoteReferences } from "./note-references";
+import {
+  getNoteReferences,
+  invalidateNoteReferences,
+  getCachedNoteTarget,
+} from "./note-references";
 import { searchRows, type SearchOptions } from "./search";
 import { requireNoteType, type NoteType } from "./note-types";
 import { requireSourceItem } from "./zotero";
@@ -754,6 +758,8 @@ async function reindexLinks(zettelId: string, body: string) {
     "SELECT ref, target_id FROM links WHERE source_id = ?",
     [zettelId],
   );
+  // Context can change even when the set of links stays the same.
+  for (const link of previous) if (link.target_id) affected.add(link.target_id);
   const desired = new Set(parseLinks(body).map((link) => link.ref));
   const existing = new Set(previous.map((link) => link.ref));
   let changed = false;
@@ -853,21 +859,37 @@ export interface Backlink {
   reference?: string;
   sourceTitle: string;
   ref: string;
+  context?: string;
 }
 
 export async function getBacklinks(id: string): Promise<Backlink[]> {
-  const rows = await getAll<Backlink>(
-    `SELECT l.source_id AS sourceId, z.title AS sourceTitle, l.ref
+  const rows = await getAll<Backlink & { body: string }>(
+    `SELECT l.source_id AS sourceId, z.title AS sourceTitle, z.body, l.ref
      FROM links l JOIN zettels z ON z.id = l.source_id
-     WHERE l.target_id = ? ORDER BY z.updated_at DESC`,
+     WHERE l.target_id = ? ORDER BY z.updated_at DESC, l.source_id, l.ref`,
     [id],
   );
-  // Mapped explicitly rather than returned as-is: query rows are Proxy
-  // wrappers (see db.ts) and must not leak out of the data layer.
-  return rows.map((r) => ({
-    sourceId: r.sourceId,
-    sourceTitle: r.sourceTitle,
-    ref: r.ref,
+  const notes = new Map<
+    string,
+    { link: Backlink; refs: string[]; body: string }
+  >();
+  for (const row of rows) {
+    const entry = notes.get(row.sourceId);
+    if (entry) entry.refs.push(row.ref);
+    else
+      notes.set(row.sourceId, {
+        link: {
+          sourceId: row.sourceId,
+          sourceTitle: row.sourceTitle,
+          ref: row.ref,
+        },
+        refs: [row.ref],
+        body: row.body,
+      });
+  }
+  return [...notes.values()].map(({ link, refs, body }) => ({
+    ...link,
+    context: noteLinkContext(body, refs, getCachedNoteTarget),
   }));
 }
 

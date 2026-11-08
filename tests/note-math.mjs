@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { JSDOM } from "jsdom";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 const dir = await mkdtemp(join(tmpdir(), "knowledge-base-math-"));
 const output = join(dir, "preview.mjs");
+const entry = join(dir, "entry.mjs");
+await writeFile(
+  entry,
+  `export * from ${JSON.stringify(join(process.cwd(), "src/modules/note-preview.ts"))};\nexport * from ${JSON.stringify(join(process.cwd(), "src/modules/reader-math.ts"))};`,
+);
 await build({
-  entryPoints: ["src/modules/note-preview.ts"],
+  entryPoints: [entry],
   bundle: true,
   platform: "node",
   format: "esm",
@@ -16,6 +21,7 @@ await build({
 });
 const {
   renderPreviewMath,
+  attachReaderMath,
   attachNotePreviews,
   previewCodeRanges,
   completePreviewMath,
@@ -65,6 +71,7 @@ const errors = [];
 let previewEnabled = true,
   preferenceChanged;
 globalThis.Zotero = {
+  getMainWindow: () => dom.window,
   Prefs: {
     get: () => previewEnabled,
     registerObserver: (_key, callback) => {
@@ -124,6 +131,98 @@ try {
   content.textContent = "$q$ after shutdown";
   await tick();
   assert.equal(content.querySelector("math"), null);
+  const popup = doc.createElement("div");
+  popup.className = "annotation-popup";
+  popup.innerHTML =
+    '<div class="comment"><div class="editor"><div id="annotation-1" class="content" contenteditable="true" tabindex="-1" role="textbox"><b>Positive</b> $(T_i, I_i)$ and <i>negative</i> $\\frac{a}{b}$. <code>$literal$</code></div><div class="renderer"></div></div></div>';
+  doc.body.append(popup);
+  const original = popup.querySelector(".content");
+  const originalHTML = original.innerHTML;
+  let inputs = 0;
+  original.addEventListener("input", () => inputs++);
+  const stopReader = attachReaderMath(doc);
+  await tick();
+  let preview = popup.querySelector(".knowledge-base-annotation-preview");
+  assert.equal(preview.querySelectorAll("math").length, 2);
+  assert.equal(preview.querySelector("b").textContent, "Positive");
+  assert.equal(preview.querySelector("code").textContent, "$literal$");
+  assert.equal(preview.id, "");
+  assert.equal(original.innerHTML, originalHTML);
+  const nativePointer = (event) => {
+    if (!event.target.closest('[contenteditable="true"]'))
+      event.preventDefault();
+  };
+  const nativeFocus = (event) => {
+    if (!event.target.closest(".annotation-popup")) popup.remove();
+  };
+  dom.window.addEventListener("pointerdown", nativePointer);
+  dom.window.addEventListener("focusin", nativeFocus);
+  preview.dispatchEvent(
+    new dom.window.MouseEvent("pointerdown", {
+      button: 2,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  assert.equal(
+    popup.querySelector(".knowledge-base-annotation-preview"),
+    preview,
+  );
+  const pointerAllowed = preview.querySelector("math").dispatchEvent(
+    new dom.window.MouseEvent("pointerdown", {
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  if (pointerAllowed)
+    preview.dispatchEvent(
+      new dom.window.MouseEvent("mousedown", {
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  await tick();
+  assert.equal(doc.activeElement, original);
+  assert.equal(popup.isConnected, true);
+  assert.equal(popup.querySelector(".knowledge-base-annotation-preview"), null);
+  original.textContent = "Updated $x^2$";
+  original.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+  await tick();
+  assert.equal(popup.querySelector("math"), null);
+  original.blur();
+  await tick();
+  assert.equal(popup.querySelectorAll("math").length, 1);
+  assert.equal(original.textContent, "Updated $x^2$");
+  previewEnabled = false;
+  preferenceChanged();
+  await tick();
+  assert.equal(popup.querySelector(".knowledge-base-annotation-preview"), null);
+  previewEnabled = true;
+  preferenceChanged();
+  await tick();
+  preview = popup.querySelector(".knowledge-base-annotation-preview");
+  preview.focus();
+  await tick();
+  assert.equal(doc.activeElement, original);
+  assert.equal(popup.isConnected, true);
+  assert.equal(popup.querySelector("math"), null);
+  original.blur();
+  await tick();
+  original.textContent = "Price $5 and unfinished $x";
+  await tick();
+  assert.equal(popup.querySelector("math"), null);
+  original.textContent = "Reopened $z$";
+  await tick();
+  assert.equal(popup.querySelectorAll("math").length, 1);
+  dom.window.removeEventListener("pointerdown", nativePointer);
+  dom.window.removeEventListener("focusin", nativeFocus);
+  stopReader();
+  assert.equal(popup.querySelector("math"), null);
+  assert.equal(original.textContent, "Reopened $z$");
+  assert.equal(inputs, 1);
+  assert.equal(popup.querySelector(".knowledge-base-math-preview"), null);
   assert.deepEqual(errors, []);
   console.log(
     "PASS Native card MathML, fractions, literal code, safe text, updates, new rows and cleanup",

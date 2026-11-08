@@ -58,6 +58,10 @@ export default async function settingsHost({
       (await api.getNoteCounts()).total === 4,
       "Note counts changed after restart",
     );
+    assert(
+      JSON.stringify(api.getGraphGroups()) === JSON.stringify(saved.groups),
+      "Typed graph groups changed after restart",
+    );
     await Zotero.ZoteroKnowledgeBase.hooks.onShutdown();
     await IOUtils.writeUTF8(
       restartMarker,
@@ -81,7 +85,7 @@ export default async function settingsHost({
     ],
     entity: [
       "让笔记回到阅读本身",
-      "## 清楚地表达一个想法\n\n阅读时，把值得留下的洞见写成自己的话。适当的留白，让复杂的研究也能从容展开。\n\n## 从理解走向连接\n\n- 记录问题背后的动机\n- 区分观察、证据与判断\n- 用链接连接相关想法\n\n> 好的笔记，让下一次思考有一个清楚的起点。",
+      "## 清楚地表达一个想法\n\nA clear thought, a useful connection. 用自己的话记录值得留下的洞见。[阅读线索](https://example.org/research)\n\n## 数学与思考\n\n在预算 $K \\ll N$ 下，保留对任务最重要的视觉信息。\n\n$$\n\\min_{\\mathcal S:\\, |\\mathcal S| \\le K} \\mathcal L(\\mathcal S)\n$$\n\n> 好的笔记，让下一次思考有一个清楚的起点。",
     ],
   };
   for (const [noteType, [title, body]] of Object.entries(examples))
@@ -117,6 +121,10 @@ export default async function settingsHost({
     "Settings still repeats every template selector",
   );
   const mathPreview = doc.getElementById("knowledge-base-math-preview");
+  assert(
+    mathPreview?.closest(".settings-enhancement"),
+    "Math preview is outside Enhancement",
+  );
   await wait(
     () => mathPreview?.checked && mathPreview.getAttribute("label"),
     "Math preview checkbox did not initialize",
@@ -151,14 +159,14 @@ export default async function settingsHost({
     );
   }
   const groups = [...doc.querySelectorAll(".plugin-preferences .main-section")];
+  assert(groups.length === 6, "Settings sections are missing or duplicated");
   assert(
-    groups.length === 5 &&
-      new Set(
-        groups.map(
-          (group) =>
-            settings.getComputedStyle(group.querySelector(":scope > h3")).color,
-        ),
-      ).size === 1,
+    new Set(
+      groups.map(
+        (group) =>
+          settings.getComputedStyle(group.querySelector(":scope > h3")).color,
+      ),
+    ).size === 1,
     "Settings headings use different colors",
   );
   assert(
@@ -364,17 +372,33 @@ export default async function settingsHost({
     "Appearance editor did not open",
   );
   await note.knowledgeBaseReady();
-  const appearance = doc.getElementById("knowledge-base-ui-style");
-  appearance.value = "notes";
-  appearance.dispatchEvent(new settings.Event("command", { bubbles: true }));
+  const addGroup = doc.getElementById("knowledge-base-add-group");
+  const originalTags = await api.getGraphTags();
+  addGroup.click();
+  const customTag = "#Custom graph topic";
+  const groupInput = await wait(
+    () => doc.querySelector(".graph-group-tag"),
+    "Editable graph tag did not appear",
+  );
+  assert(groupInput.localName === "input", "Graph tags remain selection-only");
+  groupInput.value = "  " + customTag + "  ";
+  groupInput.dispatchEvent(
+    new settings.KeyboardEvent("keyup", { key: "Enter", bubbles: true }),
+  );
   assert(
-    appearance.value === "notes",
-    "Notes style selection did not stay selected",
+    api.getGraphGroups()[0].tag === customTag,
+    "A tag outside the vocabulary was rejected",
   );
-  await wait(
-    () => note.document.documentElement.hasAttribute("data-plugin-notes"),
-    "Notes style did not update the open note",
+  assert(
+    groupInput.value === customTag &&
+      [...groupInput.list.options].some((option) => option.value === customTag),
+    "Typed tag was not offered as a suggestion",
   );
+  assert(
+    JSON.stringify(await api.getGraphTags()) === JSON.stringify(originalTags),
+    "Graph configuration added tags to notes",
+  );
+  const appearance = doc.getElementById("knowledge-base-ui-style");
   assert(
     !doc.getElementById("knowledge-base-custom-css") &&
       !appearance.querySelector('[value="paper"]'),
@@ -382,25 +406,97 @@ export default async function settingsHost({
   );
   const card = await api.getZettel((await api.listZettels())[0].id);
   const originalBody = card.body;
-  await note.setEditorMode("source");
-  const sourceDocument = note.document
-    .getElementById("knowledge-base-editor-body")
-    .querySelector("iframe").contentDocument;
+  main.resizeTo(1180, 900);
+  const samples = new Map();
+  for (const style of ["minimal", "bear", "notes"]) {
+    appearance.value = style;
+    appearance.dispatchEvent(new settings.Event("command", { bubbles: true }));
+    await wait(
+      () =>
+        note.document.documentElement.hasAttribute("data-plugin-bear") ===
+          (style !== "minimal") &&
+        note.document.documentElement.hasAttribute("data-plugin-notes") ===
+          (style === "notes"),
+      "Open note did not adopt " + style,
+    );
+    const primary = await wait(() => {
+      const frame = note.document
+        .querySelector("note-editor")
+        ?.getCurrentInstance()?._iframeWindow;
+      const element = frame?.document.querySelector(".primary-editor");
+      return element && { frame, element };
+    }, "Native typography surface is unavailable");
+    await primary.frame.document.fonts.ready;
+    const prose = primary.frame.getComputedStyle(primary.element);
+    const heading = primary.frame.getComputedStyle(
+      primary.element.querySelector("h1"),
+    );
+    const formula = primary.element.querySelector(".katex");
+    assert(
+      formula && !primary.element.querySelector(".katex-error"),
+      "Formula did not render in " + style,
+    );
+    const math = primary.frame.getComputedStyle(formula);
+    samples.set(style, {
+      font: prose.fontFamily,
+      heading: heading.fontWeight,
+      headingSize: heading.fontSize,
+      bodySize: prose.fontSize,
+      width: prose.maxWidth,
+      math: math.fontSize,
+      leading: prose.lineHeight,
+      link: primary.frame.getComputedStyle(
+        primary.element.querySelector('a[href="https://example.org/research"]'),
+      ).color,
+    });
+    assert(
+      math.fontFamily.includes("KaTeX"),
+      "Prose typography replaced mathematical glyph fonts",
+    );
+    await capture(main, style + "-style");
+    await note.setEditorMode("source");
+    const sourceDocument = note.document
+      .getElementById("knowledge-base-editor-body")
+      .querySelector("iframe").contentDocument;
+    const scroller = sourceDocument.querySelector(".cm-scroller");
+    const sourceStyle = sourceDocument.defaultView.getComputedStyle(scroller);
+    assert(
+      sourceStyle.fontFamily === prose.fontFamily,
+      "Markdown did not inherit the " + style + " font",
+    );
+    assert(
+      sourceStyle.lineHeight === prose.lineHeight,
+      "Markdown did not inherit the " + style + " leading",
+    );
+    await note.setEditorMode("visual");
+  }
   assert(
-    sourceDocument.documentElement.hasAttribute("data-plugin-notes"),
-    "New Markdown editors did not inherit Notes style",
+    new Set([...samples.values()].map((sample) => sample.font)).size === 3,
+    "Notebook styles share one prose font",
   );
-  await note.setEditorMode("visual");
-  const before = await note.save(false);
-  assert(before, "Appearance changes prevented saving");
-  await capture(main, "notes-style");
-  appearance.value = "bear";
-  appearance.dispatchEvent(new settings.Event("command", { bubbles: true }));
-  await wait(
-    () => !note.document.documentElement.hasAttribute("data-plugin-notes"),
-    "Bear retained the Notes palette",
+  for (const property of [
+    "headingSize",
+    "bodySize",
+    "width",
+    "math",
+    "leading",
+  ]) {
+    assert(
+      new Set([...samples.values()].map((sample) => sample[property])).size ===
+        1,
+      "Switching style changed document geometry: " + property,
+    );
+  }
+  assert(
+    Number(samples.get("bear").heading) <
+      Number(samples.get("minimal").heading),
+    "Bear headings are still too heavy",
   );
-  await capture(main, "bear-style");
+  assert(
+    new Set([...samples.values()].map((sample) => sample.link)).size === 3,
+    "Styles did not apply their link colors",
+  );
+  assert(await note.save(false), "Appearance changes prevented saving");
   assert(
     (await api.getZettel(card.id)).body === originalBody,
     "Appearance changes modified saved note content",
@@ -419,7 +515,11 @@ export default async function settingsHost({
   settings.close();
   await IOUtils.writeUTF8(
     marker,
-    JSON.stringify({ connectionsOnly: true, templates: assigned }),
+    JSON.stringify({
+      connectionsOnly: true,
+      templates: assigned,
+      groups: api.getGraphGroups(),
+    }),
   );
   quit();
 }

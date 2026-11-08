@@ -236,6 +236,28 @@ export function noteSnippet(
   );
 }
 
+/** Show the paragraph that contains a real link, skipping literal code examples. */
+export function noteLinkContext(
+  body: string,
+  refs: string[],
+  resolve?: (ref: string) => CardReference | undefined,
+): string {
+  const targets = new Set(refs);
+  for (const block of markdown.lexer(body)) {
+    const link = parseCardLinks(block.raw).find((link) =>
+      targets.has(link.ref),
+    );
+    if (link)
+      return noteSnippet(
+        block.raw,
+        resolve?.(link.ref)?.title || link.display,
+        "∑",
+        resolve,
+      );
+  }
+  return "";
+}
+
 /** Actual image and link references, excluding examples in code blocks. */
 export function parseAssetNames(body: string): Set<string> {
   // A managed asset always contains one of these literals, so avoid lexing

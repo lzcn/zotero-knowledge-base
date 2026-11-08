@@ -23,6 +23,7 @@ interface Tabs {
   }): { id: string; container: Element };
   select(id: string): void;
   close(id: string): void;
+  _openMenu(x: number, y: number, id: string): Element & { hidePopup(): void };
 }
 const workbenches = new Map<
   Window,
@@ -102,6 +103,33 @@ export function openWorkbench(args: ManagerArgs = {}): void {
   const sessionState = () =>
     getState.call(tabs).filter((tab) => tab.type !== "knowledgebase");
   tabs.getState = sessionState;
+  const nativeMenu = tabs._openMenu;
+  const openMenu: Tabs["_openMenu"] = (x, y, id) => {
+    const popup = nativeMenu.call(tabs, x, y, id);
+    if (id !== workbenchID || workbenches.get(win)?.id !== id) return popup;
+    const action = popup.querySelector(":scope > menuitem");
+    if (!action) return popup;
+    action.removeAttribute("disabled");
+    action.addEventListener(
+      "command",
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        popup.hidePopup();
+        void Promise.resolve()
+          .then(() => {
+            if (workbenches.get(win)?.id === id)
+              return addon.api.showPersonalKnowledge(
+                () => win.closed || workbenches.get(win)?.id !== id,
+              );
+          })
+          .catch((error) => Zotero.logError(error));
+      },
+      { capture: true },
+    );
+    return popup;
+  };
+  tabs._openMenu = openMenu;
   const tab = tabs.add({
     type: "knowledgebase",
     data: {},
@@ -113,6 +141,7 @@ export function openWorkbench(args: ManagerArgs = {}): void {
       workbenches.delete(win);
     },
   });
+  const workbenchID = tab.id;
   const browser = win.document.createXULElement(
     "browser",
   ) as unknown as Browser;
@@ -152,6 +181,7 @@ export function openWorkbench(args: ManagerArgs = {}): void {
     dispose: () => {
       win.removeEventListener("keydown", closeShortcut, true);
       if (tabs.getState === sessionState) tabs.getState = getState;
+      if (tabs._openMenu === openMenu) tabs._openMenu = nativeMenu;
     },
   });
   loadView(browser, "manager", viewArgs);

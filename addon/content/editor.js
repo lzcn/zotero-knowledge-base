@@ -144,6 +144,8 @@ let sourceSearchVersion = 0;
 let cardSearchVersion = 0;
 let cardSearchTimer = null;
 let linkRange = null;
+let linkAlias = "";
+let cardIndex = 0;
 let previewTimer = null;
 let relationsTimer = null;
 let relationsVersion = 0;
@@ -317,9 +319,14 @@ async function loadEditor() {
     if (
       all ||
       fields.some((field) =>
-        ["identity", "links", "hierarchy", "source", "availability"].includes(
-          field,
-        ),
+        [
+          "content",
+          "identity",
+          "links",
+          "hierarchy",
+          "source",
+          "availability",
+        ].includes(field),
       )
     )
       run(refreshRelations);
@@ -565,6 +572,10 @@ function applyLocale() {
     "label",
     api.loc("editor-link-pick"),
   );
+  $("knowledge-base-link-results").setAttribute(
+    "aria-label",
+    api.loc("editor-link-pick"),
+  );
   $("knowledge-base-link-search").placeholder = api.loc(
     "editor-link-placeholder",
   );
@@ -612,6 +623,20 @@ function closeEditor() {
 }
 
 function bindEvents() {
+  document.addEventListener(
+    "mousedown",
+    (event) => {
+      const popup = $("knowledge-base-link-drop");
+      const target = /** @type {Node} */ (event.target);
+      if (
+        !popup.hidden &&
+        !popup.contains(target) &&
+        !$("knowledge-base-editor-workspace").contains(target)
+      )
+        closeCardPicker();
+    },
+    true,
+  );
   $("knowledge-base-note-type").addEventListener("change", () => {
     if (libraryReadOnly || noteUnavailable || recoveryPending) return;
     noteType = /** @type {import("../../src/modules/note-types").NoteType} */ (
@@ -945,31 +970,22 @@ function bindEvents() {
         insertText(`![${markdownLabel(image.name)}](${image.url})`, range);
     });
   });
-  $("knowledge-base-link-search").addEventListener("keydown", (ev) => {
-    const first = $("knowledge-base-link-results").querySelector("li");
-    if (first && (ev.key === "ArrowDown" || ev.key === "Enter")) {
-      ev.preventDefault();
-      if (ev.key === "Enter") first.click();
-      else first.focus();
-    }
-  });
-  $("knowledge-base-link-results").addEventListener("keydown", (ev) => {
-    const row = document.activeElement;
-    if (!row || !$("knowledge-base-link-results").contains(row)) return;
-    const next =
-      ev.key === "ArrowDown"
-        ? row.nextElementSibling
-        : ev.key === "ArrowUp"
-          ? row.previousElementSibling
-          : null;
-    if (next instanceof window.HTMLElement) {
-      ev.preventDefault();
-      next.focus();
-    }
-  });
+  $("knowledge-base-link-search").addEventListener(
+    "keydown",
+    cardPickerKeydown,
+  );
+  $("knowledge-base-link-results").addEventListener("mousedown", (event) =>
+    event.preventDefault(),
+  );
+  $("knowledge-base-link-results").addEventListener(
+    "keydown",
+    cardPickerKeydown,
+  );
+  window.addEventListener("resize", positionCardPicker);
   $("knowledge-base-link-search").addEventListener("input", () => {
     clearTimeout(cardSearchTimer);
     cardSearchVersion++;
+    beginCardSearch();
     cardSearchTimer = setTimeout(() => run(searchCards), 200);
   });
   for (const button of /** @type {HTMLButtonElement[]} */ (
@@ -1266,6 +1282,14 @@ async function ensureSourceEditor() {
   await sourceEditorInitialization;
 }
 function bindSourceEvents() {
+  $("knowledge-base-editor-body").addEventListener(
+    "select",
+    updateSourceNoteQuery,
+  );
+  $("knowledge-base-editor-body").addEventListener(
+    "scroll",
+    positionCardPicker,
+  );
   $("knowledge-base-editor-body").addEventListener("compositionstart", () => {
     clearTimeout(autosaveTimer);
     clearTimeout(draftTimer);
@@ -1318,6 +1342,10 @@ function bindSourceEvents() {
 function updateSourceNoteQuery() {
   const body = $("knowledge-base-editor-body");
   if (body.isComposing || editorMode !== "source") return;
+  if (body.canInsertNoteLink?.() === false) {
+    closeCardPicker();
+    return;
+  }
   const before = body.value.slice(0, body.selectionStart);
   const match = /\[\[([^\][\n]*)$/.exec(before);
   if (
@@ -1328,6 +1356,9 @@ function updateSourceNoteQuery() {
     linkRange = {
       start: body.selectionStart - match[0].length,
       end: body.selectionStart,
+      value: body.value,
+      selectionStart: body.selectionStart,
+      selectionEnd: body.selectionEnd,
     };
     if (body.value.slice(linkRange.end, linkRange.end + 2) === "]]")
       linkRange.end += 2;
@@ -1624,6 +1655,16 @@ async function refreshRelations() {
           : linkedTitles.get(targetId) || link.display,
         link.reference,
       );
+      if (inbound && link.context) {
+        button.classList.add("backlink-link");
+        const context = document.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "span",
+        );
+        context.className = "backlink-context";
+        context.textContent = link.context;
+        button.append(context);
+      }
       row.appendChild(button);
       row.classList.toggle("unresolved", !targetId);
       const open = (event) =>
@@ -1754,23 +1795,91 @@ function editKeydown(ev) {
 }
 
 function openCardPicker() {
-  if (libraryReadOnly) return;
+  if (libraryReadOnly || recoveryPending) return;
   const body = $("knowledge-base-editor-body");
-  linkRange = { start: body.selectionStart, end: body.selectionEnd };
-  showCardSuggestions("");
+  linkRange = {
+    start: body.selectionStart,
+    end: body.selectionEnd,
+    value: body.value,
+    selectionStart: body.selectionStart,
+    selectionEnd: body.selectionEnd,
+  };
+  const selected = body.value.slice(linkRange.start, linkRange.end);
+  linkAlias =
+    editorMode === "source" && !/[[\]\r\n]/.test(selected)
+      ? selected.trim()
+      : "";
+  showCardSuggestions("", false);
   $("knowledge-base-link-search").focus();
 }
 
-function showCardSuggestions(query) {
-  if (libraryReadOnly || recoveryPending) return;
-  $("knowledge-base-link-drop").hidden = false;
-  $("knowledge-base-link-search").value = query;
-  run(searchCards);
+function positionCardPicker() {
+  const popup = $("knowledge-base-link-drop");
+  if (disposed || popup.hidden) return;
+  const caret =
+    editorMode === "visual"
+      ? richEditor?.getCaretRect()
+      : $("knowledge-base-editor-body").getCaretRect?.();
+  const fallback = $("knowledge-base-editor-workspace").getBoundingClientRect();
+  const point = caret || {
+    left: fallback.left + 16,
+    top: fallback.top + 36,
+    bottom: fallback.top + 56,
+  };
+  const width = Math.min(380, window.innerWidth - 24);
+  popup.style.width = `${width}px`;
+  popup.style.left = `${Math.max(12, Math.min(point.left, window.innerWidth - width - 12))}px`;
+  const height = Math.min(
+    popup.getBoundingClientRect().height,
+    window.innerHeight - 24,
+  );
+  const below = point.bottom + 6;
+  popup.style.top = `${Math.max(12, below + height > window.innerHeight - 12 ? point.top - height - 6 : below)}px`;
+}
+
+function showCardSuggestions(query, inline = true) {
+  if (disposed || libraryReadOnly || recoveryPending) return;
+  const popup = $("knowledge-base-link-drop");
+  const search = $("knowledge-base-link-search");
+  const [lookup, ...alias] = query.split("|");
+  if (inline) linkAlias = alias.join("|").trim();
+  const refresh =
+    popup.hidden ||
+    search.value !== lookup ||
+    popup.dataset.inline !== String(inline);
+  popup.dataset.inline = String(inline);
+  popup.hidden = false;
+  search.hidden = inline;
+  search.value = lookup;
+  positionCardPicker();
+  if (refresh) {
+    cardSearchVersion++;
+    beginCardSearch();
+    run(searchCards);
+  }
 }
 
 function closeCardPicker() {
-  $("knowledge-base-link-drop").hidden = true;
+  const popup = $("knowledge-base-link-drop");
+  popup.hidden = true;
   cardSearchVersion++;
+  clearTimeout(cardSearchTimer);
+  popup.removeAttribute("aria-busy");
+  $("knowledge-base-link-search").removeAttribute("aria-activedescendant");
+}
+
+function selectCard(index) {
+  const rows = [...$("knowledge-base-link-results").children];
+  if (!rows.length) return;
+  cardIndex = (index + rows.length) % rows.length;
+  rows.forEach((row, i) =>
+    row.setAttribute("aria-selected", String(i === cardIndex)),
+  );
+  $("knowledge-base-link-search").setAttribute(
+    "aria-activedescendant",
+    rows[cardIndex].id,
+  );
+  rows[cardIndex].scrollIntoView?.({ block: "nearest" });
 }
 
 function cardPickerKeydown(event) {
@@ -1784,70 +1893,119 @@ function cardPickerKeydown(event) {
     event.shiftKey
   )
     return false;
-  const first = $("knowledge-base-link-results").querySelector("li");
   if (!["Escape", "Enter", "Tab", "ArrowDown", "ArrowUp"].includes(event.key))
     return false;
-  if (event.key !== "Escape" && !first) return false;
+  const rows = $("knowledge-base-link-results").children;
+  if (
+    event.key !== "Escape" &&
+    !rows.length &&
+    $("knowledge-base-link-drop").getAttribute("aria-busy") !== "true"
+  )
+    return false;
   event.preventDefault();
   event.stopPropagation();
-  if (event.key === "Escape") closeCardPicker();
-  else if (event.key === "Enter" || event.key === "Tab") first.click();
-  else
-    /** @type {HTMLElement} */ (
-      event.key === "ArrowDown"
-        ? first
-        : $("knowledge-base-link-results").lastElementChild
-    ).focus();
+  if (event.key === "Escape") {
+    const fromPicker = $("knowledge-base-link-drop").contains(
+      document.activeElement,
+    );
+    closeCardPicker();
+    if (fromPicker) {
+      if (editorMode === "visual") richEditor?.focus();
+      else $("knowledge-base-editor-body").focus();
+    }
+  } else if (!rows.length) return true;
+  else if (event.key === "Enter" || event.key === "Tab")
+    /** @type {HTMLElement} */ (rows[cardIndex])?.click();
+  else selectCard(cardIndex + (event.key === "ArrowDown" ? 1 : -1));
   return true;
 }
 
+function beginCardSearch() {
+  $("knowledge-base-link-results").replaceChildren();
+  $("knowledge-base-link-search").removeAttribute("aria-activedescendant");
+  $("knowledge-base-link-drop").setAttribute("aria-busy", "true");
+  $("knowledge-base-link-status").textContent = api.loc("editor-searching");
+}
+
 async function searchCards() {
+  if (disposed) return;
   const version = ++cardSearchVersion;
   const ul = $("knowledge-base-link-results");
-  ul.textContent = "";
-  $("knowledge-base-link-status").textContent = api.loc("editor-searching");
+  beginCardSearch();
   let cards;
   try {
-    cards = await api.listZettels($("knowledge-base-link-search").value);
+    const page = await api.searchZettelSummaries(
+      $("knowledge-base-link-search").value,
+      { limit: 31 },
+    );
+    cards = page.items.filter((card) => card.id !== zettelId).slice(0, 30);
   } catch (error) {
-    if (version === cardSearchVersion)
+    if (!disposed && version === cardSearchVersion) {
+      $("knowledge-base-link-drop").setAttribute("aria-busy", "false");
       $("knowledge-base-link-status").textContent =
         api.loc("editor-search-failed") + String(error.message || error);
+    }
     return;
   }
-  if (version !== cardSearchVersion || $("knowledge-base-link-drop").hidden)
+  if (
+    disposed ||
+    version !== cardSearchVersion ||
+    $("knowledge-base-link-drop").hidden
+  )
     return;
-  cards = cards.filter((card) => card.id !== zettelId).slice(0, 30);
+  $("knowledge-base-link-drop").setAttribute("aria-busy", "false");
   $("knowledge-base-link-status").textContent = cards.length
-    ? ""
+    ? api.loc("editor-link-keys")
     : api.loc("editor-link-empty");
-  for (const card of cards) {
+  for (const [index, card] of cards.entries()) {
     const li = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+    li.id = `knowledge-base-link-option-${index}`;
+    li.setAttribute("role", "option");
     window.ZoteroKnowledgeBaseMarkdown.identity(
       li,
       card.id,
       card.title || api.loc("manager-untitled"),
       card.reference,
     );
-    li.tabIndex = 0;
+    const reference = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "span",
+    );
+    reference.className = "link-option-reference";
+    reference.textContent = card.reference || card.id;
+    li.append(reference);
+    li.tabIndex = -1;
     const insert = () => {
+      const ref =
+        (card.reference || card.id) + (linkAlias ? `|${linkAlias}` : "");
       if (editorMode === "visual" && richEditor) {
         run(async () => {
-          await richEditor.insertNoteLink(card.reference || card.id);
-          richEditor.focus();
+          const inserted = await richEditor.insertNoteLink(ref);
+          if (disposed) return;
+          if (inserted) richEditor.focus();
           closeCardPicker();
         });
       } else {
-        insertText(`[[${card.reference || card.id}]]`, linkRange);
+        const body = $("knowledge-base-editor-body");
+        if (
+          !linkRange ||
+          body.value !== linkRange.value ||
+          body.selectionStart !== linkRange.selectionStart ||
+          body.selectionEnd !== linkRange.selectionEnd
+        ) {
+          closeCardPicker();
+          return;
+        }
+        insertText(`[[${ref}]]`, linkRange);
         closeCardPicker();
       }
     };
     li.addEventListener("click", insert);
-    li.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter") insert();
-    });
+    li.addEventListener("mouseenter", () => selectCard(index));
     ul.appendChild(li);
   }
+  selectCard(0);
+  positionCardPicker();
 }
 
 /* ---------------- save ---------------- */

@@ -1,0 +1,67 @@
+/* Keep the same document geometry while styles change fonts and link colors. */
+.primary-editor,
+.markdown-body {
+  font-family: var(--ui-editor-font);
+  line-height: var(--ui-prose-leading);
+}
+.primary-editor {
+  font-family: var(--ui-editor-font) !important;
+}
+.primary-editor p,
+.primary-editor li,
+.markdown-body p,
+.markdown-body li {
+  line-height: var(--ui-prose-leading);
+}
+.primary-editor p,
+.markdown-body p {
+  margin-block: 0 var(--ui-paragraph-space);
+}
+.primary-editor :is(h1, h2, h3, h4, h5, h6),
+.markdown-body :is(h1, h2, h3, h4, h5, h6),
+#knowledge-base-detail .markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  font-family: var(--ui-heading-font);
+  font-weight: var(--ui-heading-weight);
+  line-height: 1.35;
+  letter-spacing: normal;
+  color: inherit;
+  text-transform: none;
+}
+.markdown-body :is(h1, h2, h3, h4, h5, h6),
+#knowledge-base-detail .markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  margin-block: 1em 0.4em;
+}
+.primary-editor h1,
+.markdown-body h1,
+#knowledge-base-detail .markdown-body h1 {
+  font-size: var(--ui-h1-size);
+  letter-spacing: -0.02em;
+}
+.primary-editor h2,
+.markdown-body h2,
+#knowledge-base-detail .markdown-body h2 {
+  font-size: var(--ui-h2-size);
+}
+.primary-editor h3,
+.markdown-body h3 {
+  font-size: var(--ui-h3-size);
+}
+.primary-editor > :first-child,
+.markdown-body > :first-child,
+#knowledge-base-detail .markdown-body > :first-child {
+  margin-block-start: 0;
+}
+.primary-editor a[href] {
+  color: var(--ui-accent);
+}
+
+/* KaTeX glyph metrics belong to its bundled fonts, independently of prose fonts. */
+.primary-editor .katex,
+.markdown-body .katex {
+  font-size: var(--ui-math-size);
+  letter-spacing: normal;
+}
+.primary-editor .katex-display,
+.markdown-body .katex-display {
+  margin-block: var(--ui-equation-space);
+}

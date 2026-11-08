@@ -1528,6 +1528,16 @@ async function renderDetail(id) {
       b.sourceTitle || "",
       b.reference,
     );
+    if (b.context) {
+      button.classList.add("backlink-link");
+      const context = document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "span",
+      );
+      context.className = "backlink-context";
+      context.textContent = b.context;
+      button.append(context);
+    }
     button.addEventListener("click", () => select(b.sourceId));
     li.appendChild(button);
     ul.appendChild(li);

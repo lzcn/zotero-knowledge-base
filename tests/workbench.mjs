@@ -199,7 +199,18 @@ try {
   ];
   const originalGetState = () => nativeStates;
   let close;
+  let nativeShows = 0;
+  const nativeMenu = () => {
+    const popup = doc.createElement("menupopup");
+    popup.hidePopup = () => popup.remove();
+    const item = doc.createElement("menuitem");
+    item.addEventListener("command", () => nativeShows++);
+    popup.append(item);
+    doc.body.append(popup);
+    return popup;
+  };
   const tabs = {
+    _openMenu: nativeMenu,
     selectedID: "workbench",
     getState: originalGetState,
     select(id) {
@@ -241,6 +252,31 @@ try {
   assert.equal(auditRequests, 1);
   console.log(
     "PASS Targeted note navigation reuses the workbench without requesting a library scan",
+  );
+  let noteReveals = 0;
+  globalThis.addon = {
+    api: {
+      showPersonalKnowledge: async (shouldStop) => {
+        assert.equal(shouldStop(), false);
+        noteReveals++;
+      },
+    },
+  };
+  const nativeAction = tabs._openMenu(10, 20, "reader").firstElementChild;
+  nativeAction.dispatchEvent(
+    new dom.window.Event("command", { bubbles: true, cancelable: true }),
+  );
+  assert.equal(nativeShows, 1);
+  const noteAction = tabs._openMenu(10, 20, "workbench").firstElementChild;
+  noteAction.dispatchEvent(
+    new dom.window.Event("command", { bubbles: true, cancelable: true }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(noteReveals, 1);
+  assert.equal(
+    nativeShows,
+    1,
+    "Workbench used the native unrelated item action",
   );
   let closeRequests = 0;
   manager.knowledgeBaseRequestClose = async () => {
@@ -286,6 +322,7 @@ try {
   finishClose();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(tabs.getState, originalGetState);
+  assert.equal(tabs._openMenu, nativeMenu);
   tabs.selectedID = "workbench";
   assert.equal(shortcut().defaultPrevented, false);
   module.closeWorkbenches();
@@ -511,5 +548,6 @@ try {
     "PASS Embedded and independent editors stop once and retain their pending draft writes when cleanup fails",
   );
 } finally {
+  delete globalThis.addon;
   await rm(root, { recursive: true, force: true });
 }

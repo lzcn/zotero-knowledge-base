@@ -132,7 +132,10 @@ const sourceFixtures = new Map(
     },
   ]),
 );
+const previewDOM = new JSDOM("<!doctype html><body></body>");
+globalThis.Services = { appShell: { hiddenDOMWindow: previewDOM.window } };
 const zoteroStub = {
+  getMainWindow: () => previewDOM.window,
   ItemFields: { getID: () => false },
   DataDirectory: { dir: "" },
   Items: {
@@ -488,6 +491,45 @@ if (currentSchema) {
         b.sourceId === "20260101010102" && b.sourceTitle === "existing two",
     ),
   );
+
+  const contextTarget = await zettel.saveZettel({
+    title: "Context target",
+    body: "Target body",
+  });
+  const contextSource = await zettel.saveZettel({
+    title: "Context source",
+    body:
+      "Unrelated introduction.\n\n`[[" +
+      contextTarget +
+      "]]` stays literal.\n\nUseful context before [[" +
+      contextTarget +
+      "|chosen wording]] and [[Context target]] after.",
+  });
+  const contextLinks = (await zettel.getBacklinks(contextTarget)).filter(
+    (link) => link.sourceId === contextSource,
+  );
+  check(
+    "Backlinks group multiple references from one note and show the referring paragraph",
+    contextLinks.length === 1 &&
+      contextLinks[0].context.includes(
+        "Useful context before chosen wording",
+      ) &&
+      !contextLinks[0].context.includes("Unrelated introduction") &&
+      !contextLinks[0].context.includes("literal"),
+  );
+  await zettel.saveZettel({
+    id: contextSource,
+    title: "Context source",
+    body: "Updated surrounding context [[" + contextTarget + "]].",
+  });
+  check(
+    "Backlink context follows content edits without changing note identity",
+    (await zettel.getBacklinks(contextTarget))
+      .find((link) => link.sourceId === contextSource)
+      ?.context.includes("Updated surrounding context"),
+  );
+  await zettel.deleteZettel(contextSource);
+  await zettel.deleteZettel(contextTarget);
 
   const searchFixtures = [];
   for (let n = 0; n < 7; n++)
@@ -1080,8 +1122,10 @@ if (currentSchema) {
     ),
   );
   check(
-    "Content-only changes announce their own card and skip topology notifications",
-    changes.at(-1).cardIDs.join() === indexSource &&
+    "Content-only changes refresh backlink context without topology notifications",
+    changes.at(-1).cardIDs.length === 2 &&
+      changes.at(-1).cardIDs.includes(indexSource) &&
+      changes.at(-1).cardIDs.includes(unicodeTarget) &&
       changes.at(-1).fields.join() === "content",
   );
   const unchangedIndex = await zettel.getZettel(indexSource);
@@ -3104,6 +3148,7 @@ if (process.argv[2]) {
   await db.closeDB();
 }
 
+previewDOM.window.close();
 await rm(workspace, { recursive: true, force: true });
 
 console.log(

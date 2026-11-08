@@ -25,12 +25,14 @@ const noteTypesOnly = args.includes("--note-types");
 const readerToolbarOnly = args.includes("--reader-toolbar");
 const readingViewOnly = args.includes("--reading-view");
 const mathOnly = args.includes("--math");
+const linksOnly = args.includes("--links");
 const textToolsOnly = args.includes("--text-tools");
 const workbenchOnly = args.includes("--workbench");
 const metadataOnly = args.includes("--metadata");
 const viewsOnly = args.includes("--views");
 const retiredOnly = args.includes("--retired-features");
 const editingHost =
+  linksOnly ||
   mathOnly ||
   readingViewOnly ||
   settingsOnly ||
@@ -44,25 +46,27 @@ const editingHost =
     ? (
         await readFile(
           new URL(
-            mathOnly
-              ? "./math-host.mjs"
-              : readingViewOnly
-                ? "./reading-view-host.mjs"
-                : settingsOnly
-                  ? "./settings-host.mjs"
-                  : graphViewsOnly
-                    ? "./graph-views-host.mjs"
-                    : noteTypesOnly
-                      ? "./note-types-host.mjs"
-                      : retiredOnly
-                        ? "./retired-features-host.mjs"
-                        : viewsOnly
-                          ? "./views-host.mjs"
-                          : metadataOnly
-                            ? "./metadata-host.mjs"
-                            : workbenchOnly
-                              ? "./workbench-host.mjs"
-                              : "./text-tools-host.mjs",
+            linksOnly
+              ? "./links-host.mjs"
+              : mathOnly
+                ? "./math-host.mjs"
+                : readingViewOnly
+                  ? "./reading-view-host.mjs"
+                  : settingsOnly
+                    ? "./settings-host.mjs"
+                    : graphViewsOnly
+                      ? "./graph-views-host.mjs"
+                      : noteTypesOnly
+                        ? "./note-types-host.mjs"
+                        : retiredOnly
+                          ? "./retired-features-host.mjs"
+                          : viewsOnly
+                            ? "./views-host.mjs"
+                            : metadataOnly
+                              ? "./metadata-host.mjs"
+                              : workbenchOnly
+                                ? "./workbench-host.mjs"
+                                : "./text-tools-host.mjs",
             import.meta.url,
           ),
           "utf8",
@@ -74,7 +78,6 @@ const trashOnly = args.includes("--trash");
 const appearanceOnly = args.includes("--appearance");
 const toolbarOnly = args.includes("--toolbar");
 const templatesOnly = args.includes("--templates");
-const linksOnly = args.includes("--links");
 const relationsOnly = args.includes("--relations");
 const connectionsOnly =
   mathOnly ||
@@ -304,7 +307,7 @@ function runQuitTest() {
         setTimeout(run, 250);
         return;
       }
-      if (${mathOnly || readingViewOnly || settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
+      if (${linksOnly || mathOnly || readingViewOnly || settingsOnly || graphViewsOnly || noteTypesOnly || textToolsOnly || workbenchOnly || metadataOnly || viewsOnly || retiredOnly}) {
         const test = ${editingHost || "null"};
         restarting = await IOUtils.exists(${JSON.stringify(marker)});
         await test({Zotero, ChromeUtils, IOUtils, PathUtils, Services, Components, setTimeout,
@@ -320,7 +323,7 @@ function runQuitTest() {
           const doc=reader._iframeWindow.document;
           const button=doc.getElementById('knowledge-base-reader-button');
           if(doc.querySelector('#knowledge-base-clip-figure'))throw new Error('Figure clipping icon was retained');
-          if(doc.querySelectorAll('#knowledge-base-reader-button').length!==1 || button.nextElementSibling?.id!=='pageNumber' || button.title!==Zotero.ZoteroKnowledgeBase.api.loc('menu-open-manager') || button.getAttribute('aria-label')!==button.title || !button.classList.contains('toolbar-button'))throw new Error('Reader button is missing, duplicated or unnamed');
+          if(doc.querySelectorAll('#knowledge-base-reader-button').length!==1 || button.nextElementSibling?.id!=='pageNumber' || !button.title || button.getAttribute('aria-label')!==button.title || !button.classList.contains('toolbar-button'))throw new Error('Reader button is missing, duplicated or unnamed');
           await waitFor(()=>button.querySelector('img').complete && button.querySelector('img').naturalWidth>0,'Reader icon failed to load');
           const bounds=button.getBoundingClientRect();if(bounds.width<26 || bounds.height<26)throw new Error('Reader button does not use native toolbar geometry');
           return button;
@@ -427,7 +430,40 @@ function runQuitTest() {
           missingButton.click();
           await waitFor(()=>opened.length>calls,'No-note reader did not open the default workbench');
           if(opened.at(-1)?.selectId || (await api.listZettels()).length!==count || (await api.listByItem(withoutSource.key,withoutSource.libraryID)).some(note=>note.source_note))throw new Error('Missing Literature Note was created or replaced by a Zettel');
+          await waitFor(()=>missingButton.dataset.hasLiteratureNote==='false','Reader without a Literature Note was not gray');
+          if(!missing._iframeWindow.getComputedStyle(missingButton.querySelector('img')).filter.includes('grayscale'))throw new Error('Missing Literature Note retained a colored icon');
+          const modifiedClick=()=>missingButton.dispatchEvent(new missing._iframeWindow.MouseEvent('click',{bubbles:true,metaKey:Zotero.isMac,ctrlKey:!Zotero.isMac}));
+          modifiedClick();
+          await waitFor(()=>opened.at(-1)?.selectId && missingButton.dataset.hasLiteratureNote==='true','Modifier-click did not create and open a Literature Note');
+          const created=(await api.listByItem(withoutSource.key,withoutSource.libraryID)).find(note=>note.source_note);
+          if(!created || opened.at(-1).selectId!==created.id || (await api.listZettels()).length!==count+1)throw new Error('Modifier-click used the wrong source or created duplicate notes');
+          modifiedClick();await waitFor(()=>!missingButton.disabled,'Repeated modifier-click did not finish');
+          if((await api.listByItem(withoutSource.key,withoutSource.libraryID)).filter(note=>note.source_note).length!==1)throw new Error('Repeated modifier-click duplicated the Literature Note');
+          await api.deleteZettel(created.id);
+          await waitFor(()=>missingButton.dataset.hasLiteratureNote==='false','Trashed note retained a colored icon');
+          modifiedClick();
+          await waitFor(()=>opened.at(-1)?.selectId && opened.at(-1).selectId!==created.id && missingButton.dataset.hasLiteratureNote==='true','Modifier-click reopened a trashed note instead of creating an active one');
+          if(!(await api.getTrashNotes()).some(note=>note.id===created.id) || (await api.listByItem(withoutSource.key,withoutSource.libraryID)).filter(note=>note.source_note).length!==1)throw new Error('Creating after Trash removed the old note or duplicated active source notes');
           missing.close();
+          const parentPref='extensions.zotero.knowledge-base.notes.parent.'+paper.libraryID;
+          if(Zotero.Prefs.get(parentPref,true))throw new Error('Personal Knowledge parent was unexpectedly created before the tab command');
+          const reveal=async(id)=>{
+            await select(id);
+            const popup=main.Zotero_Tabs._openMenu(50,70,main.Zotero_Tabs.selectedID);
+            popup.querySelector(':scope > menuitem').dispatchEvent(new main.Event('command',{bubbles:true,cancelable:true}));
+            await waitFor(()=>main.Zotero_Tabs.selectedID==='zotero-pane' && main.ZoteroPane.getSelectedItems().some(item=>item.key===Zotero.Prefs.get(parentPref,true)),'Show in Library did not select Personal Knowledge');
+            return main.ZoteroPane.getSelectedItems()[0];
+          };
+          const personal=await reveal(sourceNote.id);
+          if(personal.getField('title')!==api.loc('personal-knowledge-title'))throw new Error('The tab command selected a paper or note instead of Personal Knowledge');
+          personal.setField('title','Scholarly Library');await personal.saveTx();
+          const standalone=await api.saveZettel({title:'Unsourced note for library navigation',body:'Keep this note independent.'});
+          if((await reveal(standalone)).id!==personal.id || personal.getField('title')!=='Scholarly Library')throw new Error('Show in Library duplicated or renamed the existing container');
+          await select(sourceNote.id);
+          await api.deleteZettel(sourceNote.id);
+          await waitFor(()=>[reader,another].every(instance=>instance._iframeWindow.document.getElementById('knowledge-base-reader-button').dataset.hasLiteratureNote==='false'),'Trashing a Literature Note did not gray both PDF icons');
+          await api.restoreNote(sourceNote.id);
+          await waitFor(()=>[reader,another].every(instance=>instance._iframeWindow.document.getElementById('knowledge-base-reader-button').dataset.hasLiteratureNote==='true'),'Restoring a Literature Note did not recolor both PDF icons');
         } finally {api.openManager=openManager;}
         await openReader(first.id);
         if(folder){await IOUtils.makeDirectory(folder,{ignoreExisting:true});await pause(150);const image=await main.browsingContext.currentWindowGlobal.drawSnapshot(undefined,1,'white');const canvas=main.document.createElementNS('http://www.w3.org/1999/xhtml','canvas');canvas.width=image.width;canvas.height=image.height;canvas.getContext('2d').drawImage(image,0,0);image.close();const blob=await new Promise(resolve=>canvas.toBlob(resolve));await IOUtils.write(PathUtils.join(folder,'pdf-toolbar.png'),new Uint8Array(await blob.arrayBuffer()));}
@@ -1111,14 +1147,6 @@ function runQuitTest() {
       if (await IOUtils.exists(${JSON.stringify(marker)})) {
         restarting = true;
         const first = JSON.parse(await IOUtils.readUTF8(${JSON.stringify(marker)}));
-        if (first.linksOnly) {
-          const card = await knowledgeBase.api.getZettel(first.cardID);
-          const restoredNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID,first.noteKey);
-          if(!card || !restoredNote || !knowledgeBase.api.getMarkdownSource(restoredNote.getNote()).body.includes('[[ProxyThinkerTestTimeGuidanceXiao26]]') || (restoredNote.getNote().split('title="[[ProxyThinkerTestTimeGuidanceXiao26]]"').length-1)!==3 || !(await knowledgeBase.api.getOutgoing(first.cardID)).some(link=>link.targetId===first.targetID)) throw new Error("Restart lost pasted or completed note links");
-          await knowledgeBase.hooks.onShutdown();
-          await IOUtils.writeUTF8(${JSON.stringify(restartMarker)},JSON.stringify({connectionsOnly:true}));
-          Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
-        }
         if(knowledgeBase.api.getNoteSort()!=='created-desc') throw new Error('Restart lost the note sort preference');
         if(knowledgeBase.api.getWorkbenchMode()!=="window") throw new Error('Restart lost the workbench opening preference');
         if(knowledgeBase.api.getGraphLabelLength()!==18) throw new Error("Restart lost the graph title length");
@@ -1236,7 +1264,7 @@ function runQuitTest() {
       note.libraryID = item.libraryID;
       note.setNote("<p>Linked Zotero note</p>");
       await note.saveTx();
-      if (!(await knowledgeBase.api.searchItems("Linked Zotero note")).some(match => match.key === note.key)) throw new Error("Zotero note search failed");
+      if ((await knowledgeBase.api.searchItems("Linked Zotero note")).some(match => match.key === note.key)) throw new Error("Source search includes a note");
       if (!(await knowledgeBase.api.searchItems("Host2026")).some(match => match.key === item.key)) throw new Error("Citation key search failed");
       if ((await knowledgeBase.api.searchItems("NoSuchCitation2026")).length) throw new Error("Source search returned unrelated items");
       await knowledgeBase.api.openLink("zotero://select/library/items/" + note.key);
@@ -1518,9 +1546,9 @@ function runQuitTest() {
         addGroup.dispatchEvent(new preferences.Event("command",{bubbles:true}));
         for(let n=0;n<100 && preferences.document.querySelectorAll(".graph-group-row").length===count;n++) await new Promise(resolve=>setTimeout(resolve,25));
         const group=preferences.document.querySelector(".graph-group-row:last-child");
-        const tag=group.querySelector(".graph-group-tag");tag.value="#Ideas";tag.dispatchEvent(new preferences.Event("command",{bubbles:true}));
+        const tag=group.querySelector(".graph-group-tag");tag.value="#Ideas";tag.dispatchEvent(new preferences.Event("change",{bubbles:true}));
         const picker=group.querySelector(".graph-group-color");picker.value=color;picker.dispatchEvent(new preferences.Event("change",{bubbles:true}));
-        if(!tag.querySelector('menuitem[value="#Ideas"]') || tag.getBoundingClientRect().width<100 || picker.getBoundingClientRect().width<20) throw new Error('Native graph-group controls did not render');
+        if(![...tag.list.options].some(option=>option.value==='#Ideas') || tag.getBoundingClientRect().width<100 || picker.getBoundingClientRect().width<20) throw new Error('Native graph-group controls did not render');
       };
       await configureGroup("#aa22cc");await configureGroup("#2288aa");
       preferences.document.querySelector(".graph-group-row:last-child .graph-group-up").dispatchEvent(new preferences.Event("command",{bubbles:true}));
@@ -1591,43 +1619,6 @@ function runQuitTest() {
       Zotero.debug('Knowledge Base editor snapshot timing: ' + JSON.stringify(editorSnapshotTiming));
       const quickSelection = quickFrame.getSelection();
       if(!quickSelection.isCollapsed || quickSelection.anchorNode?.parentElement?.closest('h1')) throw new Error('Inline wiki replacement reset the editing cursor');
-      if(${linksOnly}) {
-        const targetID=await knowledgeBase.api.saveZettel({initialTags:["Zettel"],customKey:"ProxyThinkerTestTimeGuidanceXiao26",title:"Link completion target",body:"A linked idea"});
-        const target=await knowledgeBase.api.acquireNativeNote({id:targetID,initialTags:["Zettel"],title:"Link completion target",body:"A linked idea"});await knowledgeBase.api.releaseNativeNote(target.noteID);
-        const waitFor=async(fn,label)=>{for(let n=0;n<200;n++){if(fn())return;await new Promise(resolve=>setTimeout(resolve,25));}throw new Error(label);};
-        const countLinks=()=>[...quickFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[ProxyThinkerTestTimeGuidanceXiao26]]').length;
-        const endParagraph=async()=>{const surface=quickFrame.document.querySelector('.primary-editor');surface.focus();const range=quickFrame.document.createRange();range.selectNodeContents(surface.lastElementChild);range.collapse(false);quickFrame.getSelection().removeAllRanges();quickFrame.getSelection().addRange(range);await new Promise(resolve=>setTimeout(resolve,50));quickFrame.document.execCommand('insertParagraph');await new Promise(resolve=>setTimeout(resolve,80));};
-        await endParagraph();
-        quickFrame.document.execCommand('insertText',false,'[[');
-        await waitFor(()=>!quickLinkEditor.document.getElementById('knowledge-base-link-drop').hidden && quickLinkEditor.document.getElementById('knowledge-base-link-results').children.length,"Native [[ did not show candidates");
-        quickFrame.document.execCommand('insertText',false,'ProxyThinker');
-        await waitFor(()=>quickLinkEditor.document.getElementById('knowledge-base-link-results').firstElementChild?.textContent.includes('ProxyThinkerTestTimeGuidanceXiao26'),"Native note query did not filter by ID");
-        quickFrame.document.querySelector('.primary-editor').dispatchEvent(new quickFrame.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));
-        await waitFor(()=>countLinks()===1,"Native autocomplete did not replace the query");
-        await endParagraph();
-        await knowledgeBase.api.copyNoteReference('ProxyThinkerTestTimeGuidanceXiao26');
-        quickFrame.document.querySelector('.primary-editor').focus();
-        const pasteStarted=quickFrame.document.execCommand('paste');
-        await waitFor(()=>countLinks()===2,"Pasted note ID did not become a native link; paste command="+pasteStarted);
-        if(!quickFrame.wrappedJSObject.doUndo()) throw new Error("Cannot undo pasted note link");
-        await waitFor(()=>countLinks()<2,"Undo retained the pasted link");
-        if(!quickFrame.wrappedJSObject.doRedo()) throw new Error("Cannot redo pasted note link");
-        await waitFor(()=>countLinks()===2,"Redo did not restore pasted link");
-        await quickLinkEditor.setEditorMode('source');
-        const source=quickLinkEditor.document.getElementById('knowledge-base-editor-body');
-        if(!source.value.includes('[[ProxyThinkerTestTimeGuidanceXiao26]]') || source.value.includes('\\\\[\\\\[ProxyThinker')) throw new Error("Native link round trip escaped the wiki reference");
-        source.value+='\\n\\n[[ProxyThinker';source.setSelectionRange(source.value.length,source.value.length);source.dispatchEvent(new quickLinkEditor.Event('input',{bubbles:true}));
-        await waitFor(()=>!quickLinkEditor.document.getElementById('knowledge-base-link-drop').hidden && quickLinkEditor.document.getElementById('knowledge-base-link-results').firstElementChild?.textContent.includes('ProxyThinkerTestTimeGuidanceXiao26'),"Markdown [[ did not show candidates");
-        source.dispatchEvent(new quickLinkEditor.KeyboardEvent('keydown',{key:'Tab',bubbles:true,cancelable:true}));
-        await waitFor(()=>source.value.endsWith('[[ProxyThinkerTestTimeGuidanceXiao26]]'),"Markdown completion did not replace the query");
-        if(!(await quickLinkEditor.save(false))) throw new Error("Completed links did not save");
-        await quickLinkEditor.setEditorMode('visual');
-        const finalFrame=quickLinkEditor.document.getElementById('knowledge-base-rich-frame').getCurrentInstance()._iframeWindow;
-        if([...finalFrame.document.querySelectorAll('.primary-editor a')].filter(link=>link.getAttribute('title')==='[[ProxyThinkerTestTimeGuidanceXiao26]]').length!==3) throw new Error("Mode switch lost completed links");
-        await IOUtils.writeUTF8(${JSON.stringify(marker)},JSON.stringify({connectionsOnly:true,linksOnly:true,cardID:referenceID,noteKey:referenceNote.key,targetID}));
-        await quickLinkEditor.knowledgeBasePrepareNavigation();quickLinkEditor.close();
-        Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);return;
-      }
       quickLinkEditor.close();
       for(let n=0;n<100 && !quickLinkEditor.closed;n++) await new Promise(resolve=>setTimeout(resolve,25));
       {
@@ -3293,7 +3284,7 @@ try {
     );
   else if (linksOnly)
     console.log(
-      "PASS Real Zotero native and Markdown bracket completion, ID filtering, keyboard insertion, copied-reference paste, native undo/redo, mode round trips, saved backlinks, restart and shutdown.",
+      "PASS Real Zotero caret suggestions, keyboard and pointer insertion, aliases, pasted references, undo/redo, context backlinks, stable renames, saving and restart.",
     );
   else {
     console.log(
