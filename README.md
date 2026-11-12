@@ -6,40 +6,41 @@
 
 Notes, tags and similar items in Zotero. Requires Zotero 10.
 
-## Use
+## Features
 
 Open **Knowledge Base** from the **Tools** menu, the library, or the PDF toolbar.
 
-A typical workflow is to open a note, set its Source, Parent and Tags, write in rich text or Markdown, connect related notes, then use backlinks, the graph, tags and Similar Items to revisit the library.
+### Notes
 
-- **Notes:** Zotero notes appear with their source and parent. Right-click **Open in Knowledge Base**, or enable **Use Knowledge Base for native notes** in Settings, to edit them here. Notes support rich text and Markdown with autosave. Math renders in headings. **Enhancement → Math preview** renders formulas in Zotero note cards and PDF annotation comments. Click a comment to edit its LaTeX. Saved content stays unchanged. Choose Literature, Zettel, Thinking or Entity. Link notes with `[[ID]]` and browse them in the graph. Notes inherit tags from their source and parent. Manage templates in Settings.
-- **Suggested Tags:** Reuse topics from related papers and add supported new ones. Suggestions combine metadata, full-text fingerprints and the shared semantic model, ranked by relevance and coverage. Existing labels keep their spelling. New labels follow the capitalization and optional # prefix settings.
-- **Tag Manager:** **Organize similar tags** groups name variants, aliases and semantic matches, showing the actual labels and matching reasons. **Review group** selects a group and suggests its most-used name. Check the retained name and affected items before merging. Rename, merge and delete are separate actions. **Format** previews each rename in the tag list, preserves fixed spellings and structure, and skips name conflicts for separate merging. **Excluded Tags** accepts names, `*` patterns and `@colored`, separated by commas or new lines. `@colored, reading*` hides colored tags and names beginning with “reading”. Rules apply to suggestions, Tag Manager and note displays.
-- **Similar Items:** Find similar papers locally, including items without full text. Results load automatically as you scroll. On macOS, semantic search downloads the required files.
+Edit Zotero notes with rich text or Markdown; changes save automatically. Set Source, Parent and Tags above the note. The Parent pencil searches notes, and the footer shows the type and editable ID. Choose Literature, Zettel, Thinking or Entity; templates live in Settings. Notes inherit tags from their source and parent. **Enhancement → Math preview** renders formulas in note cards and PDF comments.
 
 ### Note links
 
-Type `[[` to find notes beside the cursor. The initial candidates use your current paragraph, note title, direct tags and existing connections, entirely locally. Type to search the whole note library by title, body or reference. Global matches use a stable search order; scroll or press ↓ past the last result to load the next page. Results show a short passage with matching words highlighted and the existing parent when available. Use ↑/↓ to choose, Enter or Tab to insert, and Escape to dismiss while keeping your place.
+Type `[[` to search notes; ↑/↓ choose, Enter or Tab inserts, Escape closes. Links keep a stable ID and show the current title. Use `[[ID|display text]]`, select text before inserting, or edit the link text later to keep your wording; manual labels survive renames. Markdown source keeps `[[ID]]`; the visual editor and previews show titles. With no match, **Create Entity** creates and links a note. In the visual editor and previews, hover a link for its title, type, parent and backlink count; backlinks list every referring paragraph. Parent is hierarchy; links are associations.
 
-A link keeps its stable ID and displays the target's current title. Write `[[ID|display text]]`, or select text before inserting, to keep your own wording. Renaming the target updates automatic labels without breaking references. To change the display text later, edit the link text directly in the visual editor, or write `[[ID|display text]]` in Markdown. Edited text becomes a manual label and stays as written when the target is renamed; change the ID before `|` only when you want a different target. Markdown source keeps `[[ID]]`; the visual editor and previews show titles.
+### Tags
 
-When no note matches, **Create Entity** creates one with the current Entity template and inserts its link. In the visual editor and note preview, hover a link for its title, type, parent and backlink count. Backlinks show every referring paragraph. Parent expresses hierarchy; links express associations.
+**Suggested Tags** reuse topics from related papers. **Tag Manager** groups similar tags, reviews merges, formats spellings and accepts exclusions such as `@colored, reading*`. Rules apply to suggestions, the manager and note displays.
 
-The tabs share one local index. New or changed papers update in the background.
+### Similar items
 
-The graph shows notes by type. **Structure** follows parent–child relationships. **References** follows citations in note text. Structure keeps branches together with parents above children and solid lines. References use dashed lines. Changing a type or relationship filter rebuilds and fits the layout. Nodes take the color of their most similar tag. Configured Group tags take priority, and untagged nodes stay neutral. In Settings, type a Group tag directly or choose an existing label. Groups control graph colors.
+Find related papers locally; results load as you scroll. On macOS, semantic search downloads the required files.
 
-Source, Parent and Tags appear directly above the note. Source accepts Zotero items. Parent sets the hierarchy. Click the Parent title to navigate or the pencil to find candidates using the same local context and passage previews. Typing searches the whole note library, with further results loaded as you scroll or move down. ↑/↓ and Enter select a parent, and Escape cancels. Your note and its descendants are excluded. Relationships change only after you choose a result. The footer shows the type and editable ID with copy. Single-click a note to view it. Double-click to open a window.
+### Graph
 
-**Read & Write** beside Source opens the PDF and selects this note in Zotero’s sidebar. **Use Knowledge Base for native notes** controls the sidebar, note tabs and note windows. Command-Shift-X on macOS (Ctrl-Shift-X elsewhere) captures a dragged region to the clipboard. Escape cancels. No open note is required. Paste the image wherever you need it. Pasting into a Zotero note keeps its PDF position without creating an annotation. The Knowledge Base button sits immediately before the page number. It is colored when the paper has a Literature Note and gray otherwise. Click to open that note, or the Knowledge Base workspace when none exists. Command-click on macOS (Ctrl-click elsewhere) creates and opens the paper’s Literature Note, reusing an existing one. The Knowledge Base tab’s **Show in Library** selects and expands the managed Personal Knowledge parent used for notes without a paper source, creating it only when needed. It reuses the same item even after you rename it.
+**Structure** follows parents, **References** follows note links. Filter by note type or relationship; node colors come from Group tags in Settings.
 
-Appearance offers Minimal, Bear and Notes, with light and dark colors. Light mode uses white backgrounds throughout. Styles share heading sizes, line spacing and layout, preserving Zotero’s note font size. Minimal uses system typography, monochrome text and muted slate links, Bear uses Avenir-style text, lighter headings and soft red links, and Notes uses system fonts and amber links. Formula glyphs use the bundled KaTeX fonts. Templates and type defaults are managed in one window.
+### Reading
 
-Edits save automatically to Zotero. If changes remain when closing a note, choose Save, Cancel or Discard.
+**Read & Write** beside Source opens the PDF and selects the note in Zotero’s sidebar. **Use Knowledge Base for native notes** controls the sidebar, note tabs and note windows. Command-Shift-X on macOS (Ctrl-Shift-X elsewhere) captures a dragged region. The Knowledge Base button beside the page number opens the paper’s Literature Note; Command/Ctrl-click creates one when missing. **Show in Library** opens the personal parent for notes without a paper source.
+
+### Appearance
+
+Minimal, Bear and Notes styles with light and dark colors. Closing a note with unsaved changes asks to save, cancel or discard.
 
 ## Backup
 
-Note content uses Zotero sync. IDs, hierarchy and links live in `knowledge-base.sqlite` in the Zotero data directory. Quit Zotero before backing up the data directory.
+Note content uses Zotero sync. IDs, hierarchy and links live in `knowledge-base.sqlite` in the Zotero data directory. Quit Zotero before backing up.
 
 ```text
 knowledge-base.sqlite
@@ -52,33 +53,7 @@ knowledge-base/
   runtime/onnx/
 ```
 
-Images use `assets/`. Search and model caches use `cache/`. Downloaded models and runtimes use `models/` and `runtime/`.
-
-## Development
-
-Knowledge Base uses one editor document and native-note storage across hosts. `src/modules/editor-views.ts` owns editor windows and pending saves. `workbench.ts` owns workspace navigation.
-
-Edit `addon/content/library/tag-terms.json` to maintain fixed spellings and aliases. Tag operations reuse the existing index and vectors. Semantic matching falls back to text rules when the model is unavailable. `SW_HOST_NATIVE_MODEL_DIR=/path/to/local/model npm run test:tag-semantics` runs the offline quality probe with an existing model.
-
-Node.js 22.13+ (22.x) or 24+.
-
-```sh
-npm ci
-npm run check
-npm run build
-```
-
-Output: `dist/zotero-knowledge-base.xpi`.
-
-Native inference supports macOS. Inference shares tokenization, chunking, pooling and ranking across backends. `inference-backend.h` runs ONNX with CPU fallback. `coreml-backend.h` provides the macOS backend. `SW_NATIVE_MODEL_DIR=/path/to/model node scripts/test-native.mjs` checks CPU/Core ML agreement using temporary caches.
-
-Interactive inference takes priority at native input boundaries. Background documents resume without restarting completed chunks. macOS uses thread QoS for scheduling hints. Core ML and CPU share the model execution path.
-
-`npm run benchmark:reading` measures PDF/note opening, note switching, figure insertion and saving, and timer delays during indexing of 24 disposable papers. Set `KNOWLEDGE_BASE_READING_BENCHMARK_OUTPUT=build/performance/reading.json` to retain the measurements.
-
-`node scripts/benchmark-layout.mjs` measures background layout on a fixed synthetic graph.
-
-`node scripts/benchmark-search.mjs` measures index rebuilding, signature decoding and retrieval on fixed synthetic data. It reports a ranking digest for before/after comparisons. Timings exclude Zotero storage and native inference.
+Images use `assets/`. Search and model caches use `cache/`; downloaded models and runtimes use `models/` and `runtime/`.
 
 ## License
 
