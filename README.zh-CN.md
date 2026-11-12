@@ -4,11 +4,7 @@
 
 [English](README.md) | **简体中文**
 
-在 Zotero 中管理笔记、整理标签、发现相似条目。
-
-## 安装
-
-需要 Zotero 10。从 [Releases](https://github.com/lzcn/zotero-knowledge-base/releases/latest) 下载 XPI。在**工具**菜单中打开**插件**，选择**从文件安装插件**，然后重启 Zotero。
+在 Zotero 中管理笔记、整理标签、发现相似条目。需要 Zotero 10。
 
 ## 使用
 

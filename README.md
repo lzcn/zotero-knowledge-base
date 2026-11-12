@@ -4,11 +4,7 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Notes, tags and similar items in Zotero.
-
-## Install
-
-Requires Zotero 10. Download the XPI from [Releases](https://github.com/lzcn/zotero-knowledge-base/releases/latest). Open **Plugins** in the **Tools** menu, choose **Install Plugin From File**, and restart Zotero.
+Notes, tags and similar items in Zotero. Requires Zotero 10.
 
 ## Use
 
