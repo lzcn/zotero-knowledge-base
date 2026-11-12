@@ -104,11 +104,16 @@ type="text/css"?>
             <html:input
               id="knowledge-base-parent-search"
               type="search"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-controls="knowledge-base-parent-results"
+              aria-expanded="false"
               hidden="hidden"
             />
             <html:ul
               id="knowledge-base-parent-results"
               class="refs"
+              role="listbox"
               hidden="hidden"
             />
           </html:div>
@@ -255,7 +260,6 @@ type="text/css"?>
       ></html:span>
       <button id="knowledge-base-editor-save-copy" hidden="true" />
       <button id="knowledge-base-editor-cancel"></button>
-      <button id="knowledge-base-editor-apply-draft" hidden="true" />
     </html:footer>
   </html:div>
 </window>

@@ -76,7 +76,11 @@ export default async function linksHost({
     await api.releaseNativeNote(native.noteID);
     return { id, noteID: native.noteID };
   };
-  const primary = await create("LinkPrimary", "Token pruning", "Target idea.");
+  const primary = await create(
+    "LinkPrimary",
+    "Token pruning",
+    "Motion-guided token pruning uses event signals.",
+  );
   await create(
     "LinkSecondary",
     "Token pruning",
@@ -85,7 +89,7 @@ export default async function linksHost({
   const source = await create(
     "LinkSource",
     "Reading synthesis",
-    "Why this matters.\n\nA useful connection.",
+    "Why this matters.\n\nA useful motion token pruning connection.",
   );
   const open = async (id) => {
     api.openEditor({ window: true, zettelId: id });
@@ -101,6 +105,170 @@ export default async function linksHost({
     return win;
   };
   const editor = await open(source.id);
+  const parents = await api.getParentCandidates(source.id, "", {
+    paragraph: "motion token pruning",
+  });
+  assert(
+    parents.items.some(
+      (card) => card.id === primary.id && card.snippet.includes("Motion"),
+    ),
+    "Context did not retrieve an existing parent candidate",
+  );
+  editor.document.getElementById("knowledge-base-parent-edit").click();
+  const parentSearch = editor.document.getElementById(
+    "knowledge-base-parent-search",
+  );
+  await wait(
+    () =>
+      editor.document.querySelector(
+        "#knowledge-base-parent-results .candidate-snippet mark",
+      ),
+    "Parent candidates lost highlighted passages",
+  );
+  const parentBounds = editor.document
+    .getElementById("knowledge-base-parent-picker")
+    .getBoundingClientRect();
+  assert(
+    parentBounds.right <= editor.innerWidth && parentBounds.width > 180,
+    "Parent preview overflowed the editor",
+  );
+  await shot(editor, "parent-candidates");
+  parentSearch.dispatchEvent(
+    new editor.KeyboardEvent("keydown", {
+      key: "ArrowDown",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  assert(
+    parentSearch.getAttribute("aria-activedescendant") ===
+      "knowledge-base-parent-option-0",
+    "Parent keyboard selected the clearing action first",
+  );
+  parentSearch.dispatchEvent(
+    new editor.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  assert(
+    editor.document.getElementById("knowledge-base-parent-picker").hidden &&
+      !(await api.getFamily(source.id)).parent,
+    "Inspecting candidates changed the parent",
+  );
+  editor.document.getElementById("knowledge-base-parent-edit").click();
+  await wait(
+    () =>
+      editor.document.querySelector(
+        "#knowledge-base-parent-results .relation-link",
+      ),
+    "Parent candidates did not reopen",
+  );
+  parentSearch.dispatchEvent(
+    new editor.KeyboardEvent("keydown", {
+      key: "ArrowDown",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  parentSearch.dispatchEvent(
+    new editor.KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await editor.save(false);
+  assert(
+    (await api.getFamily(source.id)).parent?.id === primary.id,
+    "Keyboard Parent choice did not save the selected identity",
+  );
+  editor.document.getElementById("knowledge-base-parent-edit").click();
+  await wait(
+    () =>
+      editor.document.querySelector(
+        "#knowledge-base-parent-results .metadata-clear",
+      ),
+    "No parent action did not reopen",
+  );
+  editor.document
+    .querySelector("#knowledge-base-parent-results .metadata-clear")
+    .click();
+  await editor.save(false);
+  assert(
+    !(await api.getFamily(source.id)).parent,
+    "Clearing the selected parent did not save",
+  );
+  for (let n = 0; n < 35; n++) {
+    await create(
+      `Pagination${String(n).padStart(3, "0")}`,
+      `Global pagination ${String(n).padStart(3, "0")}`,
+      "An unrelated globally searchable note.",
+    );
+  }
+  editor.document.getElementById("knowledge-base-parent-edit").click();
+  parentSearch.value = "Global pagination";
+  parentSearch.dispatchEvent(new editor.Event("input", { bubbles: true }));
+  const parentResults = editor.document.getElementById(
+    "knowledge-base-parent-results",
+  );
+  await wait(
+    () => parentResults.querySelectorAll(".relation-link").length === 30,
+    "Global Parent search did not load its first page",
+  );
+  parentResults.scrollTop = parentResults.scrollHeight;
+  parentResults.dispatchEvent(new editor.Event("scroll"));
+  await wait(
+    () => parentResults.querySelectorAll(".relation-link").length === 35,
+    "Global Parent search truncated later matches",
+  );
+  parentSearch.dispatchEvent(
+    new editor.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  await editor.setEditorMode("source");
+  const paginationBody = editor.document.getElementById(
+    "knowledge-base-editor-body",
+  );
+  const beforePagination = paginationBody.value;
+  paginationBody.value += "\n\n[[Global pagination";
+  paginationBody.setSelectionRange(
+    paginationBody.value.length,
+    paginationBody.value.length,
+  );
+  paginationBody.dispatchEvent(new editor.Event("input", { bubbles: true }));
+  const paginationResults = editor.document.getElementById(
+    "knowledge-base-link-results",
+  );
+  await wait(
+    () => paginationResults.children.length === 30,
+    "Global wiki search did not load its first page",
+  );
+  paginationResults.scrollTop = paginationResults.scrollHeight;
+  paginationResults.dispatchEvent(new editor.Event("scroll"));
+  await wait(
+    () => paginationResults.children.length === 35,
+    "Global wiki search truncated later matches",
+  );
+  assert(
+    paginationResults.lastElementChild.textContent.includes("Pagination034"),
+    "The last global match is inaccessible",
+  );
+  paginationBody.dispatchEvent(
+    new editor.KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  paginationBody.value = beforePagination;
+  paginationBody.dispatchEvent(new editor.Event("input", { bubbles: true }));
+  await editor.save(false);
+  await editor.setEditorMode("visual");
   const frame = editor.document
     .getElementById("knowledge-base-rich-frame")
     .getCurrentInstance()._iframeWindow;
@@ -167,6 +335,10 @@ export default async function linksHost({
     row.textContent.includes("LinkPrimary"),
   );
   assert(primaryIndex >= 0, "Duplicate titles lost their stable references");
+  assert(
+    rows()[primaryIndex].querySelector(".candidate-snippet"),
+    "Link candidates lost their passage previews",
+  );
   for (let n = 0; n < primaryIndex; n++) key("ArrowDown");
   assert(
     rows()[primaryIndex].getAttribute("aria-selected") === "true" &&

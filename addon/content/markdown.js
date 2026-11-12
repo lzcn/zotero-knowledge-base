@@ -116,6 +116,53 @@ window.ZoteroKnowledgeBaseMarkdown = {
     container.setAttribute("aria-label", name.textContent);
   },
 
+  /** Compact, text-only previews shared by the link and Parent pickers. */
+  candidate(container, card, parentLabel) {
+    this.identity(container, card.id, card.title, card.reference);
+    const append = (className, text) => {
+      const line = document.createElementNS(
+        "http://www.w3.org/1999/xhtml",
+        "span",
+      );
+      line.className = className;
+      line.textContent = text;
+      container.append(line);
+      return line;
+    };
+    append("link-option-reference", card.reference || card.id);
+    if (card.parentTitle)
+      append("candidate-path", `${parentLabel}: ${card.parentTitle}`);
+    if (card.snippet) {
+      const snippet = append("candidate-snippet", "");
+      snippet.title = card.snippet;
+      const terms = (card.matches || [])
+        .filter(Boolean)
+        .sort((a, b) => b.length - a.length);
+      const pattern = terms.length
+        ? new RegExp(
+            terms
+              .map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+              .join("|"),
+            "giu",
+          )
+        : null;
+      let end = 0;
+      for (const match of pattern ? card.snippet.matchAll(pattern) : []) {
+        snippet.append(
+          document.createTextNode(card.snippet.slice(end, match.index)),
+        );
+        const mark = document.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "mark",
+        );
+        mark.textContent = match[0];
+        snippet.append(mark);
+        end = match.index + match[0].length;
+      }
+      snippet.append(document.createTextNode(card.snippet.slice(end)));
+    }
+  },
+
   /** @param {HTMLButtonElement} button @param {string} reference @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
   reference(button, reference, api) {
     button.hidden = !reference;

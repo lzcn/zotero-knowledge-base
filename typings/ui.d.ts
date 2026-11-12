@@ -39,9 +39,8 @@ declare global {
     knowledgeBaseRequestClose?: () => Promise<void>;
     knowledgeBaseEditTags?: () => Promise<void>;
     knowledgeBaseRefreshNotes?: () => void;
-    knowledgeBaseDraftId?: string;
     knowledgeBaseStopping?: boolean;
-    knowledgeBaseFlushDraft?: () => Promise<void>;
+    knowledgeBaseSaveBeforeStop?: () => Promise<void>;
     knowledgeBaseStopEditor?: () => void;
     knowledgeBasePrepareNavigation?: () => Promise<boolean>;
     KnowledgeBaseNativeEditor: {
@@ -79,6 +78,18 @@ declare global {
         id: string,
         title: string,
         reference?: string,
+      ): void;
+      candidate(
+        container: Element,
+        card: {
+          id: string;
+          title: string;
+          reference?: string;
+          snippet?: string;
+          matches?: string[];
+          parentTitle?: string | null;
+        },
+        parentLabel: string,
       ): void;
       reference(
         button: HTMLButtonElement,
@@ -159,7 +170,6 @@ export interface EditorElements {
   "knowledge-base-editor-footer": HTMLElementTagNameMap["footer"];
   "knowledge-base-editor-status": HTMLElementTagNameMap["span"];
   "knowledge-base-editor-cancel": HTMLElementTagNameMap["button"];
-  "knowledge-base-editor-apply-draft": HTMLElementTagNameMap["button"];
   "knowledge-base-anno-layer": HTMLElementTagNameMap["div"];
   "knowledge-base-anno-box": HTMLElementTagNameMap["div"];
   "knowledge-base-anno-head": HTMLElementTagNameMap["html"];

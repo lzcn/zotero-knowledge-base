@@ -448,8 +448,6 @@ export interface SaveCardInput {
   annotationKey?: string | null;
   parentId?: string | null;
   expectedUpdatedAt?: number | null;
-  draftId?: string;
-  draftRevision?: number;
 }
 
 export async function saveZettel(input: SaveCardInput): Promise<string> {
@@ -673,11 +671,6 @@ export async function saveEditorCard(
         affected.add(row.source_id);
     }
     await beforeCommit?.(id);
-    if (input.draftId && input.draftRevision !== undefined)
-      await exec("DELETE FROM editor_drafts WHERE id = ? AND revision <= ?", [
-        input.draftId,
-        input.draftRevision,
-      ]);
     return {
       id,
       previousItemKey,

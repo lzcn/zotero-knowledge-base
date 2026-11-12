@@ -468,6 +468,7 @@ export default async function settingsHost({
       sourceStyle.lineHeight === prose.lineHeight,
       "Markdown did not inherit the " + style + " leading",
     );
+    if (style === "minimal") await capture(note, "minimal-markdown");
     await note.setEditorMode("visual");
   }
   assert(

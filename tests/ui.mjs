@@ -1485,7 +1485,7 @@ async function editor(args = {}, overrides = {}) {
       Object.fromEntries(ids.map((id) => [id, "Target card"])),
     copyNoteReference: (reference) => calls.open.push(`[[${reference}]]`),
     getFamily: async () => ({ parent: null, children: [] }),
-    getParentCandidates: async () => [],
+    getParentCandidates: async () => ({ items: [], cursor: null }),
     getDraftLinks: async (body) =>
       markdown.parseCardLinks(body).map((link) => ({
         ...link,
@@ -1504,9 +1504,16 @@ async function editor(args = {}, overrides = {}) {
       items: await api.listZettels(query),
       cursor: null,
     }),
-    discardEditorDraft: async () => {},
-    saveEditorDraft: async () => {},
-    getEditorDraft: async () => null,
+    getLinkCandidates: async (id, query, context, cursor) => {
+      const page = await api.searchZettelSummaries(query, {
+        limit: 31,
+        cursor,
+      });
+      return {
+        ...page,
+        items: page.items.filter((card) => card.id !== id).slice(0, 30),
+      };
+    },
     mergeMarkdownDocuments: document_merge.mergeMarkdownDocuments,
     isAccelKey: (event) => platform.isAccelKey(event, true),
     saveEditorCard: async (input) => {
@@ -1607,8 +1614,7 @@ async function editor(args = {}, overrides = {}) {
   const initialMode = dom.window.document.getElementById(
     "knowledge-base-editor-root",
   ).dataset.mode;
-  if (!args.draftId)
-    await dom.window.__editorEval('setEditorMode("source", false)');
+  await dom.window.__editorEval('setEditorMode("source", false)');
   return {
     initialMode,
     initialSourceAllocated,
@@ -1652,6 +1658,250 @@ check("Returning to native editing also carries across notes", () => {
 });
 for (const fixture of [firstModeEditor, secondModeEditor, thirdModeEditor])
   fixture.win.close();
+let discoveryContext;
+const discoveryCard = {
+  id: "DISCOVERY",
+  title: "Motion signals",
+  reference: "Motion2026",
+  parentTitle: "Visual inference",
+  snippet: "Motion evidence <img src=x onerror=alert(1)> stays literal.",
+  matches: ["motion"],
+};
+const discoveryEditor = await editor(
+  { prefillTitle: "Draft motion note" },
+  {
+    getLinkCandidates: async (_id, _query, context) => {
+      discoveryContext = context;
+      return { items: [discoveryCard], cursor: null };
+    },
+    getParentCandidates: async () => ({ items: [discoveryCard], cursor: null }),
+    getZettel: async () => discoveryCard,
+  },
+);
+const discoveryBody = discoveryEditor.$("knowledge-base-editor-body");
+discoveryBody.value = "# Draft motion note\n\nUnsaved motion evidence [[";
+discoveryBody.setSelectionRange(
+  discoveryBody.value.length,
+  discoveryBody.value.length,
+);
+discoveryBody.dispatchEvent(
+  new discoveryEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+check(
+  "Local candidates use the live draft paragraph and render safe highlighted previews",
+  () => {
+    assert.match(discoveryContext.paragraph, /Unsaved motion evidence/);
+    assert.match(discoveryContext.body, /Unsaved motion evidence/);
+    const row = discoveryEditor.$(
+      "knowledge-base-link-results",
+    ).firstElementChild;
+    assert.equal(row.querySelector("mark").textContent, "Motion");
+    assert.match(
+      row.querySelector(".candidate-path").textContent,
+      /Visual inference/,
+    );
+    assert.equal(row.querySelector("img"), null);
+    assert.match(row.querySelector(".candidate-snippet").textContent, /<img/);
+  },
+);
+await discoveryEditor.win.__editorEval("closeCardPicker()");
+discoveryEditor.$("knowledge-base-parent-edit").click();
+await new Promise((resolve) => setTimeout(resolve, 230));
+const discoverySearch = discoveryEditor.$("knowledge-base-parent-search");
+discoverySearch.dispatchEvent(
+  new discoveryEditor.win.KeyboardEvent("keydown", {
+    key: "ArrowDown",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check(
+  "Parent arrows select the first candidate without selecting No parent or stealing focus",
+  () => {
+    assert.equal(
+      discoverySearch.getAttribute("aria-activedescendant"),
+      "knowledge-base-parent-option-0",
+    );
+    assert.equal(discoveryEditor.win.document.activeElement, discoverySearch);
+    assert.ok(
+      discoveryEditor.$("knowledge-base-parent-results").querySelector("mark"),
+    );
+  },
+);
+discoverySearch.dispatchEvent(
+  new discoveryEditor.win.KeyboardEvent("keydown", {
+    key: "Enter",
+    bubbles: true,
+    cancelable: true,
+  }),
+);
+check("Enter chooses the highlighted Parent and closes its picker", () => {
+  assert.equal(
+    discoveryEditor.win.__editorEval("snapshot().parentId"),
+    "DISCOVERY",
+  );
+  assert.equal(discoveryEditor.$("knowledge-base-parent-picker").hidden, true);
+});
+discoveryEditor.win.close();
+let finishCandidatePage;
+const candidateRequests = [];
+const pagedEditor = await editor(
+  {},
+  {
+    getLinkCandidates: async (_id, query, _context, cursor) => {
+      candidateRequests.push({ query, cursor });
+      if (query === "Else")
+        return { items: [{ id: "ELSE", title: "Other note" }], cursor: null };
+      if (cursor)
+        return new Promise((resolve) => {
+          finishCandidatePage = resolve;
+        });
+      return {
+        items: [
+          { id: "PAGE1", title: "First" },
+          { id: "PAGE2", title: "Second" },
+        ],
+        cursor: "next",
+      };
+    },
+  },
+);
+const pagedBody = pagedEditor.$("knowledge-base-editor-body");
+const setCandidateQuery = async (query) => {
+  pagedBody.value = `[[${query}`;
+  pagedBody.setSelectionRange(pagedBody.value.length, pagedBody.value.length);
+  pagedBody.dispatchEvent(
+    new pagedEditor.win.Event("input", { bubbles: true }),
+  );
+  await wait();
+};
+const candidateKey = (key) =>
+  pagedBody.dispatchEvent(
+    new pagedEditor.win.KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+await setCandidateQuery("Global");
+candidateKey("ArrowDown");
+candidateKey("ArrowDown");
+await wait();
+pagedEditor
+  .$("knowledge-base-link-results")
+  .dispatchEvent(new pagedEditor.win.Event("scroll"));
+candidateKey("Enter");
+check(
+  "Keyboard pagination requests one next page and cannot insert the previous row while waiting",
+  () => {
+    assert.equal(candidateRequests.length, 2);
+    assert.equal(pagedBody.value, "[[Global");
+  },
+);
+finishCandidatePage({
+  items: [
+    { id: "PAGE2", title: "Second" },
+    { id: "PAGE3", title: "Third" },
+  ],
+  cursor: "later",
+});
+await wait();
+check(
+  "Appended candidates keep existing rows, deduplicate overlap and advance the keyboard selection",
+  () => {
+    const rows = pagedEditor.$("knowledge-base-link-results").children;
+    assert.equal(rows.length, 3);
+    assert.equal(rows[2].getAttribute("aria-selected"), "true");
+  },
+);
+pagedEditor
+  .$("knowledge-base-link-results")
+  .dispatchEvent(new pagedEditor.win.Event("scroll"));
+await wait();
+const staleCandidatePage = finishCandidatePage;
+await setCandidateQuery("Else");
+staleCandidatePage({
+  items: [{ id: "STALEPAGE", title: "Outdated" }],
+  cursor: null,
+});
+await wait();
+check(
+  "A new global query rejects pending pages from the previous query",
+  () => {
+    assert.equal(
+      pagedEditor.$("knowledge-base-link-results").children.length,
+      1,
+    );
+    assert.match(
+      pagedEditor.$("knowledge-base-link-results").textContent,
+      /ELSE/,
+    );
+    assert.doesNotMatch(
+      pagedEditor.$("knowledge-base-link-results").textContent,
+      /STALEPAGE/,
+    );
+  },
+);
+let parentPageRequests = 0;
+pagedEditor.win.Zotero.ZoteroKnowledgeBase.api.getParentCandidates = async (
+  _id,
+  _query,
+  _context,
+  cursor,
+) => {
+  parentPageRequests++;
+  return cursor
+    ? {
+        items: [
+          { id: "PARENT2", title: "Second parent" },
+          { id: "PARENT3", title: "Third parent" },
+        ],
+        cursor: null,
+      }
+    : {
+        items: [
+          { id: "PARENT1", title: "First parent" },
+          { id: "PARENT2", title: "Second parent" },
+        ],
+        cursor: "next-parent",
+      };
+};
+pagedEditor.$("knowledge-base-parent-edit").click();
+const parentPagingInput = pagedEditor.$("knowledge-base-parent-search");
+parentPagingInput.value = "Global";
+parentPagingInput.dispatchEvent(new pagedEditor.win.Event("input"));
+await new Promise((resolve) => setTimeout(resolve, 230));
+for (let n = 0; n < 3; n++)
+  parentPagingInput.dispatchEvent(
+    new pagedEditor.win.KeyboardEvent("keydown", {
+      key: "ArrowDown",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+await wait();
+check(
+  "Parent keyboard loads later global matches and preserves a single No parent action",
+  () => {
+    const list = pagedEditor.$("knowledge-base-parent-results");
+    assert.equal(parentPageRequests, 2);
+    assert.equal(list.querySelectorAll(".metadata-clear").length, 1);
+    assert.equal(list.querySelectorAll(".relation-link").length, 3);
+    assert.equal(
+      parentPagingInput.getAttribute("aria-activedescendant"),
+      "knowledge-base-parent-option-2",
+    );
+  },
+);
+pagedEditor
+  .$("knowledge-base-parent-results")
+  .dispatchEvent(new pagedEditor.win.Event("scroll"));
+await wait();
+check("Parent pagination stops once the final page is loaded", () =>
+  assert.equal(parentPageRequests, 2),
+);
+pagedEditor.win.close();
 const completionEditor = await editor();
 const completionBody = completionEditor.$("knowledge-base-editor-body");
 completionBody.value = "Before [[";
@@ -2167,8 +2417,8 @@ check(
         .textContent.includes("Retained content"),
     );
     assert.equal(
-      unavailableEditor.$("knowledge-base-editor-apply-draft").hidden,
-      true,
+      unavailableEditor.$("knowledge-base-editor-apply-draft"),
+      null,
     );
     assert.equal(
       unavailableEditor.$("knowledge-base-editor-save-copy").hidden,
@@ -2257,17 +2507,13 @@ check(
       restoredEditor.$("knowledge-base-editor-preview").hidden,
       true,
     );
-    assert.equal(
-      restoredEditor.$("knowledge-base-editor-apply-draft").hidden,
-      true,
-    );
+    assert.equal(restoredEditor.$("knowledge-base-editor-apply-draft"), null);
     assert.equal(restoredEditor.saved(), undefined);
   },
 );
 restoredEditor.win.close();
 for (const pendingEdit of [false, true]) {
   let health = "available";
-  let discarded = 0;
   const fixture = await editor(
     { zettelId: "AUTOSAVED_NOTE" },
     {
@@ -2284,7 +2530,6 @@ for (const pendingEdit of [false, true]) {
         source: "none",
         editable: true,
       }),
-      discardEditorDraft: async () => discarded++,
     },
   );
   if (pendingEdit) {
@@ -2315,9 +2560,8 @@ for (const pendingEdit of [false, true]) {
       : "Trash restoration clears an index-only draft already saved by the native editor",
     () => {
       assert.equal(fixture.win.__editorEval("dirty"), pendingEdit);
-      assert.equal(fixture.win.__editorEval("recoveryPending"), pendingEdit);
-      assert.equal(fixture.$("knowledge-base-rich-frame").hidden, pendingEdit);
-      assert.equal(discarded, pendingEdit ? 0 : 1);
+      assert.equal(fixture.win.__editorEval("unavailablePreview"), false);
+      assert.equal(fixture.$("knowledge-base-rich-frame").hidden, false);
       if (pendingEdit) {
         const afterRestore = fixture.win.__editorEval("snapshot()");
         assert.equal(afterRestore.sourceDocument, beforeTrash.sourceDocument);
@@ -2331,12 +2575,9 @@ for (const pendingEdit of [false, true]) {
 let closeChoice = 1;
 let promptCalls = 0;
 let closeCalls = 0;
-const closeDrafts = [];
 const closeEditor = await editor(
   { prefillTitle: "Unsaved idea", prefillBody: "Keep this text" },
-  {
-    saveEditorDraft: async (input) => closeDrafts.push(input),
-  },
+  {},
 );
 const originalClose = closeEditor.win.close.bind(closeEditor.win);
 closeEditor.win.close = () => closeCalls++;
@@ -2405,11 +2646,14 @@ check("Native close requests use the same unsaved-work confirmation", () => {
 });
 closeChoice = 2;
 await closeEditor.win.__editorEval("closeIfClean()");
-check("Keep draft closes without committing the unsaved card", () => {
-  assert.equal(closeCalls, 1);
-  assert.equal(closeEditor.saved(), undefined);
-  assert.equal(closeDrafts.at(-1).body, "Keep this text");
-});
+check(
+  "Discard and close drops only unsaved edits without creating a draft",
+  () => {
+    assert.equal(closeCalls, 1);
+    assert.equal(closeEditor.saved(), undefined);
+    assert.equal(closeEditor.win.__editorEval("dirty"), false);
+  },
+);
 closeEditor.win.close = originalClose;
 closeEditor.win.dispatchEvent(new closeEditor.win.Event("unload"));
 originalClose();
@@ -2444,7 +2688,7 @@ failedClose.win.close = () => failedCloseCalls++;
 failedClose.win.Services = closeEditor.win.Services;
 failedClose.win.Zotero.logError = () => {};
 await failedClose.win.__editorEval("closeIfClean()");
-check("A failed close-time save keeps the editor and draft recoverable", () => {
+check("A failed close-time save keeps the editor and unsaved text open", () => {
   assert.equal(failedCloseCalls, 0);
   assert.equal(failedClose.win.__editorEval("allowClose"), false);
   assert.equal(
@@ -2457,13 +2701,9 @@ failedClose.win.dispatchEvent(new failedClose.win.Event("unload"));
 originalFailedClose();
 // Slow writes must not clear edits made after their snapshot was taken.
 let finishSave;
-let draftSnapshot;
 const slow = await editor(
   {},
   {
-    saveEditorDraft: async (input) => {
-      draftSnapshot = input;
-    },
     saveEditorCard: async () =>
       new Promise((resolve) => {
         finishSave = resolve;
@@ -2479,11 +2719,11 @@ slow.win.__editorEval("setDirty()");
 finishSave({ id: "slow-card", updatedAt: 10 });
 await pendingSave;
 check(
-  "Typing during a save stays dirty and retains the newer recovery draft",
+  "Typing during a save stays dirty and retains the newer text in the editor",
   () => {
     assert.equal(slow.win.__editorEval("dirty"), true);
-    assert.equal(draftSnapshot.body, "second");
-    assert.equal(draftSnapshot.expectedUpdatedAt, 10);
+    assert.equal(slow.win.__editorEval("snapshot().body"), "second");
+    assert.equal(slow.win.__editorEval("expectedUpdatedAt"), 10);
   },
 );
 slow.win.close();
@@ -2502,9 +2742,6 @@ const unchanged = await editor(
     saveEditorCard: async () => {
       unchangedWrites++;
     },
-    saveEditorDraft: async () => {
-      unchangedWrites++;
-    },
   },
 );
 await unchanged.win.__editorEval('setEditorMode("visual", false)');
@@ -2520,6 +2757,20 @@ check(
   },
 );
 unchanged.win.close();
+const stopSave = await editor({
+  prefillTitle: "Direct save",
+  prefillBody: "Latest words",
+});
+await stopSave.win.knowledgeBaseSaveBeforeStop();
+check(
+  "Stopping saves the latest content directly without a draft API or recovery action",
+  () => {
+    assert.equal(stopSave.saved().body, "Latest words");
+    assert.equal(stopSave.win.knowledgeBaseFlushDraft, undefined);
+    assert.equal(stopSave.$("knowledge-base-editor-apply-draft"), null);
+  },
+);
+stopSave.win.close();
 let acknowledgedCard = {
   id: "ACKNOWLEDGED",
   source_note: 0,
@@ -2528,7 +2779,6 @@ let acknowledgedCard = {
   body: "Original body",
   updated_at: 1,
 };
-const acknowledgedDrafts = [];
 const acknowledged = await editor(
   { zettelId: acknowledgedCard.id },
   {
@@ -2538,7 +2788,6 @@ const acknowledged = await editor(
       libraryID,
       title: "Local source",
     }),
-    discardEditorDraft: async (...values) => acknowledgedDrafts.push(values),
   },
 );
 await acknowledged.win.__editorEval('setEditorMode("visual", false)');
@@ -2568,7 +2817,6 @@ check(
   () => {
     assert.equal(acknowledged.win.__editorEval("dirty"), false);
     assert.equal(acknowledged.win.__editorEval("expectedUpdatedAt"), 2);
-    assert.equal(acknowledgedDrafts.at(-1)[1], 1);
   },
 );
 acknowledged.win.__editorEval(
@@ -2581,7 +2829,6 @@ await wait();
 check("Native refresh acknowledgement retains pending source changes", () => {
   assert.equal(acknowledged.win.__editorEval("dirty"), true);
   assert.equal(acknowledged.win.__editorEval("source.key"), "LOCAL001");
-  assert.equal(acknowledgedDrafts.length, 1);
 });
 acknowledged.win.close();
 const synchronized = await editor(
@@ -2849,7 +3096,6 @@ check(
   },
 );
 compositionEditor.win.close();
-let failedNativeDraft;
 let failedNativeWrites = 0;
 const failedNative = await editor(
   { zettelId: "NATIVE_FAILURE" },
@@ -2862,9 +3108,6 @@ const failedNative = await editor(
       body: "Keep this draft",
       updated_at: 1,
     }),
-    saveEditorDraft: async (input) => {
-      failedNativeDraft = input;
-    },
     saveEditorCard: async () => {
       failedNativeWrites++;
     },
@@ -2895,36 +3138,13 @@ check(
     assert.equal(failedNative.win.__editorEval("dirty"), true);
   },
 );
-await failedNative.win.__editorEval("persistDraft()");
-check("A failed native save retains recoverable editor content", () => {
-  assert.match(failedNativeDraft.body, /Keep this draft$/);
-  assert.equal(failedNativeDraft.id, "NATIVE_FAILURE");
+check("A failed native save keeps unsaved content in the open editor", () => {
+  assert.match(
+    failedNative.$("knowledge-base-editor-body").value,
+    /Keep this draft$/,
+  );
 });
 failedNative.win.close();
-const recovered = await editor(
-  { draftId: "recover" },
-  {
-    getEditorDraft: async () => ({
-      draftId: "recover",
-      draftRevision: 2,
-      title: "Recovered card",
-      body: "Kept after restart",
-      expectedUpdatedAt: null,
-    }),
-  },
-);
-check(
-  "Recovered drafts load without immediately overwriting a saved card",
-  () => {
-    assert.equal(
-      recovered.$("knowledge-base-editor-body").value,
-      "Kept after restart",
-    );
-    assert.equal(recovered.saved(), undefined);
-    assert.equal(recovered.win.__editorEval("dirty"), true);
-  },
-);
-recovered.win.close();
 const commands = await editor({ prefillTitle: "Commands" });
 const commandBody = commands.$("knowledge-base-editor-body");
 const typeCommand = (text) => {
@@ -3423,7 +3643,7 @@ const parentTarget = { id: "PARENT", title: "Parent concept" };
 const parentEditor = await editor(
   { prefillTitle: "Child concept" },
   {
-    getParentCandidates: async () => [parentTarget],
+    getParentCandidates: async () => ({ items: [parentTarget], cursor: null }),
     getZettel: async (id) => (id === parentTarget.id ? parentTarget : null),
   },
 );
@@ -3501,7 +3721,7 @@ pendingParentEditor.$("knowledge-base-parent-search").dispatchEvent(
     bubbles: true,
   }),
 );
-finishParentSearch([parentTarget]);
+finishParentSearch({ items: [parentTarget], cursor: null });
 await wait();
 check(
   "Cancelled parent searches cannot reopen results or change the hierarchy",
@@ -3556,7 +3776,7 @@ check("Visual mode reuses Zotero's editor and keeps one body surface", () => {
   assert.equal(ed.$("knowledge-base-editor-title"), null);
   assert.equal(ed.$("knowledge-base-editor-preview").hidden, true);
   assert.equal(ed.$("knowledge-base-editor-save"), null);
-  assert.equal(ed.$("knowledge-base-editor-apply-draft").hidden, true);
+  assert.equal(ed.$("knowledge-base-editor-apply-draft"), null);
 });
 ed.$("knowledge-base-editor-format").dispatchEvent(
   new ed.win.Event("command", { bubbles: true }),
@@ -3567,7 +3787,7 @@ check(
   "Markdown keeps the same native toolbar with its body writer paused",
   () => {
     assert.equal(ed.$("knowledge-base-editor-save"), null);
-    assert.equal(ed.$("knowledge-base-editor-apply-draft").hidden, true);
+    assert.equal(ed.$("knowledge-base-editor-apply-draft"), null);
     assert.equal(ed.$("knowledge-base-editor-root").dataset.mode, "source");
     assert.equal(ed.$("knowledge-base-editor-body").hidden, false);
     assert.equal(ed.$("knowledge-base-rich-frame").mode, "edit");
@@ -3620,50 +3840,6 @@ check(
       labels.some((label) => label.includes("editor-reference-insert")),
     );
     assert.ok(!labels.some((label) => label.includes("command-heading")));
-  },
-);
-const recovery = await editor(
-  { draftId: "old-draft" },
-  {
-    getEditorDraft: async () => ({
-      draftId: "old-draft",
-      draftRevision: 1,
-      title: "Recovered title",
-      body: "Recovered **body**",
-      sourceMode: true,
-    }),
-  },
-);
-check(
-  "A retained Markdown draft opens in a read-only recovery preview without a format selector",
-  () => {
-    assert.equal(recovery.initialMode, "visual");
-    assert.equal(recovery.$("knowledge-base-editor-body").hidden, true);
-    assert.equal(recovery.$("knowledge-base-editor-preview").hidden, false);
-    assert.equal(
-      recovery.$("knowledge-base-editor-preview").querySelector("strong")
-        .textContent,
-      "body",
-    );
-    assert.equal(recovery.$("knowledge-base-rich-frame").mode, "view");
-    assert.equal(recovery.$("knowledge-base-editor-apply-draft").hidden, false);
-    assert.equal(recovery.saved(), undefined);
-  },
-);
-recovery
-  .$("knowledge-base-editor-apply-draft")
-  .dispatchEvent(new recovery.win.Event("command", { bubbles: true }));
-await wait();
-await wait();
-check(
-  "Applying a recovery draft returns to native editing without a Save button",
-  () => {
-    assert.equal(recovery.saved().sourceMode, true);
-    assert.equal(recovery.$("knowledge-base-editor-apply-draft").hidden, true);
-    assert.equal(recovery.$("knowledge-base-editor-save"), null);
-    assert.equal(recovery.$("knowledge-base-editor-preview").hidden, true);
-    assert.equal(recovery.$("knowledge-base-rich-frame").hidden, false);
-    assert.equal(recovery.$("knowledge-base-rich-frame").mode, "edit");
   },
 );
 check("Native code remains fenced and opaque to formula formatting", () => {
@@ -5421,7 +5597,6 @@ managerWin.Zotero = {
         managerCalls.sources = args;
       },
       loc: (key) => labels[key] || key,
-      listEditorDrafts: async () => [],
       auditNativeNotes: async () => {},
       copyZettelList: async () => 2,
       isAccelKey: (event) => platform.isAccelKey(event, true),
@@ -5478,6 +5653,10 @@ await managerWin.__managerLoad();
 await wait();
 await wait();
 const managerDoc = managerWin.document;
+check("The workbench has no persistent recovery draft bar", () => {
+  assert.equal(managerDoc.getElementById("knowledge-base-drafts"), null);
+  assert.equal(managerDoc.getElementById("knowledge-base-restore-draft"), null);
+});
 const noteSortControl = managerDoc.getElementById("knowledge-base-sort");
 check("The note list shows its current persistent sort", () => {
   assert.equal(noteSortControl.value, "updated-desc");

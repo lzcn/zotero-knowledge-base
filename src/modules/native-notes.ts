@@ -56,7 +56,6 @@ export interface NativeCardInput extends SaveCardInput {
   expectedNoteHTML?: string;
   sourceMode?: boolean;
   sourceDocument?: string;
-  restoreDraft?: boolean;
   isCurrent?: () => boolean;
 }
 
@@ -859,15 +858,11 @@ export function ensureManagedNote(noteID: number): Promise<string | null> {
     );
     if (mapping) return mapping.card_id;
     if (activeNotes.has(noteID)) return null;
-    // A retained unsaved draft or interrupted save still owns this native note.
+    // An interrupted cross-database save still owns this native note.
     if (
-      (await getOne(
-        "SELECT id FROM editor_drafts WHERE json_extract(data, '$.noteID') = ? AND json_extract(data, '$.id') IS NULL AND COALESCE(json_extract(data, '$.nativeDocument'), 0) = 0 LIMIT 1",
-        [noteID],
-      )) ||
-      (await getOne("SELECT id FROM note_save_operations WHERE id = ?", [
+      await getOne("SELECT id FROM note_save_operations WHERE id = ?", [
         `${note.libraryID}:${note.key}`,
-      ]))
+      ])
     )
       return null;
     await Zotero.Items.loadDataTypes([note], ["note", "itemData"]);
@@ -1212,25 +1207,23 @@ export async function saveNativeCard(
   )
     throw new Error("CARD_CONFLICT: card changed");
   const preparedHTML = input.sourceMode
-    ? input.restoreDraft && input.nativeHTML
-      ? input.nativeHTML
-      : input.sourceDocument !== undefined
-        ? input.expectedNoteHTML &&
-          getMarkdownDocument(input.expectedNoteHTML) === input.sourceDocument
-          ? input.expectedNoteHTML
-          : await markdownDocumentHTML(
-              input.sourceDocument,
-              input.expectedNoteHTML || "",
-            )
-        : input.expectedNoteHTML &&
-            getMarkdownSource(input.expectedNoteHTML).title === input.title &&
-            getMarkdownSource(input.expectedNoteHTML).body === input.body
-          ? input.expectedNoteHTML
-          : await markdownNoteHTML(
-              input.title,
-              input.body,
-              input.expectedNoteHTML || "",
-            )
+    ? input.sourceDocument !== undefined
+      ? input.expectedNoteHTML &&
+        getMarkdownDocument(input.expectedNoteHTML) === input.sourceDocument
+        ? input.expectedNoteHTML
+        : await markdownDocumentHTML(
+            input.sourceDocument,
+            input.expectedNoteHTML || "",
+          )
+      : input.expectedNoteHTML &&
+          getMarkdownSource(input.expectedNoteHTML).title === input.title &&
+          getMarkdownSource(input.expectedNoteHTML).body === input.body
+        ? input.expectedNoteHTML
+        : await markdownNoteHTML(
+            input.title,
+            input.body,
+            input.expectedNoteHTML || "",
+          )
     : null;
   const projection = projectNativeNote(preparedHTML ?? note.getNote());
   const operation = await prepareNoteOperation(
@@ -1248,7 +1241,6 @@ export async function saveNativeCard(
         ...input,
         ...projection,
         expectedUpdatedAt: operation.expectedVersion,
-        draftRevision: undefined,
       },
       async () => {
         if (input.isCurrent && !input.isCurrent())
@@ -1804,14 +1796,6 @@ export function permanentlyDeleteNotes(
         });
         if (erased) {
           await transaction(async () => {
-            await exec(
-              "DELETE FROM editor_drafts WHERE json_extract(data, '$.id') = ? OR json_extract(data, '$.noteID') = ? OR id = ?",
-              [
-                id,
-                originalID,
-                `native-document:${mapping.library_id}:${mapping.note_key}`,
-              ],
-            );
             await exec("DELETE FROM note_save_operations WHERE card_id = ?", [
               id,
             ]);

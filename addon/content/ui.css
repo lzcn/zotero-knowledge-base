@@ -1,18 +1,17 @@
 /* Knowledge Base palettes share native control colors and note typography. */
 :root {
   --ui-bg: #fff;
-  --ui-fg: #242424;
+  --ui-fg: #282a2d;
   --ui-surface: #fff;
-  --ui-border: #e4e4e7;
-  --ui-hover: #f0f0f2;
-  --ui-active: #e9edf4;
-  --ui-accent: #3768ad;
-  --ui-muted: #6b6b70;
-  --ui-source: #527561;
+  --ui-border: #e5e7e9;
+  --ui-hover: #f1f2f3;
+  --ui-active: #e9edef;
+  --ui-accent: #4e6473;
+  --ui-muted: #74777c;
+  --ui-source: #62746b;
   --ui-danger: #b63742;
   --ui-font: system-ui, sans-serif;
-  --ui-editor-font:
-    "Helvetica Neue", Arial, "PingFang SC", system-ui, sans-serif;
+  --ui-editor-font: system-ui, "PingFang SC", "Segoe UI", sans-serif;
   --ui-heading-font: var(--ui-editor-font);
   --ui-heading-weight: 600;
   --ui-prose-leading: 1.7;
@@ -25,15 +24,15 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --ui-bg: #202124;
-    --ui-fg: #e6e6e8;
-    --ui-surface: #28292d;
-    --ui-border: #3b3c41;
-    --ui-hover: #303136;
-    --ui-active: #343b49;
-    --ui-accent: #9dbdf0;
-    --ui-muted: #ababaf;
-    --ui-source: #9fbaa8;
+    --ui-bg: #1f2022;
+    --ui-fg: #e6e7e9;
+    --ui-surface: #27282b;
+    --ui-border: #3b3d41;
+    --ui-hover: #303236;
+    --ui-active: #353d43;
+    --ui-accent: #b2c4cf;
+    --ui-muted: #a3a7ae;
+    --ui-source: #a8bcb0;
     --ui-danger: #ef9aa2;
   }
 }

@@ -4,11 +4,13 @@ import type { EditorArgs } from "./api";
 
 type EditorWindow = Window & {
   knowledgeBaseCardId?: string;
-  knowledgeBaseDraftId?: string;
 };
 
 const windows = new Map<string, EditorWindow>();
-const stoppingWrites = new WeakMap<Window, Promise<void>>();
+const stoppingWrites = new WeakMap<
+  Window,
+  { document: Document; writing: Promise<void> }
+>();
 
 function report(error: unknown): void {
   Zotero.logError(error instanceof Error ? error : new Error(String(error)));
@@ -16,11 +18,7 @@ function report(error: unknown): void {
 
 /** Reuse an editor even while its chrome document is still loading. */
 export function openEditorWindow(args: EditorArgs): void {
-  const key = args.zettelId
-    ? `note:${args.zettelId}`
-    : args.draftId
-      ? `draft:${args.draftId}`
-      : null;
+  const key = args.zettelId ? `note:${args.zettelId}` : null;
   const focus = (editor: EditorWindow) => {
     editor.focus();
     if (!args.editTags) return;
@@ -39,8 +37,8 @@ export function openEditorWindow(args: EditorArgs): void {
     const editor = win as unknown as EditorWindow;
     if (
       !editor.closed &&
-      ((args.zettelId && editor.knowledgeBaseCardId === args.zettelId) ||
-        (args.draftId && editor.knowledgeBaseDraftId === args.draftId))
+      args.zettelId &&
+      editor.knowledgeBaseCardId === args.zettelId
     ) {
       focus(editor);
       return;
@@ -64,28 +62,34 @@ export function openEditorWindow(args: EditorArgs): void {
     );
   }
   if (args.zettelId) opened.knowledgeBaseCardId = args.zettelId;
-  if (args.draftId) opened.knowledgeBaseDraftId = args.draftId;
 }
 
-/** Start recovery persistence before stopping any editor, regardless of its host. */
+/** Finish direct note saves before disposing any editor host. */
 export function stopEditorView(
   editor: Window | null | undefined,
 ): Promise<void> | undefined {
   if (!editor) return;
-  if (editor.knowledgeBaseStopping) return stoppingWrites.get(editor);
-  let writing: Promise<void> | undefined;
-  try {
-    writing = editor.knowledgeBaseFlushDraft?.().catch(report);
-  } catch (error) {
-    report(error);
-  }
-  if (writing) stoppingWrites.set(editor, writing);
-  editor.knowledgeBaseStopping = true;
-  try {
-    editor.knowledgeBaseStopEditor?.();
-  } catch (error) {
-    report(error);
-  }
+  const document = editor.document;
+  const existing = stoppingWrites.get(editor);
+  if (existing && existing.document === document) return existing.writing;
+  if (editor.knowledgeBaseStopping) return;
+  const writing = (async () => {
+    try {
+      await editor.knowledgeBaseSaveBeforeStop?.();
+    } catch (error) {
+      report(error);
+    } finally {
+      if (editor.document === document) {
+        editor.knowledgeBaseStopping = true;
+        try {
+          editor.knowledgeBaseStopEditor?.();
+        } catch (error) {
+          report(error);
+        }
+      }
+    }
+  })();
+  stoppingWrites.set(editor, { document, writing });
   return writing;
 }
 
@@ -101,7 +105,7 @@ export async function prepareEditorView(
   return editor.save ? editor.save(false) : true;
 }
 
-/** Keep the document alive until its recovery write has completed. */
+/** Keep the document alive until its pending note save has completed. */
 export async function closeEditorView(
   editor: Window | null | undefined,
   dispose: () => void,

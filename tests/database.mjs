@@ -265,8 +265,7 @@ const bundle = path.join(workspace, "bundle.mjs");
 
 await writeFile(
   entry,
-  `export * as drafts from ${JSON.stringify(path.join(ROOT, "src/modules/editor-drafts.ts"))};\n` +
-    `export * as events from ${JSON.stringify(path.join(ROOT, "src/modules/events.ts"))};\n` +
+  `export * as events from ${JSON.stringify(path.join(ROOT, "src/modules/events.ts"))};\n` +
     `export * as nativeNotes from ${JSON.stringify(path.join(ROOT, "src/modules/native-notes.ts"))};\n` +
     `export * as operations from ${JSON.stringify(path.join(ROOT, "src/modules/note-operations.ts"))};\n` +
     `export * as noteTags from ${JSON.stringify(path.join(ROOT, "src/modules/note-tags.ts"))};\n` +
@@ -276,6 +275,7 @@ await writeFile(
     `export * as zettel from ${JSON.stringify(path.join(ROOT, "src/modules/zettel.ts"))};\n` +
     `export * as noteRefs from ${JSON.stringify(path.join(ROOT, "src/modules/note-references.ts"))};\n` +
     `export * as graph from ${JSON.stringify(path.join(ROOT, "src/modules/graph.ts"))};\n` +
+    `export * as discovery from ${JSON.stringify(path.join(ROOT, "src/modules/note-discovery.ts"))};\n` +
     `export * as hierarchy from ${JSON.stringify(path.join(ROOT, "src/modules/hierarchy.ts"))};\n`,
 );
 await build({
@@ -294,7 +294,7 @@ const {
   zettel,
   graph,
   hierarchy,
-  drafts,
+  discovery,
   noteRefs,
   events,
   nativeNotes,
@@ -947,12 +947,13 @@ if (currentSchema) {
   }
   failStatement = undefined;
   check(
-    "A failure after the native commit rolls back Knowledge Base metadata while retaining its intent and draft",
+    "A failure after the native commit rolls back Knowledge Base metadata while retaining its save intent without a draft",
     interrupted &&
       journalNote.html.includes("After interruption") &&
       (await zettel.getZettel(journalID)).body === "Before interruption" &&
       (await operations.listNoteOperations()).length === 1 &&
-      (await drafts.listEditorDrafts()).length === 1,
+      (await db.getOne("SELECT COUNT(*) AS count FROM editor_drafts")).count ===
+        0,
   );
   const writesBeforeRecovery = nativeWrites;
   await db.closeDB();
@@ -963,7 +964,8 @@ if (currentSchema) {
     "Restart reconciliation is idempotent and commits the card, mapping and draft without rewriting native content",
     (await zettel.getZettel(journalID)).body === "After interruption" &&
       !(await operations.listNoteOperations()).length &&
-      !(await drafts.listEditorDrafts()).length &&
+      (await db.getOne("SELECT COUNT(*) AS count FROM editor_drafts")).count ===
+        0 &&
       nativeWrites === writesBeforeRecovery,
   );
   const protectedInput = {
@@ -999,7 +1001,6 @@ if (currentSchema) {
       (await operations.listNoteOperations()).length === 1,
   );
   await operations.abandonNoteOperation(protectedOperation);
-  await drafts.discardEditorDraft(protectedOperation.input.draftId);
   const beforeCancelled = journalNote.html;
   let cancelled = false;
   try {
@@ -1011,55 +1012,37 @@ if (currentSchema) {
     cancelled = String(error).includes("NOTE_SESSION_CLOSED");
   }
   check(
-    "Cancellation before the native write retires only the intent and retains the draft",
+    "Cancellation before the native write retires only the intent and creates no draft",
     cancelled &&
       journalNote.html === beforeCancelled &&
       !(await operations.listNoteOperations()).length &&
-      (await drafts.listEditorDrafts()).length === 1,
+      (await db.getOne("SELECT COUNT(*) AS count FROM editor_drafts")).count ===
+        0,
   );
-  for (const draft of await drafts.listEditorDrafts())
-    await drafts.discardEditorDraft(draft.draftId);
   const newOperation = await operations.prepareNoteOperation(
-    {
-      ...journalInput(),
-      id: undefined,
-      draftId: "new-note-intent",
-      draftRevision: 1,
-    },
+    { ...journalInput(), id: undefined },
     journalNote,
     journalNote.html,
     null,
   );
   check(
-    "A reserved new card identity never makes an uncommitted recovery draft point at a missing card",
-    !(await drafts.getEditorDraft("new-note-intent")).id &&
-      newOperation.input.id,
+    "An in-progress save reserves its new identity without creating an editor draft",
+    newOperation.input.id &&
+      (await db.getOne("SELECT COUNT(*) AS count FROM editor_drafts")).count ===
+        0,
   );
-  await drafts.saveEditorDraft({
-    ...newOperation.input,
-    id: undefined,
-    draftRevision: 2,
-    body: "Newer typing retained",
-    sourceDocument: "# Journal fixture\n\nNewer typing retained",
-  });
   await zettel.saveEditorCard(
     {
+      ...newOperation.input,
       id: newOperation.input.id,
-      title: newOperation.input.title,
-      body: newOperation.input.body,
     },
     () => operations.completeNoteOperation(newOperation),
   );
-  const newerDraft = await drafts.getEditorDraft("new-note-intent");
   check(
-    "Completing an older save preserves newer typing and rebases its new card identity and version",
-    newerDraft.body === "Newer typing retained" &&
-      newerDraft.id === newOperation.input.id &&
-      newerDraft.expectedUpdatedAt ===
-        (await zettel.getZettel(newOperation.input.id)).updated_at &&
-      newerDraft.expectedNoteHTML === newOperation.intendedHTML,
+    "Committing a new note retires its cross-database operation",
+    !!(await zettel.getZettel(newOperation.input.id)) &&
+      !(await operations.listNoteOperations()).length,
   );
-  await drafts.discardEditorDraft("new-note-intent");
   await zettel.deleteZettel(newOperation.input.id);
   await db.exec("DELETE FROM card_notes WHERE card_id = ?", [journalID]);
   await zettel.deleteZettel(journalID);
@@ -1981,8 +1964,8 @@ if (currentSchema) {
   const renamedOutline = await hierarchy.getZettelOutline();
   check(
     "An edited Zettel ID is searchable as a parent and exported consistently without changing hierarchy identity",
-    (await hierarchy.getParentCandidates(leafId, "OutlineBranch"))[0]?.id ===
-      branchId &&
+    (await discovery.findNoteCandidates(leafId, "OutlineBranch", {}, true))
+      .items[0]?.id === branchId &&
       renamedOutline.some((row) => row.id === "OutlineBranch") &&
       renamedOutline.find((row) => row.id === leafId)?.parent?.id ===
         "OutlineBranch" &&
@@ -2052,8 +2035,8 @@ if (currentSchema) {
   check(
     "Self parent is rejected and descendants cannot be offered as parents",
     selfRejected &&
-      !(await hierarchy.getParentCandidates(rootId)).some((card) =>
-        [rootId, branchId, leafId].includes(card.id),
+      !(await discovery.findNoteCandidates(rootId, "", {}, true)).items.some(
+        (card) => [rootId, branchId, leafId].includes(card.id),
       ),
   );
   const tree = graph.filterGraph(await graph.getGraphData(), {
@@ -2197,21 +2180,12 @@ if (currentSchema) {
   zoteroStub.Tags = previousTagColors;
   await zettel.deleteZettel(taggedID);
   const original = await zettel.getZettel(leafId);
-  const draft = {
+  const pendingInput = {
     id: leafId,
-    title: "Recovered",
+    title: "Latest input",
     body: "unsaved words",
     expectedUpdatedAt: original.updated_at,
-    draftId: "recovery-test",
-    draftRevision: 1,
   };
-  await drafts.saveEditorDraft(draft);
-  await db.closeDB();
-  await db.initDB();
-  check(
-    "Recovery drafts survive database reopening",
-    (await drafts.getEditorDraft(draft.draftId)).body === "unsaved words",
-  );
   await zettel.saveZettel({
     id: leafId,
     title: "Elsewhere",
@@ -2219,7 +2193,7 @@ if (currentSchema) {
   });
   let conflict = false;
   try {
-    await zettel.saveEditorCard(draft);
+    await zettel.saveEditorCard(pendingInput);
   } catch (error) {
     conflict = error.message === "CARD_CONFLICT";
   }
@@ -2227,60 +2201,22 @@ if (currentSchema) {
     "A stale editor cannot overwrite a newer card",
     conflict && (await zettel.getZettel(leafId)).body === "Do not overwrite",
   );
-  check(
-    "Conflict retains the recovery draft",
-    !!(await drafts.getEditorDraft(draft.draftId)),
-  );
   const latest = await zettel.getZettel(leafId);
   await zettel.saveEditorCard({
-    ...draft,
+    ...pendingInput,
     expectedUpdatedAt: latest.updated_at,
   });
   check(
-    "Card save removes only its committed draft atomically",
-    !(await drafts.getEditorDraft(draft.draftId)) &&
-      (await zettel.getZettel(leafId)).body === "unsaved words",
+    "A direct save updates the note without creating recovery drafts",
+    (await zettel.getZettel(leafId)).body === "unsaved words" &&
+      (await db.getOne("SELECT COUNT(*) AS count FROM editor_drafts")).count ===
+        0,
   );
-  const newer = { ...draft, draftRevision: 3, body: "newer draft" };
-  await drafts.saveEditorDraft(newer);
-  await drafts.saveEditorDraft({ ...draft, draftRevision: 2 });
-  check(
-    "Late draft writes cannot replace a newer draft",
-    (await drafts.getEditorDraft(draft.draftId)).body === "newer draft",
-  );
-  await drafts.discardEditorDraft(draft.draftId, 2);
-  check(
-    "Acknowledging an older native save retains a newer draft",
-    (await drafts.getEditorDraft(draft.draftId)).body === "newer draft",
-  );
-  await drafts.discardEditorDraft(draft.draftId, 3);
-  check(
-    "Acknowledging the current draft revision removes it",
-    !(await drafts.getEditorDraft(draft.draftId)),
-  );
-  await drafts.saveEditorDraft(newer);
-  const nativeDocumentDraft = {
-    ...draft,
-    nativeDocument: true,
-    draftId: "native-document:1:TESTNOTE",
-    draftRevision: 1,
-  };
-  await drafts.saveEditorDraft(nativeDocumentDraft);
-  await db.closeDB();
-  await db.initDB();
-  check(
-    "Native Markdown drafts survive restart without appearing as card recovery drafts",
-    (await drafts.getEditorDraft(nativeDocumentDraft.draftId)).nativeDocument &&
-      !(await drafts.listEditorDrafts()).some(
-        (row) => row.draftId === nativeDocumentDraft.draftId,
-      ),
-  );
-  await drafts.discardEditorDraft(nativeDocumentDraft.draftId);
   await zettel.deleteZettel(leafId);
   conflict = false;
   try {
     await zettel.saveEditorCard({
-      ...newer,
+      ...pendingInput,
       expectedUpdatedAt: latest.updated_at,
     });
   } catch (error) {
@@ -2471,14 +2407,20 @@ check(
       )
     ).note_key === "OLDNOTE1",
 );
-const convertedDraft = await drafts.getEditorDraft("legacy-draft");
+const convertedDraft = JSON.parse(
+  (
+    await db.getOne("SELECT data FROM editor_drafts WHERE id = ?", [
+      "legacy-draft",
+    ])
+  ).data,
+);
 const convertedJournal = (await operations.listNoteOperations())[0];
 check(
-  "Unsaved drafts and interrupted saves retain their complete content and receive a type",
+  "Archived backups remain untouched while interrupted saves receive a type",
   convertedDraft.body === draftBefore.body &&
     convertedDraft.sourceDocument === draftBefore.sourceDocument &&
     convertedDraft.draftRevision === 7 &&
-    convertedDraft.noteType === "thinking" &&
+    convertedDraft.noteType === undefined &&
     convertedJournal.expectedHTML === journalBefore.expectedHTML &&
     convertedJournal.intendedHTML === journalBefore.intendedHTML &&
     convertedJournal.input.sourceNote &&
@@ -2680,11 +2622,28 @@ check(
       "20260101010101",
 );
 check(
-  "Pending Note drafts and interrupted saves become Entity without changing their contents or revisions",
-  (await drafts.getEditorDraft(ordinaryDraft.draftId)).noteType === "entity" &&
-    (await drafts.getEditorDraft(ordinaryDraft.draftId)).sourceDocument ===
-      ordinaryDraft.sourceDocument &&
-    (await drafts.getEditorDraft(ordinaryDraft.draftId)).draftRevision === 7 &&
+  "Archived backups remain untouched while pending saves become Entity",
+  JSON.parse(
+    (
+      await db.getOne("SELECT data FROM editor_drafts WHERE id = ?", [
+        ordinaryDraft.draftId,
+      ])
+    ).data,
+  ).noteType === "note" &&
+    JSON.parse(
+      (
+        await db.getOne("SELECT data FROM editor_drafts WHERE id = ?", [
+          ordinaryDraft.draftId,
+        ])
+      ).data,
+    ).sourceDocument === ordinaryDraft.sourceDocument &&
+    JSON.parse(
+      (
+        await db.getOne("SELECT data FROM editor_drafts WHERE id = ?", [
+          ordinaryDraft.draftId,
+        ])
+      ).data,
+    ).draftRevision === 7 &&
     (await operations.listNoteOperations())[0].input.noteType === "entity" &&
     (await operations.listNoteOperations())[0].intendedHTML ===
       ordinaryJournal.intendedHTML,
@@ -2877,27 +2836,19 @@ discoveryItems.set(9104, {
   id: 9104,
   key: "NOTE9104",
 });
-await drafts.saveEditorDraft({
-  draftId: "uncommitted-native",
-  draftRevision: 1,
-  title: "Draft",
-  body: "Keep unsaved content",
-  noteID: 9104,
-});
+const archivedInput = { noteID: 9104, body: "Old backup" };
+await db.exec("INSERT INTO editor_drafts VALUES (?, ?, ?, 1, 1)", [
+  "archived",
+  archivedInput.body,
+  JSON.stringify(archivedInput),
+]);
 await nativeNotes.discoverNativeNotes();
 check(
-  "Discovery leaves a retained unsaved editor draft in control of its original native note",
-  (await nativeNotes.ensureManagedNote(9104)) === null &&
-    (await zettel.listZettels()).length === 3 &&
-    (await drafts.getEditorDraft("uncommitted-native")).body ===
-      "Keep unsaved content",
-);
-await drafts.discardEditorDraft("uncommitted-native");
-await nativeNotes.discoverNativeNotes();
-check(
-  "A released draft's native note can subsequently be discovered once",
+  "Archived backups do not block discovery and are never deleted",
   !!(await nativeNotes.ensureManagedNote(9104)) &&
     (await zettel.listZettels()).length === 4 &&
+    (await db.getOne("SELECT data FROM editor_drafts WHERE id = 'archived'"))
+      .data === JSON.stringify(archivedInput) &&
     discoveryWrites === 0,
 );
 await db.closeDB();
@@ -3042,10 +2993,10 @@ check(
     !!(await zettel.getZettel("trash-b")),
 );
 check(
-  "Permanent deletion removes its projection, mapping, recovery draft and pending save only",
+  "Permanent deletion removes its projection, mapping and pending save while retaining archived backups",
   !(await zettel.getZettel("trash-a")) &&
     !(await db.getOne("SELECT * FROM card_notes WHERE card_id='trash-a'")) &&
-    !(await db.getOne("SELECT * FROM editor_drafts WHERE id='owned'")) &&
+    !!(await db.getOne("SELECT * FROM editor_drafts WHERE id='owned'")) &&
     !(await db.getOne(
       "SELECT * FROM note_save_operations WHERE id='owned-op'",
     )) &&
@@ -3086,6 +3037,143 @@ check(
   "Invalid destructive-operation inputs are rejected before writes",
   invalidTrashRejected && erasedTrashIDs.length === 2,
 );
+
+// Local discovery uses only disposable cards and never writes relationships.
+const discoveryLookup = zoteroStub.Items.getByLibraryAndKeyAsync;
+zoteroStub.Items.getByLibraryAndKeyAsync = async (...args) => {
+  const item = await discoveryLookup(...args);
+  if (item && !item.getTags) item.getTags = () => [];
+  return item;
+};
+const discoveryRoot = await zettel.saveZettel({
+  title: "Token pruning",
+  body: "Visual tokens and efficient inference.",
+});
+const discoveryCurrent = await zettel.saveZettel({
+  title: "Event signals",
+  body: "Motion-guided token pruning.",
+  parentId: discoveryRoot,
+});
+const discoveryChild = await zettel.saveZettel({
+  title: "Token pruning detail",
+  body: "Motion detail.",
+  parentId: discoveryCurrent,
+});
+const discoveryPeer = await zettel.saveZettel({
+  title: "Token pruning methods",
+  body: "A paragraph about motion-guided visual tokens.",
+});
+const discoveryDistant = await zettel.saveZettel({
+  title: "Unrelated observatory",
+  body: "Astronomy observations.",
+});
+const discoveryDeep = await zettel.saveZettel({
+  title: "Long research note",
+  body:
+    "Unrelated introductory material. ".repeat(220) +
+    "\n\nUniqueMotionEvidence supports token pruning.",
+});
+await db.exec("INSERT INTO tags(zettel_id,tag) VALUES (?,?)", [
+  discoveryCurrent,
+  "Discovery topic",
+]);
+await db.exec("INSERT INTO tags(zettel_id,tag) VALUES (?,?)", [
+  discoveryDistant,
+  "Discovery topic",
+]);
+await db.exec(
+  "INSERT INTO unavailable_notes(card_id,state) VALUES (?,'trashed')",
+  [discoveryChild],
+);
+const discoveryBefore = await zettel.getZettel(discoveryCurrent);
+const localMatches = await discovery.findNoteCandidates(discoveryCurrent, "", {
+  paragraph: "motion token pruning",
+});
+check(
+  "Local note discovery ranks title and paragraph matches, excludes self and Trash, and retains directly tagged candidates",
+  localMatches.items.some((row) => row.id === discoveryPeer) &&
+    localMatches.items.findIndex((row) => row.id === discoveryPeer) <
+      localMatches.items.findIndex((row) => row.id === discoveryDistant) &&
+    !localMatches.items.some((row) =>
+      [discoveryCurrent, discoveryChild].includes(row.id),
+    ) &&
+    localMatches.items.some((row) => row.id === discoveryDistant),
+);
+const parentMatches = await discovery.findNoteCandidates(
+  discoveryCurrent,
+  "token",
+  {},
+  true,
+);
+check(
+  "Parent discovery excludes descendants and exposes the candidate's current hierarchy",
+  parentMatches.items.some((row) => row.id === discoveryRoot) &&
+    !parentMatches.items.some((row) =>
+      [discoveryCurrent, discoveryChild].includes(row.id),
+    ),
+);
+const deepMatches = await discovery.findNoteCandidates(
+  discoveryCurrent,
+  "UniqueMotionEvidence",
+  {},
+  true,
+);
+check(
+  "Parent search finds body text beyond the preview prefix and returns a matching passage",
+  deepMatches.items[0]?.id === discoveryDeep &&
+    deepMatches.items[0]?.snippet.includes("UniqueMotionEvidence"),
+);
+check(
+  "Discovery reads do not change the note or its chosen parent",
+  JSON.stringify(await zettel.getZettel(discoveryCurrent)) ===
+    JSON.stringify(discoveryBefore) &&
+    (await hierarchy.getFamily(discoveryCurrent)).parent.id === discoveryRoot,
+);
+const chineseCandidate = await zettel.saveZettel({
+  title: "事件相机的运动线索",
+  body: "事件信号记录运动变化。",
+});
+check(
+  "Chinese paragraph context retrieves related notes without space-separated words",
+  (
+    await discovery.findNoteCandidates(null, "", {
+      title: "视觉推理",
+      paragraph: "事件相机与运动线索",
+    })
+  ).items.some((row) => row.id === chineseCandidate),
+);
+const globalDiscoveryIDs = [];
+for (let n = 0; n < 215; n++) {
+  globalDiscoveryIDs.push(
+    await zettel.saveZettel({
+      title: `GlobalDiscovery ${String(n).padStart(3, "0")}`,
+      body: "An independently searchable note.",
+      parentId: n === 0 ? discoveryCurrent : null,
+    }),
+  );
+}
+for (const parent of [false, true]) {
+  const found = [];
+  let cursor = null;
+  do {
+    const page = await discovery.findNoteCandidates(
+      discoveryCurrent,
+      "GlobalDiscovery",
+      { paragraph: "Unrelated context should never filter this query" },
+      parent,
+      cursor,
+    );
+    found.push(...page.items.map((row) => row.id));
+    cursor = page.cursor;
+  } while (cursor);
+  const expected = parent ? globalDiscoveryIDs.slice(1) : globalDiscoveryIDs;
+  check(
+    `Global ${parent ? "Parent" : "link"} search pages beyond 180 notes in stable order without context filtering or duplicates`,
+    JSON.stringify(found) === JSON.stringify(expected) &&
+      new Set(found).size === expected.length,
+  );
+}
+zoteroStub.Items.getByLibraryAndKeyAsync = discoveryLookup;
 zoteroStub.Items = trashOriginalItems;
 zoteroStub.Libraries = trashOriginalLibraries;
 zoteroStub.DB = trashOriginalDB;

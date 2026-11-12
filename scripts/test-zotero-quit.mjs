@@ -289,17 +289,13 @@ function runQuitTest() {
           await knowledgeBase.api.auditNativeNotes();
         }
       }
-      // Fixture for previously linked notes; never included in production code.
+      // Reuse the current native-note mapping instead of racing background discovery.
       async function seedMappedNote(input) {
         const native = await Zotero.Items.getAsync(input.noteID);
-        const id = "fixture-" + native.libraryID + "-" + native.key;
+        const id = await knowledgeBase.api.ensureManagedNote(native.id);
+        if (!id) throw new Error("Native fixture is not available for indexing");
         const projection = knowledgeBase.api.projectNativeNote(native.getNote());
         await knowledgeBase.api.saveZettel({id, sourceNote: input.sourceNote, initialTags: input.initialTags, ...projection, itemKey: input.itemKey, libraryID: input.libraryID});
-        const { Sqlite } = ChromeUtils.importESModule("resource://gre/modules/Sqlite.sys.mjs");
-        const connection = await Sqlite.openConnection({path: PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base.sqlite")});
-        try {
-          await connection.execute("INSERT OR IGNORE INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, ?, ?, ?, 1)", [id, native.key, native.libraryID, projection.body]);
-        } finally { await connection.close(); }
         return id;
       }
       if ("registerExistingNote" in knowledgeBase.api) throw new Error("One-off library adoption API leaked into the plugin");
@@ -1155,7 +1151,7 @@ function runQuitTest() {
         knowledgeBase.api.setWorkbenchMode("tab");
         const cards = await knowledgeBase.api.listZettels();
         const card = cards.find(row => row.id === first.cardID);
-        if (cards.length !== 4 || card?.body !== "Recovered draft body" || (await knowledgeBase.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
+        if (cards.length !== 5 || card?.body !== "Last keystroke before quitting" || (await knowledgeBase.api.getFamily(card.id)).children.length !== 1) throw new Error("Restart lost saved card content or hierarchy");
         const restartTrashNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.restartTrashKey);
         if (!restartTrashNote?.isInTrash() || !(await knowledgeBase.api.getZettel(first.restartTrashID)) || !(await knowledgeBase.api.searchZettelSummaries('',{availability:'trash',cardIDs:[first.restartTrashID]})).items.length) throw new Error('Restart lost the mapping for a note still in Zotero Trash');
         restartTrashNote.deleted = false; await restartTrashNote.saveTx();
@@ -1168,7 +1164,7 @@ function runQuitTest() {
         await knowledgeBase.api.releaseNativeNote(rebound.noteID);
         const keyedThinking = await knowledgeBase.api.getZettel(first.keyedThinkingID);
         if (!keyedThinking || keyedThinking.custom_key !== "HostProjectRevised" || keyedThinking.reference !== "HostProjectRevised" || (await knowledgeBase.api.resolveCardLink("knowledge-base://card/HostProject")).targetId !== first.keyedThinkingID) throw new Error("Restart lost Thinking keys or old links");
-        if (keyedThinking.body !== "Interrupted host save" || (await knowledgeBase.api.listEditorDrafts()).some(draft => draft.draftId === "host-interrupted-save")) throw new Error("Restart did not reconcile the interrupted cross-database save");
+        if (keyedThinking.body !== "Interrupted host save") throw new Error("Restart did not reconcile the interrupted cross-database save");
         const organizedNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.noteKey);
         const organizedLoose = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.looseNoteKey);
         const organizedParent = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.personalParentKey);
@@ -1183,10 +1179,9 @@ function runQuitTest() {
         if (!projectCard || projectCard.item_key || !readingCard?.source_note || projectNote.parentItemID !== organizedNote.parentItemID || projectNote.getNote() !== first.thinkingHTML) throw new Error("Restart changed an linked note's type, content or placement");
         const linked = await knowledgeBase.api.acquireNativeNote({ id: card.id, title: card.title, body: card.body });
         const restoredNote = await Zotero.Items.getAsync(linked.noteID);
-        if (!restoredNote.parentItemID || restoredNote.key !== first.noteKey || !restoredNote.getNote().includes("Recovered draft body")) throw new Error("Restart duplicated or lost the linked note");
+        if (!restoredNote.parentItemID || restoredNote.key !== first.noteKey || !restoredNote.getNote().includes("Last keystroke before quitting")) throw new Error("Restart duplicated or lost the linked note");
         await knowledgeBase.api.releaseNativeNote(linked.noteID);
-        if (!(await knowledgeBase.api.listEditorDrafts()).some(draft => draft.body === "Last keystroke before quitting")) throw new Error("Restart lost the recovery draft");
-        if (!(await knowledgeBase.api.getEditorDraft(first.quittingWorkbenchDraftID))?.body.includes("Independent pending quit edit.")) throw new Error("Restart lost the independent workbench's final unsaved edit");
+        if (!(await knowledgeBase.api.getZettel(first.cardID)).body.includes("Last keystroke before quitting")) throw new Error("Restart lost the direct quit-time save");
         if (!(await IOUtils.exists(PathUtils.join(Zotero.DataDirectory.dir, "knowledge-base", "assets", first.legacyImage)))) throw new Error("Migration cleanup removed the original backup image");
         const nativeMarkdownNote = await Zotero.Items.getByLibraryAndKeyAsync(Zotero.Libraries.userLibraryID, first.nativeMarkdownKey);
         if (!nativeMarkdownNote.getNote().includes('External edit preserved') || nativeMarkdownNote.getNote().includes('Conflicting native draft')) throw new Error("Quit overwrote a conflicting native note");
@@ -1200,7 +1195,7 @@ function runQuitTest() {
           if (resumedSource?.setSelectionRange && !resumedSource.hidden) break;
           await new Promise(resolve => setTimeout(resolve, 50));
         }
-        if (!resumedSource.value.includes('Conflicting native draft')) throw new Error("Restart lost native Markdown recovery draft");
+        if (!resumedSource.value.includes('External edit preserved') || resumedSource.value.includes('Conflicting native draft')) throw new Error("Restart restored discarded native edits");
         knowledgeBase.api.openManager({ window:true, selectId: card.id });
         knowledgeBase.api.openGraph({ centerId: card.id });
         for (const [name, paneID] of [["manager", "knowledge-base-list-pane"], ["graph", "graph-inspector"]]) {
@@ -1267,8 +1262,21 @@ function runQuitTest() {
       if ((await knowledgeBase.api.searchItems("Linked Zotero note")).some(match => match.key === note.key)) throw new Error("Source search includes a note");
       if (!(await knowledgeBase.api.searchItems("Host2026")).some(match => match.key === item.key)) throw new Error("Citation key search failed");
       if ((await knowledgeBase.api.searchItems("NoSuchCitation2026")).length) throw new Error("Source search returned unrelated items");
-      await knowledgeBase.api.openLink("zotero://select/library/items/" + note.key);
-      if (Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== note.key) throw new Error("Note hyperlink did not select its Zotero note");
+      const linkedHref = "zotero://select/library/items/" + note.key;
+      const linkedTarget = await knowledgeBase.api.resolveCardLink(linkedHref);
+      await knowledgeBase.api.openLink(linkedHref);
+      if (linkedTarget?.targetId) {
+        let linkedEditor;
+        for (let n=0; n<100; n++) {
+          linkedEditor = Zotero.getMainWindow().document.querySelector('.knowledge-base-workbench')?.contentWindow?.document.getElementById('knowledge-base-workbench-editor')?.contentWindow;
+          if (linkedEditor?.knowledgeBaseCardId === linkedTarget.targetId) break;
+          await new Promise(resolve=>setTimeout(resolve,25));
+        }
+        if (linkedEditor?.knowledgeBaseCardId !== linkedTarget.targetId) throw new Error("Note hyperlink did not open its managed note");
+      } else {
+        for (let n=0; n<100 && Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== note.key; n++) await new Promise(resolve=>setTimeout(resolve,25));
+        if (Zotero.getMainWindow().ZoteroPane.getSelectedItems()[0]?.key !== note.key) throw new Error("Note hyperlink did not select its Zotero note");
+      }
       const unmanaged = new Zotero.Item("note");
       unmanaged.libraryID = item.libraryID;
       unmanaged.parentItemID = item.id;
@@ -1312,9 +1320,13 @@ function runQuitTest() {
       for (let n = 0; n < 100 && nativeMD.source.hidden; n++) await new Promise(resolve => setTimeout(resolve, 50));
       const otherNativeInstance = await Zotero.Notes.open(nativeMarkdownNote.id, null, {allowDuplicate: true});
       if (otherNativeInstance === nativeMD.nativeInstance) throw new Error('Concurrent editor test reused the same instance');
-      await otherNativeInstance._save({html: nativeMarkdownNote.getNote().replace('Ordinary', 'Updated in another editor')});
+      const externalHTML = nativeMarkdownNote.getNote().replace('Ordinary', 'Updated in another editor');
+      otherNativeInstance.applyIncrementalUpdate({html:externalHTML}, true);
+      for (let n=0; n<100 && !otherNativeInstance._iframeWindow.document.body.textContent.includes('Updated in another editor'); n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if (!otherNativeInstance._iframeWindow.document.body.textContent.includes('Updated in another editor')) throw new Error('Concurrent editor fixture retained stale visible content');
+      await otherNativeInstance._save({html:externalHTML});
       for (let n = 0; n < 100 && !nativeMD.source.value.includes('Updated in another editor'); n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (!nativeMD.source.value.includes('Updated in another editor') || !nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-markdown').hidden || (await knowledgeBase.api.getEditorDraft('native-document:' + nativeMarkdownNote.libraryID + ':' + nativeMarkdownNote.key))) throw new Error('Clean native Markdown did not follow a save from another editor: ' + JSON.stringify({sameInstance: otherNativeInstance === nativeMD.nativeInstance, html: nativeMarkdownNote.getNote(), source: nativeMD.source.value, bar: nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-markdown').outerHTML, draft: await knowledgeBase.api.getEditorDraft('native-document:' + nativeMarkdownNote.libraryID + ':' + nativeMarkdownNote.key)}));
+      if (!nativeMD.source.value.includes('Updated in another editor') || !nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-markdown').hidden) throw new Error('Clean native Markdown did not follow a save from another editor');
       Zotero.getMainWindow().Zotero_Tabs.close(otherNativeInstance._tabID);
       await new Promise(resolve => setTimeout(resolve, 100));
       nativeMD.source.value += "\\n\\nNative Markdown saved **in place**\\n\\n$$T_{i,k}\\n=\\n\\\\sum_{u=1}^{a_{i,k}} X_{i,k}^{(u)}$$" + Array.from({length:40},(_,n)=>"\\n\\nScroll paragraph " + n).join("");
@@ -1331,11 +1343,11 @@ function runQuitTest() {
       if(nativeScroll < 400) throw new Error('Native Markdown scroll fixture was not laid out');
       nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.Event('input'));
       for (let n = 0; n < 100 && !nativeMarkdownNote.getNote().includes('in place'); n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (!nativeMarkdownNote.getNote().includes('<strong>in place</strong>') || nativeMarkdownNote.parentItemID !== item.id || !nativeMarkdownNote.hasTag('Native Markdown test') || (nativeMarkdownNote.getNote().match(/<h1/g) || []).length !== 1 || (await knowledgeBase.api.listZettels()).length) throw new Error("Native Markdown changed identity/placement or silently imported a note");
+      if (!nativeMarkdownNote.getNote().includes('<strong>in place</strong>') || nativeMarkdownNote.parentItemID !== item.id || !nativeMarkdownNote.hasTag('Native Markdown test') || (nativeMarkdownNote.getNote().match(/<h1/g) || []).length !== 1) throw new Error("Native Markdown changed saved content, placement or tags");
       for (let n = 0; n < 100 && nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status').textContent !== knowledgeBase.api.loc('editor-saved'); n++) await new Promise(resolve => setTimeout(resolve, 50));
       await new Promise(resolve => setTimeout(resolve,600));
       const ownSaveStatus = nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status').textContent;
-      if (nativeMD.source.value !== unformattedNativeSource) throw new Error('Saving automatically formatted native Markdown source');
+      if (nativeMD.source.value !== unformattedNativeSource) throw new Error('Saving changed author Markdown: ' + JSON.stringify({before:unformattedNativeSource.slice(0,220), after:nativeMD.source.value.slice(0,220), beforeLength:unformattedNativeSource.length, afterLength:nativeMD.source.value.length, status:nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status').textContent}));
       const normalizedNativeHTML = nativeMarkdownNote.getNote().replace(/data-schema-version="[^"]+"/, 'data-schema-version="9" data-knowledge-base-host-normalization="true"');
       nativeMarkdownNote.setNote(normalizedNativeHTML);
       await nativeMarkdownNote.saveTx();
@@ -1372,7 +1384,7 @@ function runQuitTest() {
       nativeMD.source.dispatchEvent(new nativeMD.nativeWindow.KeyboardEvent('keydown', {key:'s', metaKey:true, bubbles:true, cancelable:true}));
       const nativeStatus = nativeMD.nativeWindow.document.querySelector('.knowledge-base-native-status');
       for (let n = 0; n < 100 && !nativeStatus.textContent.includes(knowledgeBase.api.loc('native-markdown-conflict')); n++) await new Promise(resolve => setTimeout(resolve, 50));
-      if (!nativeMarkdownNote.getNote().includes('External edit preserved') || nativeMarkdownNote.getNote().includes('Conflicting native draft') || nativeStatus.textContent !== knowledgeBase.api.loc('native-markdown-conflict')) throw new Error("Native Markdown overwrote an external change: " + JSON.stringify({html: nativeMarkdownNote.getNote(), status:nativeStatus.outerHTML, alive:nativeMD.source.isConnected, draft:await knowledgeBase.api.getEditorDraft("native-document:" + nativeMarkdownNote.libraryID + ":" + nativeMarkdownNote.key)}));
+      if (!nativeMarkdownNote.getNote().includes('External edit preserved') || nativeMarkdownNote.getNote().includes('Conflicting native draft') || nativeStatus.textContent !== knowledgeBase.api.loc('native-markdown-conflict')) throw new Error("Native Markdown overwrote an external change: " + JSON.stringify({html: nativeMarkdownNote.getNote(), status:nativeStatus.outerHTML, alive:nativeMD.source.isConnected}));
       let nativeCloseAsked = 0;
       let nativeCloseDialog;
       const nativeChoices = ['cancel', 'extra1'];
@@ -1402,11 +1414,13 @@ function runQuitTest() {
           resolve();
         }, 0));
         for (let n = 0; n < 100 && !nativeMD.nativeWindow.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
-        if (!nativeMD.nativeWindow.closed) throw new Error("Native Markdown keep-draft close failed");
+        if (!nativeMD.nativeWindow.closed) throw new Error("Native Markdown discard-close failed");
       } finally { Services.ww.unregisterNotification(nativeCloseObserver); }
+      for (let n=0; n<100 && Zotero.Notes._editorInstances.includes(nativeMD.nativeInstance); n++) await new Promise(resolve=>setTimeout(resolve,25));
+      if (Zotero.Notes._editorInstances.includes(nativeMD.nativeInstance)) throw new Error('Closed native editor remained registered');
       nativeMD = await openNativeMarkdown();
-      if (!nativeMD.source.value.includes('Conflicting native draft') || (await knowledgeBase.api.listEditorDrafts()).some(draft => draft.nativeDocument)) throw new Error("Native Markdown draft did not restore separately from card recovery");
-      // Keep this conflicting native draft open until quit, then verify recovery after restart.
+      if (nativeMD.source.value.includes('Conflicting native draft') || !nativeMD.source.value.includes('External edit preserved')) throw new Error("Native Markdown restored discarded edits");
+      // Keep the saved native document open and verify it after restart.
       const thinking = new Zotero.Item("note");
       thinking.libraryID = item.libraryID;
       thinking.parentItemID = item.id;
@@ -2093,16 +2107,16 @@ function runQuitTest() {
         knowledgeBase.api.openManager({selectId:unsourced.id});
         entryButton.dispatchEvent(new mainWindow.Event("command"));
         let independent, separateManager, separateEditor;
-        async function waitSeparate(cardID, draftID) {
+        async function waitSeparate(cardID) {
           const wantedMode = knowledgeBase.api.getNoteEditorMode();
           for (let n=0; n<150; n++) {
             independent = [...Services.wm.getEnumerator("knowledge-base:workbench")][0];
             separateManager = independent?.document.getElementById("knowledge-base-window-browser")?.contentWindow;
             separateEditor = separateManager?.document.getElementById("knowledge-base-workbench-editor")?.contentWindow;
-            if (!separateManager?.document.getElementById("knowledge-base-workbench-editor")?.hidden && separateEditor?.document.getElementById("knowledge-base-editor-root")?.dataset.mode === wantedMode && (cardID ? separateEditor.knowledgeBaseCardId === cardID : separateEditor.knowledgeBaseDraftId === draftID)) {await separateEditor.knowledgeBaseReady();return;}
+            if (!separateManager?.document.getElementById("knowledge-base-workbench-editor")?.hidden && separateEditor?.document.getElementById("knowledge-base-editor-root")?.dataset.mode === wantedMode && separateEditor.knowledgeBaseCardId === cardID) {await separateEditor.knowledgeBaseReady();return;}
             await new Promise(resolve=>setTimeout(resolve,50));
           }
-          throw new Error("Independent workbench did not load the requested native editor: " + JSON.stringify({count:[...Services.wm.getEnumerator("knowledge-base:workbench")].length,windowURL:independent?.location.href,windowReady:independent?.document.readyState,managerURL:separateManager?.location.href,managerReady:separateManager?.document.readyState,editorURL:separateEditor?.location.href,cardID:separateEditor?.knowledgeBaseCardId,draftID:separateEditor?.knowledgeBaseDraftId,wantedCard:cardID,wantedDraft:draftID,tabStatus:inline.document.getElementById("knowledge-base-editor-status").textContent}));
+          throw new Error("Independent workbench did not load the requested native editor: " + JSON.stringify({count:[...Services.wm.getEnumerator("knowledge-base:workbench")].length,windowURL:independent?.location.href,windowReady:independent?.document.readyState,managerURL:separateManager?.location.href,managerReady:separateManager?.document.readyState,editorURL:separateEditor?.location.href,cardID:separateEditor?.knowledgeBaseCardId,wantedCard:cardID,tabStatus:inline.document.getElementById("knowledge-base-editor-status").textContent}));
         }
         await waitSeparate(unsourced.id);
         if (separateManager.document.getElementById("knowledge-base-open-window") || separateEditor.document.getElementById("knowledge-base-rich-frame").getCurrentInstance()._item.id !== looseNote.id) throw new Error("Independent workbench lost the native note or exposed a redundant window entry");
@@ -2141,16 +2155,14 @@ function runQuitTest() {
         const pendingSeparate = separateEditor.document.getElementById("knowledge-base-editor-body");
         pendingSeparate.value = "# Independent closing draft\\n\\nKept when closing the independent window.";
         pendingSeparate.dispatchEvent(new separateEditor.Event("input",{bubbles:true}));
-        const separateDraftID = separateEditor.knowledgeBaseDraftId;
+        await separateEditor.knowledgeBaseSaveBeforeStop();
+        const separateSavedID = separateEditor.knowledgeBaseCardId;
         independent.close();
-        for (let n=0; n<100 && !(await knowledgeBase.api.getEditorDraft(separateDraftID))?.body.includes("Kept when closing"); n++) await new Promise(resolve=>setTimeout(resolve,25));
-        if (!(await knowledgeBase.api.getEditorDraft(separateDraftID))?.body.includes("Kept when closing")) throw new Error("Independent close lost the unsaved draft");
-        knowledgeBase.api.openWorkbenchWindow({editor:{draftId:separateDraftID}});
-        await waitSeparate(null,separateDraftID);
-        if (!separateEditor.document.getElementById("knowledge-base-editor-body").value.includes("Kept when closing")) throw new Error("Reopening independent workbench lost the recovery draft");
+        knowledgeBase.api.openWorkbenchWindow({selectId:separateSavedID});
+        await waitSeparate(separateSavedID);
+        if (!(await knowledgeBase.api.getZettel(separateSavedID)).body.includes("Kept when closing")) throw new Error("Independent close lost the direct note save");
         independent.close();
         await new Promise(resolve=>setTimeout(resolve,100));
-        await knowledgeBase.api.discardEditorDraft(separateDraftID);
         const sortMenu = workbench.document.getElementById('knowledge-base-sort');
         if (sortMenu.options.length !== 8 || sortMenu.value !== 'updated-desc') throw new Error('Native note sorting is missing its default or choices');
         sortMenu.value = 'id-asc';
@@ -2274,10 +2286,9 @@ function runQuitTest() {
         complexSpan.textContent = "Smith 2026, p. 23";
         body.value += "\\n\\n" + embeddedImage.outerHTML + "\\n\\n" + complexSpan.outerHTML;
         body.dispatchEvent(new editor.Event("input", { bubbles: true }));
-        for (let n = 0; n < 80 && (!(await knowledgeBase.api.getZettel(rows[0].id)).body.includes("From reading to an idea") || (await knowledgeBase.api.listEditorDrafts()).length); n++) await new Promise(resolve => setTimeout(resolve, 100));
+        for (let n = 0; n < 80 && (!(await knowledgeBase.api.getZettel(rows[0].id)).body.includes("From reading to an idea")); n++) await new Promise(resolve => setTimeout(resolve, 100));
         if (!(await knowledgeBase.api.getZettel(rows[0].id)).body.includes("From reading to an idea")) throw new Error("Editor autosave did not persist");
-        if ((await knowledgeBase.api.listEditorDrafts()).length) throw new Error("Committed draft was not removed");
-        if (editor.document.getElementById("knowledge-base-editor-save") || !editor.document.getElementById("knowledge-base-editor-apply-draft").hidden) throw new Error("Normal editing still exposes a manual Save control");
+        if (editor.document.getElementById("knowledge-base-editor-save") || editor.document.getElementById("knowledge-base-editor-apply-draft")) throw new Error("Normal editing still exposes a manual Save control");
         if (editor.closed) throw new Error("Autosave unexpectedly closed the editor");
         await switchMode("visual");
         const noteElement = editor.document.getElementById("knowledge-base-rich-frame");
@@ -2795,15 +2806,13 @@ function runQuitTest() {
           if (!editor.closed || knowledgeBase.api.getMarkdownSource(nativeNote.getNote()).body !== closeBody || nativeDialogs[1] !== "accept") throw new Error("Command-W did not save and close");
           const acquired = await knowledgeBase.api.acquireNativeNote({ id: rows[0].id, title: "", body: "" });
           const beforeExternal = await knowledgeBase.api.getZettel(rows[0].id);
-          await knowledgeBase.api.saveEditorDraft({ id: rows[0].id, title: "Conflict", body: "Pending source", draftId: "native-conflict", draftRevision: 1 });
           const externalHTML = await knowledgeBase.api.nativeNoteHTML("Edited in Zotero", beforeExternal.body + "\\n\\nExternal note edit");
           nativeNote.setNote(externalHTML); await nativeNote.saveTx();
           try {
-            await knowledgeBase.api.saveEditorCard({ id: rows[0].id, noteID: nativeNote.id, title: "Conflict", body: "Pending source", sourceMode: true, expectedNoteHTML: acquired.html, expectedUpdatedAt: beforeExternal.updated_at, draftId: "native-conflict", draftRevision: 1 });
+            await knowledgeBase.api.saveEditorCard({ id: rows[0].id, noteID: nativeNote.id, title: "Conflict", body: "Pending source", sourceMode: true, expectedNoteHTML: acquired.html, expectedUpdatedAt: beforeExternal.updated_at });
             throw new Error("Concurrent native edit was overwritten");
           } catch (error) { if (!String(error).includes("CARD_CONFLICT")) throw error; }
-          if (!(await knowledgeBase.api.getEditorDraft("native-conflict")) || !nativeNote.getNote().includes("External note edit") || nativeNote.getNote().includes("Pending source")) throw new Error("Conflict failed to preserve both note and draft");
-          await knowledgeBase.api.discardEditorDraft("native-conflict");
+          if (!nativeNote.getNote().includes("External note edit") || nativeNote.getNote().includes("Pending source")) throw new Error("Conflict failed to preserve both note and draft");
           await knowledgeBase.api.releaseNativeNote(nativeNote.id);
           for (let n = 0; n < 80 && (await knowledgeBase.api.getZettel(rows[0].id)).title !== "Edited in Zotero"; n++) await new Promise(resolve => setTimeout(resolve, 50));
           const externalCard = await knowledgeBase.api.getZettel(rows[0].id);
@@ -2836,8 +2845,8 @@ function runQuitTest() {
             await new Promise(resolve => setTimeout(resolve, 50));
           }
           caseNote.deleted = true; await caseNote.saveTx();
-          for (let n = 0; n < 100 && (!trashedEditor.document.getElementById("knowledge-base-editor-apply-draft").hidden || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden); n++) await new Promise(resolve => setTimeout(resolve, 50));
-          if (!trashedEditor.document.getElementById("knowledge-base-editor-apply-draft").hidden || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden) throw new Error("Deleting an open note left its editor writable");
+          for (let n = 0; n < 100 && (trashedEditor.document.getElementById("knowledge-base-editor-apply-draft") || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden); n++) await new Promise(resolve => setTimeout(resolve, 50));
+          if (trashedEditor.document.getElementById("knowledge-base-editor-apply-draft") || trashedEditor.document.getElementById("knowledge-base-editor-preview").hidden) throw new Error("Deleting an open note left its editor writable");
           if (!trashedEditor.document.getElementById("knowledge-base-editor-restore").hidden) throw new Error("A trashed note still offers restoration inside Knowledge Base");
           if ((await knowledgeBase.api.getNoteHealth(caseID)).note !== "trashed" || (await knowledgeBase.api.getZettel(caseID)).body !== caseCached.body) throw new Error("Deleting a native note lost its cached content");
           knowledgeBase.api.openManager({selectId:caseID});
@@ -2941,27 +2950,19 @@ function runQuitTest() {
           draftBody.dispatchEvent(new draftEditor.Event("input", { bubbles: true }));
           await closeShortcut(draftEditor);
           for (let n = 0; n < 80 && !draftEditor.closed; n++) await new Promise(resolve => setTimeout(resolve, 50));
-          const kept = (await knowledgeBase.api.listEditorDrafts()).find(draft => draft.body === "Keep this close draft");
-          if (!draftEditor.closed || !kept || (await knowledgeBase.api.getZettel(rows[0].id)).body !== closeBody || nativeDialogs[2] !== "extra1") throw new Error("Command-W did not preserve an uncommitted draft");
-          await knowledgeBase.api.discardEditorDraft(kept.draftId);
+          if (!draftEditor.closed || (await knowledgeBase.api.getZettel(rows[0].id)).body !== closeBody || nativeDialogs[2] !== "extra1") throw new Error("Command-W did not discard only the unsaved edit");
         } finally { Services.ww.unregisterNotification(observer); }
         if (choices.length) throw new Error("Native close choices were not all tested");
         const saved = await knowledgeBase.api.getZettel(rows[0].id);
-        Zotero.debug("Knowledge Base host stage: recovery and shutdown");
-        await knowledgeBase.api.saveEditorDraft({ id: saved.id, title: saved.title, body: "Recovered draft body", itemKey: saved.item_key, libraryID: saved.library_id, expectedUpdatedAt: saved.updated_at, draftId: "host-recovery", draftRevision: 1 });
-        knowledgeBase.api.openEditor({window:true, draftId: "host-recovery" });
+        Zotero.debug("Knowledge Base host stage: direct save and shutdown");
+        knowledgeBase.api.openEditor({window:true, zettelId:saved.id});
         let recovered;
-        for (let n = 0; n < 80; n++) {
-          recovered = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => win.knowledgeBaseDraftId === "host-recovery");
-          if (recovered?.document.getElementById("knowledge-base-editor-body")?.value === "Recovered draft body" && recovered.eval("loaded")) break;
-          await new Promise(resolve => setTimeout(resolve, 100));
+        for (let n = 0; n < 100; n++) {
+          recovered = [...Services.wm.getEnumerator("knowledge-base:editor")].find(win => win.knowledgeBaseCardId === saved.id);
+          if (recovered?.knowledgeBaseReady) {await recovered.knowledgeBaseReady(); break;}
+          await new Promise(resolve => setTimeout(resolve, 50));
         }
-        if (recovered?.document.getElementById("knowledge-base-editor-body")?.value !== "Recovered draft body" || !recovered.eval("loaded")) throw new Error("Draft recovery failed");
-        recovered.document.getElementById("knowledge-base-editor-apply-draft").dispatchEvent(new recovered.Event("command", { bubbles: true }));
-        for (let n = 0; n < 80 && (await knowledgeBase.api.getZettel(saved.id)).body !== "Recovered draft body"; n++) await new Promise(resolve => setTimeout(resolve, 100));
-        if ((await knowledgeBase.api.getZettel(saved.id)).body !== "Recovered draft body") throw new Error("Recovered draft did not save");
         await recovered.setEditorMode("source");
-        for (let n = 0; n < 80 && recovered.document.getElementById("knowledge-base-editor-body").hidden; n++) await new Promise(resolve => setTimeout(resolve, 100));
         const pendingBody = recovered.document.getElementById("knowledge-base-editor-body");
         // Simulate previously unfiled linked notes so startup must organize them.
         nativeNote.parentItemID = false; await nativeNote.saveTx();
@@ -3020,23 +3021,23 @@ function runQuitTest() {
           if (bounds.width > sidebar.getBoundingClientRect().width || nativeView.scrollWidth > nativeView.clientWidth + 1)
             throw new Error("Long card titles stretch Zotero's native info and abstract pane");
         }
-        knowledgeBase.api.openWorkbenchWindow({selectId:rows[0].id});
+        knowledgeBase.api.openWorkbenchWindow({selectId:unsourced.id});
         knowledgeBase.api.setWorkbenchMode("window");
         knowledgeBase.api.setGraphOption("hideIsolated",true);
-        await waitSeparate(rows[0].id);
+        await waitSeparate(unsourced.id);
         await separateEditor.setEditorMode("source");
         const quittingWorkbenchBody = separateEditor.document.getElementById("knowledge-base-editor-body");
         quittingWorkbenchBody.value += "\\n\\nIndependent pending quit edit.";
         quittingWorkbenchBody.dispatchEvent(new separateEditor.Event("input",{bubbles:true}));
-        const quittingWorkbenchDraftID = separateEditor.knowledgeBaseDraftId;
+        await separateEditor.knowledgeBaseSaveBeforeStop();
         pendingBody.value = "Last keystroke before quitting";
         pendingBody.dispatchEvent(new recovered.Event("input", { bubbles: true }));
-        await recovered.knowledgeBaseFlushDraft();
+        await recovered.knowledgeBaseSaveBeforeStop();
         // Model a process interruption between the native commit and the Knowledge Base commit.
         // All writes below belong to this disposable profile.
         const journalCard = await knowledgeBase.api.getZettel(unsourced.id);
         const intendedHTML = await knowledgeBase.api.nativeNoteHTML(journalCard.title, "Interrupted host save");
-        const journalInput = { id: journalCard.id, title: journalCard.title, body: "Interrupted host save", sourceNote: !!journalCard.source_note, customKey: journalCard.custom_key, itemKey: journalCard.item_key, libraryID: journalCard.library_id, parentId: (await knowledgeBase.api.getFamily(journalCard.id)).parent?.id || null, noteID: looseNote.id, expectedNoteHTML: looseNote.getNote(), expectedUpdatedAt: journalCard.updated_at, sourceMode: true, sourceDocument: knowledgeBase.api.getMarkdownDocument(intendedHTML), draftId: "host-interrupted-save", draftRevision: 1 };
+        const journalInput = { id: journalCard.id, title: journalCard.title, body: "Interrupted host save", sourceNote: !!journalCard.source_note, customKey: journalCard.custom_key, itemKey: journalCard.item_key, libraryID: journalCard.library_id, parentId: (await knowledgeBase.api.getFamily(journalCard.id)).parent?.id || null, noteID: looseNote.id, expectedNoteHTML: looseNote.getNote(), expectedUpdatedAt: journalCard.updated_at, sourceMode: true, sourceDocument: knowledgeBase.api.getMarkdownDocument(intendedHTML) };
         const journalOperation = { id: looseNote.libraryID + ":" + looseNote.key, noteKey: looseNote.key, libraryID: looseNote.libraryID, expectedHTML: looseNote.getNote(), intendedHTML, expectedVersion: journalCard.updated_at, input: journalInput };
         const panelWidths = { manager: knowledgeBase.api.getPanelWidth("manager"), graph: knowledgeBase.api.getPanelWidth("graph") };
         const { Sqlite } = ChromeUtils.importESModule("resource://gre/modules/Sqlite.sys.mjs");
@@ -3044,14 +3045,13 @@ function runQuitTest() {
         try {
           await journalConnection.executeTransaction(async () => {
             await journalConnection.execute("INSERT INTO note_save_operations(id, card_id, data, created_at) VALUES (?, ?, ?, ?)", [journalOperation.id, journalCard.id, JSON.stringify(journalOperation), Date.now()]);
-            await journalConnection.execute("INSERT INTO editor_drafts(id, body, data, revision, updated_at) VALUES (?, ?, ?, 1, ?)", [journalInput.draftId, journalInput.body, JSON.stringify(journalInput), Date.now()]);
           });
           knowledgeBase.hooks.onAppShutdown();
           looseNote.setNote(intendedHTML); await looseNote.saveTx();
           const journalRows = await journalConnection.execute("SELECT body FROM zettels WHERE id = ?", [journalCard.id]);
           if (journalRows[0].getResultByName("body") === "Interrupted host save") throw new Error("Interrupted-save fixture committed metadata prematurely");
         } finally { await journalConnection.close(); }
-        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 5, editorSnapshotTiming, graphFrames, newNoteOpenMs, quittingWorkbenchDraftID, restartTrashID, restartTrashKey: restartTrashNote.key, restartTrashHTML, keyedThinkingID: unsourced.id, panelWidths, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, markdownSaveMs, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, nativeStyleScoped, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
+        await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ cards: 6, editorSnapshotTiming, graphFrames, newNoteOpenMs, restartTrashID, restartTrashKey: restartTrashNote.key, restartTrashHTML, keyedThinkingID: unsourced.id, panelWidths, nativeMarkdownKey: nativeMarkdownNote.key, unmanagedKey: unmanaged.key, thinkingID: persistedThinkingID, literatureID: persistedLiteratureID, thinkingKey: thinking.key, thinkingHTML: originalThinking, cardID: rows[0].id, noteKey: nativeNote.key, looseNoteKey: looseNote.key, personalParentKey: personalParent.key, markdownSaveMs, legacyImage: imageURL.slice("knowledge-base-asset:".length), iconsVisible, identitiesVisible, mathVisible, sourcesHidden, graphControlsVisible, nativeStyleScoped, compactConnections, nativeDialogs, systemDark, quitting: Date.now() }));
         Services.startup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit);
         } catch (error) {
           await IOUtils.writeUTF8(${JSON.stringify(marker)}, JSON.stringify({ error: String(error), stack: error.stack }));
@@ -3129,7 +3129,7 @@ try {
     if (
       state.error ||
       result.code !== 0 ||
-      state.cards !== 5 ||
+      state.cards !== 6 ||
       !state.iconsVisible ||
       !state.identitiesVisible ||
       !state.mathVisible ||
@@ -3146,7 +3146,7 @@ try {
     try {
       if (
         db.prepare("PRAGMA integrity_check").get().integrity_check !== "ok" ||
-        db.prepare("SELECT count(*) AS n FROM zettels").get().n !== 5
+        db.prepare("SELECT count(*) AS n FROM zettels").get().n !== 6
       )
         throw new Error("Saved database failed verification");
       const migration = db
@@ -3156,7 +3156,7 @@ try {
         throw new Error("Original Markdown migration backup was not preserved");
       if (
         !db
-          .prepare("SELECT body FROM editor_drafts WHERE body = ?")
+          .prepare("SELECT body FROM zettels WHERE body = ?")
           .get("Last keystroke before quitting")
       )
         throw new Error("The last pending edit was not preserved on quit");
@@ -3205,7 +3205,7 @@ try {
       code !== 0 ||
       (connectionsOnly
         ? !restored.connectionsOnly
-        : restored.cards !== 5 ||
+        : restored.cards !== 6 ||
           restored.hiddenCards !== 4 ||
           restored.noteKey !== state.noteKey)
     )
@@ -3236,7 +3236,7 @@ try {
     );
   else if (workbenchOnly)
     console.log(
-      "PASS Real Zotero native/Markdown autosave without Save buttons; pending edits across note changes; explicit draft application; close shortcuts and save/cancel/draft dialogs, conflicts, editor-mode persistence and restart.",
+      "PASS Real Zotero native/Markdown autosave without Save buttons; pending edits across note changes; direct quit-time saves; close shortcuts and save/cancel/discard dialogs, conflicts, editor-mode persistence and restart.",
     );
   else if (readingViewOnly)
     console.log(
@@ -3288,7 +3288,7 @@ try {
     );
   else {
     console.log(
-      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and restart drafts; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; unified notes, unique source notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable note IDs, plain timestamp initialization and refreshed Markdown references with retained aliases, retained source associations, scoped Knowledge Base typography, concise Source references and live metadata updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, direct Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and recovery drafts; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
+      `PASS Native Markdown on ordinary Zotero notes, in-place autosave, conflict detection, native close dialogs and direct quit-time saves; untagged personal parent with retained user tags and colors; Native Zotero note editor (${state.systemDark ? "dark" : "light"} host); native note autosave, Markdown math migration and citation metadata; unified notes, unique source notes, retained native-note fixtures without copying, retained ownership and placement across restart; stable card references, persisted author-year and key labels, inline wiki insertion with native undo/redo and retained cursor, title-independent reference maintenance; native Command-W save/cancel/draft choices; native/Markdown editing with real cursor insertion/replacement and autosave (${state.markdownSaveMs} ms), protected images, citations and external-edit conflicts; editable note IDs, plain timestamp initialization and refreshed Markdown references with retained aliases, retained source associations, scoped Knowledge Base typography, concise Source references and live metadata updates; a Zotero Tab workbench with native in-place editing, independent new Note IDs, navigation and session cleanup; compact connection navigation with empty categories hidden, unavailable links opening their referring notes without replacements, consistent virtual row spacing, native Tab child navigation, direct Source labels, top-toolbar note actions, proportionate image previews, native toolbar Markdown icon toggle, force graph with connection-sized hubs, hover neighborhoods, compact title labels with full tooltips and live Settings, separate global/local entries with configured hop neighborhoods, selected global highlights and paper centers, display-rate interpolation and a responsive 1200-node graph, all-match search, node dragging and Escape clearing; fractional panel drags, cancellation, bounds and persisted widths across restart, and graph-local relationship controls, a persistent native isolated-node filter with relationship-aware filtering, empty states and unchanged graph data; persistent list sorting and Command-Delete with pending edits, neighbor selection and native Trash restoration in open editors and after restart, stable note/card mappings, permanent-deletion cleanup without cached copies, automatic source/personal-parent placement, compact connections and direct saves; native multiword tag rendering and updates, live native-parent and card-ancestor tag inheritance without note writes, configurable tag/color groups with priority and legend, group settings retained across restart, title-first relationship labels, hashtags retained as ordinary text; native sidebar text containment; real Zotero quit (${result.time - state.quitting} ms); saved database and linked notes survive restart.`,
     );
     console.log(
       "Graph display intervals (ms): " +

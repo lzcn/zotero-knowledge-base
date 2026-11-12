@@ -17,11 +17,7 @@ import {
 import { rebuildCounts } from "./modules/zettel";
 import { regularItemOf } from "./modules/zotero";
 import { initTagExclusions, stopTagExclusions } from "./modules/note-tags";
-import {
-  initNoteSessions,
-  stopNoteSessions,
-  closeNoteSessions,
-} from "./modules/note-sessions";
+import { initNoteSessions, closeNoteSessions } from "./modules/note-sessions";
 import { stopWorkbenches, closeWorkbenches } from "./modules/workbench";
 import { stopEditorView } from "./modules/editor-views";
 import { stopNativeNoteViews } from "./modules/native-note-view";
@@ -63,7 +59,7 @@ let quitClient:
     }
   | undefined;
 let appShutdownPromise: Promise<void> | undefined;
-let draftWrites: Promise<unknown>[] = [];
+let editorWrites: Promise<unknown>[] = [];
 let stopping = false;
 let cancelReadiness: (() => void) | undefined;
 const quitObserver = { observe: () => onAppShutdown() };
@@ -253,16 +249,9 @@ async function onMainWindowLoad(win: Window): Promise<void> {
           return;
         const request = ++noteRequest;
         void (async () => {
-          const draft = (await addon.api.listEditorDrafts()).find(
-            (draft) => draft.noteID === items[0].id && !draft.id,
-          );
-          const id = draft
-            ? null
-            : await addon.api.ensureManagedNote(items[0].id);
-          if (request === noteRequest && windows.has(win) && ready) {
-            if (draft) addon.api.openEditor({ draftId: draft.draftId });
-            else if (id) addon.api.openEditor({ zettelId: id });
-          }
+          const id = await addon.api.ensureManagedNote(items[0].id);
+          if (id && request === noteRequest && windows.has(win) && ready)
+            addon.api.openEditor({ zettelId: id });
         })().catch((error) => Zotero.logError(error));
       },
     );
@@ -315,6 +304,7 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 async function releaseResources(): Promise<void> {
   ready = false;
   removeQuitObserver();
+  await finishAppShutdown();
   for (const win of [...windows.keys()]) await onMainWindowUnload(win);
   const actions: (() => unknown | Promise<unknown>)[] = [
     () => {
@@ -372,12 +362,12 @@ function onAppShutdown(): void {
     }
   };
   stop(() => {
-    draftWrites.push(
+    editorWrites.push(
       stopWorkbenches().catch((error) => Zotero.logError(error)),
     );
   });
   stop(() => {
-    draftWrites.push(
+    editorWrites.push(
       stopNativeNoteViews().catch((error) => Zotero.logError(error)),
     );
   });
@@ -385,27 +375,21 @@ function onAppShutdown(): void {
     win.knowledgeBaseStopping = true;
     win.close();
   }
-  // Start pending draft writes before the database shutdown blocker drains them.
+  // Finish pending note saves before the database shutdown blocker drains them.
   for (const win of Services.wm.getEnumerator(`${config.addonRef}:editor`)) {
     try {
       const writing = stopEditorView(win as unknown as Window);
-      if (writing) draftWrites.push(writing);
+      if (writing) editorWrites.push(writing);
     } catch (error) {
       Zotero.logError(
         error instanceof Error ? error : new Error(String(error)),
       );
     }
   }
-  for (const action of [
-    stopTagExclusions,
-    stopNativeMarkdown,
-    stopNativeNotes,
-    stopNoteSessions,
-  ])
+  for (const action of [stopTagExclusions, stopNativeMarkdown, stopNativeNotes])
     stop(action);
   ++generation;
   ready = false;
-  addon.data.alive = false;
   stop(() => libraryRuntime.stop());
   stop(stopAssets);
   stop(() => cancelReadiness?.());
@@ -423,11 +407,11 @@ function finishAppShutdown(): Promise<void> {
   // Complete local persistence before Sqlite's later shutdown phase closes storage.
   // Remote requests are cancelled, never awaited for a successful response.
   appShutdownPromise = (async () => {
-    await Promise.allSettled(draftWrites);
-    draftWrites = [];
+    await Promise.allSettled(editorWrites);
+    editorWrites = [];
     for (const close of [
       () => libraryRuntime.close(true),
-      () => closeNativeMarkdown(false),
+      () => closeNativeMarkdown(!Zotero.closing),
       closeNativeNotes,
       closeNoteSessions,
       closeAssets,
@@ -440,6 +424,7 @@ function finishAppShutdown(): Promise<void> {
         );
       }
     }
+    addon.data.alive = false;
     removeQuitBlocker();
   })();
   return appShutdownPromise;

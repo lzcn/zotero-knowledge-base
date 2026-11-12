@@ -79,7 +79,6 @@ editor-anno-empty = No highlights
 editor-anno-insert = Insert selected
 editor-anno-cancel = Cancel
 editor-cancel = Close
-editor-apply-draft = Apply draft
 search-query-too-long = Use up to 16 keywords, or put a phrase in double quotes.
 editor-confirm-discard = Unsaved changes, discard them?
 editor-save-failed = Save failed:
@@ -188,7 +187,7 @@ hierarchy = Knowledge outline
 parent = Parent
 children = Children
 root = No parent
-parent-search = Find parent by ID or title
+parent-search = Search notes for a parent
 references = References
 both = Outline + references
 
@@ -226,18 +225,13 @@ editor-source-mode = Markdown source
 editor-unsaved = Waiting to save…
 editor-saving = Saving…
 editor-saved = Saved
-editor-save-conflict = Note changed elsewhere. Draft kept. Reopen to merge.
-editor-close-unsaved = Save changes or keep a draft before closing?
+editor-save-conflict = This note changed elsewhere. Changes remain in this editor. Save a copy or cancel.
+editor-close-unsaved = Save changes before closing?
 editor-close-cancel = Cancel
 editor-save-close = Save and close
-editor-draft-close = Keep draft and close
 citation-unresolved = No unique item matches citation key { $key }. Check the key or use a direct item link.
-editor-draft-restored = Draft preview. Apply to restore.
-editor-draft-missing = This draft has already been saved or is unavailable.
 manager-back = Back
 manager-forward = Forward
-manager-drafts = Recovery drafts
-manager-restore-draft = Open draft
 editor-save-copy = Save as new card
 editor-remove-source = Remove source
 
@@ -267,9 +261,8 @@ preview-image-missing = Image unavailable
 
 native-markdown-label = Markdown note
 native-markdown-reload = Reload note
-native-markdown-conflict = This note changed elsewhere. Your draft is kept.
-native-markdown-failed = Could not save. Your draft is kept.
-native-markdown-draft = Draft restored
+native-markdown-conflict = This note changed elsewhere. Changes remain in this editor.
+native-markdown-failed = Could not save. Changes remain in this editor.
 native-markdown-close = Save changes before closing?
 
 editor-outline-parent = Parent
@@ -478,3 +471,4 @@ reader-create-literature-ctrl = Ctrl-click to create a Literature Note.
 settings-enhancement = Enhancement
 
 editor-link-keys = ↑↓ Choose · Enter Insert · Esc Close
+editor-discard-close = Discard and close

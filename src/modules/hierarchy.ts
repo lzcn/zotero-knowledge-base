@@ -99,42 +99,16 @@ export async function removeParent(id: string): Promise<void> {
   await exec(`DELETE FROM card_parents WHERE card_id = ?`, [id]);
 }
 
-export async function getParentCandidates(
+export async function getParentExclusions(
   id: string | null,
-  query = "",
-): Promise<CardIdentity[]> {
-  const rows = await getAll<{
-    id: string;
-    title: string;
-    parent_id: string | null;
-    custom_key: string | null;
-  }>(
-    `SELECT z.id, z.title, z.custom_key, p.parent_id FROM zettels z JOIN card_parents p ON p.card_id = z.id ORDER BY z.title, z.id`,
-  );
-  const children = new Map<string, string[]>();
-  for (const row of rows)
-    if (row.parent_id) {
-      const siblings = children.get(row.parent_id) || [];
-      siblings.push(row.id);
-      children.set(row.parent_id, siblings);
-    }
-  const excluded = new Set<string>();
-  const pending = id ? [id] : [];
-  while (pending.length) {
-    const next = pending.pop()!;
-    if (excluded.has(next)) continue;
-    excluded.add(next);
-    pending.push(...(children.get(next) || []));
-  }
-  const search = query.trim().toLowerCase();
-  return rows
-    .filter(
-      (row) =>
-        !excluded.has(row.id) &&
-        `${row.id} ${row.custom_key ?? ""} ${row.title}`
-          .toLowerCase()
-          .includes(search),
+): Promise<string[]> {
+  if (!id) return [];
+  return (
+    await getAll<{ id: string }>(
+      `WITH RECURSIVE descendants(id) AS (
+        SELECT ? UNION SELECT p.card_id FROM card_parents p JOIN descendants d ON p.parent_id = d.id
+      ) SELECT id FROM descendants`,
+      [id],
     )
-    .slice(0, 100)
-    .map((row) => ({ id: row.id, title: row.title }));
+  ).map((row) => row.id);
 }

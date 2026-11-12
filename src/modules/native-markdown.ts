@@ -22,11 +22,6 @@ import {
   markdownDocumentHTML,
   repairNativeNoteLinks,
 } from "./native-notes";
-import {
-  getEditorDraft,
-  saveEditorDraft,
-  discardEditorDraft,
-} from "./editor-drafts";
 
 interface EditorInstance extends NativeEditorInstance {
   instanceID: string;
@@ -46,7 +41,7 @@ interface EditorInstance extends NativeEditorInstance {
   ): void;
 }
 interface Controller {
-  stop(): void;
+  stop(): Promise<void>;
   dispose(): void;
   restore(): Promise<void>;
 }
@@ -205,9 +200,12 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     };
     let sourceMode = false;
     let closed = false;
+    let stoppingSave: Promise<void> | undefined;
+    let finishing = false;
+    let discarding = false;
+    const canSave = () => !closed && !discarding && (!stopped || finishing);
     let baseline = "";
     let original = "";
-    let revision = 0;
     let timer: number | undefined;
     let operation: Promise<boolean> | undefined;
     let closing = false;
@@ -226,7 +224,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     };
     instance.applyIncrementalUpdate = heldUpdate;
     const previousDisableSaving = instance._disableSaving;
-    const draftID = () => `native-document:${item.libraryID}:${item.key}`;
     const dirty = () => sourceMode && source!.value !== baseline;
     const syncNote = () => {
       const html = item.getNote();
@@ -254,6 +251,8 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       if (!sourceMode || closed || change.origin === instance.instanceID)
         return;
       pendingNativeUpdate = true;
+      // Reconcile after the commit; a host echo must not replace author Markdown.
+      if (operation) return;
       if (!syncNote()) show("native-markdown-conflict", true);
       else if (!dirty()) {
         status.textContent = "";
@@ -266,21 +265,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       status.textContent = getString(key);
       reload.hidden = !conflict;
     };
-    const persist = () => {
-      if (!dirty() || !item.key) return Promise.resolve();
-      return track(
-        saveEditorDraft({
-          draftId: draftID(),
-          draftRevision: ++revision,
-          nativeDocument: true,
-          title: item.getDisplayTitle(),
-          body: source!.value,
-          noteID: item.id,
-          expectedNoteHTML: original,
-          sourceMode: true,
-        }),
-      );
-    };
     const clearTimer = () => {
       win.clearTimeout(timer);
       timer = undefined;
@@ -289,12 +273,10 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       if (operation) return operation;
       operation = (async () => {
         clearTimer();
-        if (closed || stopped || !sourceMode || source!.isComposing)
-          return false;
+        if (!canSave() || !sourceMode || source!.isComposing) return false;
         if (!dirty()) return true;
         try {
-          await persist();
-          if (closed || stopped) return false;
+          if (!canSave()) return false;
           if (!syncNote() || !item.isEditable() || item.isInTrash()) {
             show("native-markdown-conflict", true);
             return false;
@@ -302,27 +284,25 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           const value = source!.value;
           const expectedHTML = original;
           const html = await markdownDocumentHTML(value, expectedHTML);
-          if (closed || stopped) return false;
+          if (!canSave()) return false;
           const committed = await writeNativeNote(
             item,
             expectedHTML,
             html,
             instance.instanceID,
-            () => !closed && !stopped && sourceMode,
+            () => canSave() && sourceMode,
           );
           original = committed.html;
           baseline = value;
           instance.applyIncrementalUpdate({ html: item.getNote() }, true);
-          if (item.getNote() !== original) {
-            await persist();
+          if (item.getNote() !== original && !syncNote()) {
             show("native-markdown-conflict", true);
             return false;
           }
-          if (!dirty()) await discardEditorDraft(draftID());
-          else await persist();
           show("editor-saved");
           return true;
         } catch (error) {
+          if (discarding) return false;
           report(error);
           show(
             String(error).includes("NOTE_CONFLICT") ||
@@ -381,14 +361,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           if (closed || stopped || !item.id) return;
           original = item.getNote();
           baseline = getMarkdownDocument(original);
-          const draft = await getEditorDraft(draftID());
-          if (closed || stopped) return;
-          source!.value = draft?.body ?? baseline;
-          revision = draft?.draftRevision ?? 0;
-          if (draft?.expectedNoteHTML) {
-            original = draft.expectedNoteHTML;
-            baseline = getMarkdownDocument(original);
-          }
+          source!.value = baseline;
           instance._disableSaving = true;
           sourceMode = true;
           bar.hidden = true;
@@ -397,13 +370,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           source!.hidden = false;
           source!.setTypography(getNativeTypography(instance._iframeWindow));
 
-          if (draft) {
-            const synced = syncNote();
-            show(
-              synced ? "native-markdown-draft" : "native-markdown-conflict",
-              !synced,
-            );
-          } else status.textContent = "";
+          status.textContent = "";
           source!.focus();
         }
       } catch (error) {
@@ -421,7 +388,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         timer = win.setTimeout(() => {
           void track(save());
         }, 500);
-      void persist().catch(report);
     };
     const reloadSource = async () => {
       if (operation || stopped || closed) return;
@@ -435,10 +401,8 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       )
         return;
       clearTimer();
-      await discardEditorDraft(draftID());
       original = item.getNote();
       baseline = source!.value = getMarkdownDocument(original);
-      revision = 0;
       status.textContent = "";
       reload.hidden = true;
     };
@@ -447,7 +411,6 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
       closing = true;
       clearTimer();
       try {
-        await persist();
         if (closed || stopped) return;
         const flags =
           Services.prompt.BUTTON_POS_0 * Services.prompt.BUTTON_TITLE_SAVE +
@@ -460,13 +423,13 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
           flags,
           "",
           "",
-          getString("editor-draft-close"),
+          getString("editor-discard-close"),
           "",
           { value: false },
         );
         if (choice === 1) return;
         if (choice === 0 && (!(await track(save())) || dirty())) return;
-        if (choice === 2) await persist();
+        if (choice === 2) discarding = true;
         bypassClose = true;
         if (instance._tabID) {
           (
@@ -520,13 +483,29 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
     });
     const controller: Controller = {
       stop() {
-        if (closed) return;
-        clearTimer();
-        try {
-          void persist().catch(report);
-        } finally {
+        if (stoppingSave) return stoppingSave;
+        if (closed || discarding) {
           closed = true;
+          return Promise.resolve();
         }
+        clearTimer();
+        finishing = true;
+        stoppingSave = track(
+          (async () => {
+            try {
+              if (sourceMode) {
+                do {
+                  if (!(await save()))
+                    throw new Error(getString("native-markdown-failed"));
+                } while (dirty());
+              }
+            } finally {
+              finishing = false;
+              closed = true;
+            }
+          })(),
+        );
+        return stoppingSave;
       },
       async restore() {
         // Rebuild an open native editor before re-enabling its writer on plugin disable.
@@ -543,7 +522,7 @@ async function attach(instance: EditorInstance, token: number): Promise<void> {
         }
       },
       dispose() {
-        controller.stop();
+        void controller.stop().catch(report);
         unsubscribeNote();
         // uninit() has already skipped its hidden stale document before unregistering.
         if (instance.applyIncrementalUpdate === heldUpdate)
@@ -617,7 +596,7 @@ export function stopNativeMarkdown(): void {
   if (stopped) return;
   for (const controller of controllers.values()) {
     try {
-      controller.stop();
+      void controller.stop().catch(report);
     } catch (error) {
       report(error);
     }

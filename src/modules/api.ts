@@ -14,12 +14,6 @@ import { isAccelKey } from "../ui/platform";
  */
 
 import {
-  getEditorDraft,
-  listEditorDrafts,
-  saveEditorDraft,
-  discardEditorDraft,
-} from "./editor-drafts";
-import {
   auditNativeNotes,
   acquireNativeNote,
   projectNativeNote,
@@ -76,7 +70,11 @@ import {
   updateImageDraft,
   releaseImageDraft,
 } from "./assets";
-import { getFamily, getParentCandidates, getZettelOutline } from "./hierarchy";
+import { getFamily, getZettelOutline } from "./hierarchy";
+import {
+  findNoteCandidates,
+  type NoteDiscoveryContext,
+} from "./note-discovery";
 import { getGraphData } from "./graph";
 import {
   getGraphOptions,
@@ -156,7 +154,6 @@ export interface EditorArgs {
   initialTags?: string[];
   editTags?: boolean;
   zettelId?: string | null;
-  draftId?: string;
   prefillTitle?: string;
   prefillBody?: string;
   prefillParentId?: string;
@@ -226,7 +223,17 @@ export const api = {
   isExternalNote,
   async showPersonalKnowledge(shouldStop = () => false): Promise<void> {
     const parent = await ensurePersonalKnowledgeParent(shouldStop);
-    if (!shouldStop()) await selectItem(parent.key, parent.libraryID);
+    if (shouldStop()) return;
+    await selectItem(parent.key, parent.libraryID);
+    const pane = Zotero.getActiveZoteroPane();
+    if (
+      !shouldStop() &&
+      pane?.getSelectedItems().some((item) => item.id === parent.id)
+    ) {
+      (
+        pane.itemsView as unknown as { expandSelectedRows(): void }
+      ).expandSelectedRows();
+    }
   },
   async openLiteratureNote(key: string, libraryID: number): Promise<void> {
     const id = await ensureLiteratureNote(key, libraryID);
@@ -279,10 +286,6 @@ export const api = {
       : null;
   },
 
-  saveEditorDraft,
-  discardEditorDraft,
-  getEditorDraft,
-  listEditorDrafts,
   saveEditorCard: saveNativeCard,
   getMarkdownDocument,
   acquireNativeNote,
@@ -319,9 +322,25 @@ export const api = {
       children: family.children.map((card) => cards.get(card.id)!),
     };
   },
-  async getParentCandidates(id: string | null, query = "") {
-    const cards = await getParentCandidates(id, query);
-    return withNoteReferences(cards);
+  async getParentCandidates(
+    id: string | null,
+    query = "",
+    context: NoteDiscoveryContext = {},
+    cursor: string | null = null,
+  ) {
+    await getNoteLinkTargets();
+    const page = await findNoteCandidates(id, query, context, true, cursor);
+    return { ...page, items: await withNoteReferences(page.items) };
+  },
+  async getLinkCandidates(
+    id: string | null,
+    query = "",
+    context: NoteDiscoveryContext = {},
+    cursor: string | null = null,
+  ) {
+    await getNoteLinkTargets();
+    const page = await findNoteCandidates(id, query, context, false, cursor);
+    return { ...page, items: await withNoteReferences(page.items) };
   },
   copyNoteReference(reference: string): void {
     Zotero.Utilities.Internal.copyTextToClipboard(`[[${reference}]]`);

@@ -1412,13 +1412,6 @@ summary {
 #knowledge-base-list .badges {
   grid-row: 3;
 }
-#knowledge-base-drafts {
-  padding: 8px 12px;
-  border-top: 1px solid var(--border);
-}
-#knowledge-base-draft-list {
-  max-width: 400px;
-}
 #knowledge-base-markdown-toolbar {
   gap: 4px;
   background: var(--bg);
@@ -2342,6 +2335,33 @@ summary {
   font-size: 11px;
   margin-top: 2px;
   overflow-wrap: anywhere;
+}
+
+#knowledge-base-parent-results .link-option-reference,
+.candidate-path,
+.candidate-snippet {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.candidate-snippet {
+  font-size: 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.candidate-snippet mark {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+#knowledge-base-parent-results button[aria-selected="true"] {
+  background: var(--hover);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .relation-link.backlink-link {

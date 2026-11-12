@@ -271,13 +271,13 @@ async function restoreNoteTypes(): Promise<void> {
     types.set(row.id, type);
     await exec("UPDATE zettels SET note_type = ? WHERE id = ?", [type, row.id]);
   }
-  for (const table of ["editor_drafts", "note_save_operations"]) {
+  for (const table of ["note_save_operations"]) {
     const rows = await getAll<{ id: string; data: string }>(
       `SELECT id, data FROM ${table}`,
     );
     for (const row of rows) {
       const data = JSON.parse(row.data);
-      const input = table === "note_save_operations" ? data.input : data;
+      const input = data.input;
       input.noteType =
         types.get(input.id) ?? infer(input.initialTags ?? [], input.sourceNote);
       await exec(`UPDATE ${table} SET data = ? WHERE id = ?`, [
@@ -304,12 +304,12 @@ async function replaceOrdinaryNoteType(): Promise<void> {
   for (const { id, type } of types)
     if (type !== "entity")
       await exec("UPDATE zettels SET note_type = ? WHERE id = ?", [type, id]);
-  for (const table of ["editor_drafts", "note_save_operations"]) {
+  for (const table of ["note_save_operations"]) {
     for (const row of await getAll<{ id: string; data: string }>(
       `SELECT id, data FROM ${table}`,
     )) {
       const data = JSON.parse(row.data);
-      const input = table === "note_save_operations" ? data.input : data;
+      const input = data.input;
       input.noteType = requireNoteType(
         input.noteType === "note" || input.noteType === undefined
           ? "entity"

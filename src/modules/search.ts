@@ -13,7 +13,7 @@ function terms(text: string): Set<string> {
 }
 
 let indexing: Promise<void> | undefined;
-async function flushSearchIndex(): Promise<void> {
+export async function flushSearchIndex(): Promise<void> {
   if (indexing) return indexing;
   indexing = (async () => {
     while (true) {
@@ -82,6 +82,7 @@ export interface SearchOptions {
   cursor?: string | null;
   summary?: boolean;
   cardIDs?: string[];
+  excludeIDs?: string[];
 }
 
 interface Cursor {
@@ -111,6 +112,8 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       options.cardIDs.some((id) => typeof id !== "string" || !id))
   )
     throw new Error("Invalid note IDs");
+  if (options.excludeIDs?.some((id) => typeof id !== "string" || !id))
+    throw new Error("Invalid excluded note IDs");
   const scope = JSON.stringify([
     q,
     options.noteType ?? null,
@@ -118,6 +121,7 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
     options.ownTagsOnly ?? false,
     options.availability ?? "active",
     options.cardIDs ?? null,
+    options.excludeIDs ?? null,
     sort,
   ]);
   let cursor: Cursor | undefined;
@@ -183,6 +187,10 @@ export async function searchRows(query = "", options: SearchOptions = {}) {
       `z.id IN (${options.cardIDs.map(() => "?").join(",") || "NULL"})`,
     );
     params.push(...options.cardIDs);
+  }
+  if (options.excludeIDs?.length) {
+    filters.push("z.id NOT IN (SELECT value FROM json_each(?))");
+    params.push(JSON.stringify(options.excludeIDs));
   }
   const availability = options.availability ?? "active";
   if (!["active", "trash"].includes(availability))

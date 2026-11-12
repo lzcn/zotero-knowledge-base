@@ -383,7 +383,7 @@ try {
   const inline = separate.document.createElement("browser");
   inline.id = "knowledge-base-workbench-editor";
   inline.contentWindow = {
-    knowledgeBaseFlushDraft: async () => draftFlushes++,
+    knowledgeBaseSaveBeforeStop: async () => draftFlushes++,
     knowledgeBaseStopEditor: () => editorStops++,
   };
   separate.document.body.append(inline);
@@ -410,7 +410,7 @@ try {
   const reopenedEditor = reopened.document.createElement("browser");
   reopenedEditor.id = "knowledge-base-workbench-editor";
   reopenedEditor.contentWindow = {
-    knowledgeBaseFlushDraft: () =>
+    knowledgeBaseSaveBeforeStop: () =>
       new Promise((resolve) => {
         finishDraft = resolve;
       }),
@@ -424,15 +424,16 @@ try {
   });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(finishedStop, false);
-  assert.equal(shutdownErrors.length, 1);
+  assert.equal(shutdownErrors.length, 0);
   finishDraft();
   await stopping;
   assert.equal(finishedStop, true);
+  assert.equal(shutdownErrors.length, 1);
   assert.equal(reopenedEditor.contentWindow.knowledgeBaseStopping, true);
   module.closeWorkbenches();
   assert.equal(shutdownClose, true);
   console.log(
-    "PASS Independent workbench reuses pending and ready windows, keeps the latest selection, flushes drafts on close and closes on shutdown",
+    "PASS Independent workbench reuses pending and ready windows, keeps the latest selection, saves notes on close and closes on shutdown",
   );
   const openedEditors = [];
   let windowRequests = 0,
@@ -469,13 +470,10 @@ try {
   openedEditors[0].close();
   editorViews.openEditorWindow({ zettelId: "one", window: true });
   assert.equal(windowRequests, 2);
-  editorViews.openEditorWindow({ draftId: "draft-one", window: true });
-  editorViews.openEditorWindow({ draftId: "draft-one", window: true });
-  assert.equal(windowRequests, 3);
   editorViews.openEditorWindow({ window: true });
   openedEditors.at(-1).knowledgeBaseCardId = "created-note";
   editorViews.openEditorWindow({ zettelId: "created-note", window: true });
-  assert.equal(windowRequests, 4);
+  assert.equal(windowRequests, 3);
   dom.window.openDialog = () => null;
   assert.throws(
     () => editorViews.openEditorWindow({ zettelId: "failed" }),
@@ -483,27 +481,28 @@ try {
   );
   dom.window.openDialog = openEditor;
   editorViews.openEditorWindow({ zettelId: "failed" });
-  assert.equal(windowRequests, 5);
+  assert.equal(windowRequests, 4);
   console.log(
-    "PASS Editor windows reuse pending notes, drafts and newly assigned identities, and recover after failed creation",
+    "PASS Editor windows reuse pending notes and newly assigned identities, and recover after failed creation",
   );
   const viewErrors = [];
   globalThis.Zotero.logError = (error) => viewErrors.push(error);
   let stops = 0;
   const failedFlush = {
-    knowledgeBaseFlushDraft: () => {
+    knowledgeBaseSaveBeforeStop: () => {
       throw new Error("Draft flush failed");
     },
     knowledgeBaseStopEditor: () => stops++,
   };
-  editorViews.stopEditorView(failedFlush);
-  editorViews.stopEditorView(failedFlush);
+  const failedStop = editorViews.stopEditorView(failedFlush);
+  assert.equal(editorViews.stopEditorView(failedFlush), failedStop);
+  await failedStop;
   assert.equal(stops, 1);
   assert.equal(failedFlush.knowledgeBaseStopping, true);
   assert.equal(viewErrors.length, 1);
   let completeFlush;
   const pendingFlush = {
-    knowledgeBaseFlushDraft: () =>
+    knowledgeBaseSaveBeforeStop: () =>
       new Promise((resolve) => {
         completeFlush = resolve;
       }),
@@ -512,17 +511,44 @@ try {
     },
   };
   const flushed = editorViews.stopEditorView(pendingFlush);
-  assert.equal(pendingFlush.knowledgeBaseStopping, true);
-  assert.equal(viewErrors.length, 2);
+  assert.equal(pendingFlush.knowledgeBaseStopping, undefined);
+  assert.equal(viewErrors.length, 1);
   assert.equal(editorViews.stopEditorView(pendingFlush), flushed);
   completeFlush();
   await flushed;
+  assert.equal(viewErrors.length, 2);
+  assert.equal(pendingFlush.knowledgeBaseStopping, true);
+  let oldSave, newSave;
+  let replacedStops = 0;
+  const reusedWindow = {
+    document: {},
+    knowledgeBaseSaveBeforeStop: () =>
+      new Promise((resolve) => {
+        oldSave = resolve;
+      }),
+    knowledgeBaseStopEditor: () => replacedStops++,
+  };
+  const oldStop = editorViews.stopEditorView(reusedWindow);
+  reusedWindow.document = {};
+  reusedWindow.knowledgeBaseSaveBeforeStop = () =>
+    new Promise((resolve) => {
+      newSave = resolve;
+    });
+  const newStop = editorViews.stopEditorView(reusedWindow);
+  assert.notEqual(oldStop, newStop);
+  oldSave();
+  await oldStop;
+  assert.equal(replacedStops, 0);
+  assert.equal(reusedWindow.knowledgeBaseStopping, undefined);
+  newSave();
+  await newStop;
+  assert.equal(replacedStops, 1);
   let released = false;
   let finishClosing;
   const closingWrite = new Promise((resolve) => {
     finishClosing = resolve;
   });
-  const closingEditor = { knowledgeBaseFlushDraft: () => closingWrite };
+  const closingEditor = { knowledgeBaseSaveBeforeStop: () => closingWrite };
   const closePending = editorViews.closeEditorView(closingEditor, () => {
     released = true;
   });

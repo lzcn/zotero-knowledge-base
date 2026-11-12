@@ -134,6 +134,7 @@ export interface NativeEditorController {
   captureChanges(): void;
   getHTML(): string;
   getSavedHTML(): string;
+  getContextText(): string;
   flush(): Promise<void>;
   setReadOnly(value: boolean): Promise<void>;
   setSourceMode(value: boolean): void;
@@ -565,6 +566,19 @@ async function create(
     captureChanges: changed,
     getHTML: () => getHTML() || lastHTML,
     getSavedHTML: () => options.item.getNote(),
+    getContextText() {
+      const view =
+        frame?.wrappedJSObject._currentEditorInstance?._editorCore?.view;
+      const parent = view?.state.selection.$from.parent;
+      return (
+        parent?.textBetween(
+          0,
+          view!.state.selection.$from.parentOffset,
+          " ",
+          " ",
+        ) || ""
+      );
+    },
     flush,
     setSourceMode(value) {
       const instance = element.getCurrentInstance();

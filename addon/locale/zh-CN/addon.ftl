@@ -73,7 +73,6 @@ editor-anno-empty = 没有高亮批注
 editor-anno-insert = 插入所选
 editor-anno-cancel = 取消
 editor-cancel = 关闭
-editor-apply-draft = 应用草稿
 search-query-too-long = 最多输入 16 个关键词，固定短语请加双引号。
 editor-confirm-discard = 有未保存的修改，确定丢弃吗？
 editor-save-failed = 保存失败：
@@ -162,7 +161,7 @@ hierarchy = 知识脉络
 parent = 父节点
 children = 子节点
 root = 无上级
-parent-search = 用编号或标题查找父节点
+parent-search = 搜索笔记，选择上级
 references = 双链
 both = 脉络 + 双链
 
@@ -200,18 +199,13 @@ editor-source-mode = Markdown 源码
 editor-unsaved = 等待保存…
 editor-saving = 正在保存…
 editor-saved = 已保存
-editor-save-conflict = 笔记已在别处修改。草稿已保留，请重新打开后合并。
-editor-close-unsaved = 保存修改，或保留草稿后关闭？
+editor-save-conflict = 笔记已在其他位置修改。当前修改仍在编辑器中，可另存副本或取消。
+editor-close-unsaved = 关闭前保存修改吗？
 editor-close-cancel = 取消
 editor-save-close = 保存并关闭
-editor-draft-close = 保留草稿并关闭
 citation-unresolved = 引用键 { $key } 未对应唯一条目。请检查引用键，或使用条目直链。
-editor-draft-restored = 草稿预览，应用后恢复。
-editor-draft-missing = 此草稿已保存或不可用。
 manager-back = 后退
 manager-forward = 前进
-manager-drafts = 可恢复草稿
-manager-restore-draft = 打开草稿
 editor-save-copy = 另存为新卡片
 editor-remove-source = 移除来源
 
@@ -241,9 +235,8 @@ preview-image-missing = 图片不可用
 
 native-markdown-label = Markdown 笔记
 native-markdown-reload = 重新载入
-native-markdown-conflict = 笔记已在其他位置修改，草稿已保留。
-native-markdown-failed = 保存失败，草稿已保留。
-native-markdown-draft = 已恢复草稿
+native-markdown-conflict = 笔记已在其他位置修改，修改仍在当前编辑器中。
+native-markdown-failed = 保存失败，修改仍在当前编辑器中。
 native-markdown-close = 关闭前保存修改吗？
 
 editor-outline-parent = 上级
@@ -452,3 +445,4 @@ reader-create-literature-ctrl = Ctrl＋点击新建文献笔记。
 settings-enhancement = 增强
 
 editor-link-keys = ↑↓ 选择 · Enter 插入 · Esc 关闭
+editor-discard-close = 丢弃修改并关闭

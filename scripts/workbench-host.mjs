@@ -38,13 +38,18 @@ export default async function workbenchHost({
         saved.autosaveBody,
       "Autosaved and recovered edits changed after restart",
     );
+    const nativeSaved = await Zotero.Items.getByLibraryAndKeyAsync(
+      Zotero.Libraries.userLibraryID,
+      saved.nativeKey,
+    );
     assert(
-      (await knowledgeBase.api.listEditorDrafts()).some(
-        (draft) =>
-          draft.draftId === saved.draftId &&
-          draft.body.includes("Keep this close draft"),
-      ),
-      "Close-time draft was lost after restart",
+      nativeSaved?.getNote().includes("Native last keystroke"),
+      "Native Markdown quit-time save was lost after restart",
+    );
+    assert(
+      !("saveEditorDraft" in knowledgeBase.api) &&
+        !("listEditorDrafts" in knowledgeBase.api),
+      "Removed draft storage remains callable",
     );
     await knowledgeBase.hooks.onShutdown();
     await IOUtils.writeUTF8(
@@ -72,6 +77,10 @@ export default async function workbenchHost({
           .getAttribute("aria-busy") === "false",
       "Workbench list did not load",
     );
+    assert(
+      !view.document.getElementById("knowledge-base-drafts"),
+      "The workbench still has a persistent recovery bar",
+    );
     if (!id) return { view };
     const editor = await wait(() => {
       const editor = view.document.getElementById(
@@ -94,8 +103,7 @@ export default async function workbenchHost({
     );
     assert(
       !editor.document.getElementById("knowledge-base-editor-save") &&
-        editor.document.getElementById("knowledge-base-editor-apply-draft")
-          .hidden,
+        !editor.document.getElementById("knowledge-base-editor-apply-draft"),
       "Ordinary notes expose a manual Save action",
     );
     return { view, editor };
@@ -146,6 +154,49 @@ export default async function workbenchHost({
     title: "Close shortcut",
     body: "Original body",
   });
+  const libraryNote = await knowledgeBase.api.acquireNativeNote({
+    id,
+    title: "Close shortcut",
+    body: "Original body",
+  });
+  await knowledgeBase.api.releaseNativeNote(libraryNote.noteID);
+  const originalNote = await Zotero.Items.getAsync(libraryNote.noteID);
+  const personal = await Zotero.Items.getAsync(originalNote.parentItemID);
+  const originalTitle = personal.getField("title");
+  personal.setField("title", "My Personal Knowledge");
+  await personal.saveTx();
+  for (let repeat = 0; repeat < 2; repeat++) {
+    knowledgeBase.api.openManager();
+    const popup = tabs._openMenu(40, 60, tabs.selectedID);
+    popup
+      .querySelector(":scope > menuitem")
+      .dispatchEvent(
+        new main.Event("command", { bubbles: true, cancelable: true }),
+      );
+    await wait(
+      () =>
+        tabs.selectedID === "zotero-pane" &&
+        main.ZoteroPane.getSelectedItems()[0]?.id === personal.id,
+      "Show in Library selected something other than the managed Personal Knowledge item",
+    );
+    await wait(
+      () =>
+        main.ZoteroPane.itemsView.isContainerOpen(
+          main.ZoteroPane.itemsView.getRowIndexByID(personal.id),
+        ),
+      "Show in Library did not expand the unsourced-note container",
+    );
+    assert(
+      main.ZoteroPane.itemsView.getRowIndexByID(originalNote.id) >= 0,
+      "The unsourced note is not visible under Personal Knowledge",
+    );
+  }
+  assert(
+    personal.getField("title") === "My Personal Knowledge",
+    "Revealing Personal Knowledge replaced or renamed its existing container",
+  );
+  personal.setField("title", originalTitle);
+  await personal.saveTx();
   const autosaveID = await knowledgeBase.api.saveZettel({
     title: "Automatic saving",
     body: "Original autosave body",
@@ -310,7 +361,6 @@ export default async function workbenchHost({
     editor.eval("clearTimeout(autosaveTimer); autosaveTimer=null");
     return source;
   };
-  let draftId;
   try {
     let { view, editor } = await open(id);
     assert(await editor.save(false), "Native close fixture did not settle");
@@ -363,22 +413,12 @@ export default async function workbenchHost({
     ({ view, editor } = await open(id));
     await editor.setEditorMode("source");
     const beforeDraft = (await knowledgeBase.api.getZettel(id)).body;
-    append(editor, "Keep this close draft");
-    draftId = editor.knowledgeBaseDraftId;
+    append(editor, "Discard this close edit");
     await closeWith("extra1");
     await closed();
     assert(
       (await knowledgeBase.api.getZettel(id)).body === beforeDraft,
-      "Keep draft committed the unsaved edit",
-    );
-    await wait(
-      async () =>
-        (await knowledgeBase.api.listEditorDrafts()).some(
-          (draft) =>
-            draft.draftId === draftId &&
-            draft.body.includes("Keep this close draft"),
-        ),
-      "Keep draft did not retain the latest text",
+      "Discard committed the unsaved edit",
     );
     ({ view, editor } = await open(id));
     await editor.setEditorMode("source");
@@ -497,53 +537,63 @@ export default async function workbenchHost({
   await opened.editor.save(false);
   press(main);
   await closed();
-  const recoveryBase = await knowledgeBase.api.getZettel(autosaveID);
-  const autosaveBody = recoveryBase.body + "\n\nExplicitly applied recovery";
-  await knowledgeBase.api.saveEditorDraft({
-    id: autosaveID,
-    title: recoveryBase.title,
-    body: autosaveBody,
-    expectedUpdatedAt: recoveryBase.updated_at,
-    sourceMode: true,
-    draftId: "workbench-recovery",
-    draftRevision: 1,
+  await knowledgeBase.api.setNativeNoteTakeover(false);
+  const native = new Zotero.Item("note");
+  native.libraryID = Zotero.Libraries.userLibraryID;
+  native.setNote(
+    '<div data-schema-version="2"><h1>Native direct save</h1><p>Initial text</p></div>',
+  );
+  await native.saveTx({ skipSelect: true });
+  const instance = await Zotero.Notes.open(native.id, null, {
+    openInWindow: true,
   });
-  knowledgeBase.api.openEditor({ window: true, draftId: "workbench-recovery" });
-  const recovered = await wait(
+  const nativeWindow =
+    instance._iframeWindow.browsingContext.embedderElement.ownerDocument
+      .defaultView;
+  const toggle = await wait(
     () =>
-      [...Services.wm.getEnumerator("knowledge-base:editor")].find(
-        (win) =>
-          win.knowledgeBaseDraftId === "workbench-recovery" &&
-          win.knowledgeBaseReady,
+      instance._iframeWindow.document.querySelector(
+        ".knowledge-base-markdown-toggle",
       ),
-    "Recovery editor did not open",
+    "Native Markdown toggle did not load",
   );
-  await recovered.knowledgeBaseReady();
-  const applyDraft = recovered.document.getElementById(
-    "knowledge-base-editor-apply-draft",
-  );
-  assert(!applyDraft.hidden, "Recovery draft has no Apply action");
-  assert(
-    (await knowledgeBase.api.getZettel(autosaveID)).body === recoveryBase.body,
-    "Previewing a recovery draft overwrote the note",
-  );
-  applyDraft.dispatchEvent(new recovered.Event("command", { bubbles: true }));
+  toggle.click();
+  const nativeSource = await wait(() => {
+    const source = nativeWindow.document.querySelector(
+      ".knowledge-base-native-source",
+    );
+    return source?.setSelectionRange && !source.hidden && source;
+  }, "Native Markdown source did not open");
+  nativeSource.value =
+    nativeSource.value.replace(
+      "# Native direct save",
+      "Native direct save\n==================",
+    ) + "\n\nNative autosave text";
+  const authorSource = nativeSource.value;
+  nativeSource.dispatchEvent(new nativeWindow.Event("input"));
   await wait(
-    async () =>
-      (await knowledgeBase.api.getZettel(autosaveID)).body === autosaveBody &&
-      applyDraft.hidden,
-    "Apply draft did not commit the recovered text",
+    () => native.getNote().includes("Native autosave text"),
+    "Native Markdown did not save directly to Zotero",
   );
-  press(recovered);
-  await wait(() => recovered.closed, "Recovered editor did not close");
+  await pause(150);
+  assert(
+    nativeSource.value === authorSource,
+    "Autosave reformatted author Markdown",
+  );
+  opened = await open(autosaveID);
+  await opened.editor.setEditorMode("source");
+  append(opened.editor, "Saved directly when quitting");
+  nativeSource.value += "\n\nNative last keystroke";
+  nativeSource.dispatchEvent(new nativeWindow.Event("input"));
+  const autosaveBody = opened.editor.eval("snapshot().body");
   await IOUtils.writeUTF8(
     marker,
     JSON.stringify({
       connectionsOnly: true,
       id,
-      draftId,
       autosaveID,
       autosaveBody,
+      nativeKey: native.key,
       body: (await knowledgeBase.api.getZettel(id)).body,
       editorMode: knowledgeBase.api.getNoteEditorMode(),
     }),

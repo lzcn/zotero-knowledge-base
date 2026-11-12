@@ -153,7 +153,6 @@ async function fixture({ fail, deferred = false, unready = false } = {}) {
       openWorkbenchWindow: () => state.calls.push("openWorkbenchWindow"),
       openEditor: () => {},
       ensureManagedNote: async () => "native-card",
-      listEditorDrafts: async () => [],
     },
   };
   globalThis.ztoolkit = {
@@ -265,18 +264,6 @@ test("native notes expose one scoped context action without replacing native ope
     for (let i = 0; i < 6; i++) await Promise.resolve();
     assert.deepEqual(calls, [42, { zettelId: "native-card" }]);
     calls.length = 0;
-    globalThis.addon.api.listEditorDrafts = async () => [
-      { noteID: 42, draftId: "held-draft" },
-    ];
-    menu.dispatchEvent(new win.Event("command"));
-    for (let i = 0; i < 6; i++) await Promise.resolve();
-    assert.deepEqual(calls, [{ draftId: "held-draft" }]);
-    await h.hooks.onMainWindowUnload(win);
-    popup.dispatchEvent(new win.Event("popupshowing"));
-    assert.equal(
-      win.document.getElementById("knowledge-base-itemmenu-open-note"),
-      null,
-    );
     await h.hooks.onShutdown();
   } finally {
     h.close();
@@ -291,7 +278,7 @@ test("granted quit stops background work before windows unload without waiting f
     const observer = h.observers.get("quit-application-granted");
     assert.ok(observer);
     observer.observe();
-    assert.equal(globalThis.addon.data.alive, false);
+    assert.equal(globalThis.addon.data.alive, true);
     assert.ok(h.state.calls.includes("stopAssets"));
     assert.equal(h.observers.size, 0);
     h.hooks.onAppShutdown();
@@ -437,18 +424,17 @@ test("one failing stop action cannot skip remaining quit cleanup", async () => {
     "stopTagExclusions",
     "stopNativeMarkdown",
     "stopNativeNotes",
-    "stopNoteSessions",
     "stopAssets",
   ]) {
     const h = await fixture({ fail });
     try {
       await h.hooks.onStartup();
       assert.doesNotThrow(() => h.hooks.onAppShutdown(), fail);
-      assert.equal(globalThis.addon.data.alive, false);
+      assert.equal(globalThis.addon.data.alive, true);
       assert.ok(h.state.calls.includes("stopAssets"));
-      assert.ok(h.state.calls.includes("stopNoteSessions"));
       const [finish] = h.blockers.keys();
       await finish();
+      assert.equal(globalThis.addon.data.alive, false);
       assert.equal(h.blockers.size, 0);
       assert.ok(h.state.calls.includes("closeNoteSessions"));
       assert.ok(h.state.errors.some((error) => error.message.includes(fail)));

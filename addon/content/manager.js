@@ -208,8 +208,6 @@ async function changeView(view) {
   if (request !== viewVersion) return;
   await refresh(false);
   if (request !== viewVersion) return;
-  await refreshDrafts();
-  if (request !== viewVersion) return;
   if (zettels.length) await select(zettels[0].id);
   else {
     $("knowledge-base-detail").hidden = true;
@@ -323,7 +321,6 @@ async function load() {
     "manager",
     api,
   );
-  await refreshDrafts();
   await refresh();
   const wanted =
     args.selectId && (await api.getZettel(args.selectId))
@@ -436,15 +433,11 @@ function applyLocale() {
   for (const [id, key] of [
     ["knowledge-base-back", "manager-back"],
     ["knowledge-base-forward", "manager-forward"],
-    ["knowledge-base-restore-draft", "manager-restore-draft"],
   ]) {
     const element = document.getElementById(id);
     element.setAttribute("label", api.loc(key));
     element.setAttribute("tooltiptext", api.loc(key));
   }
-  document
-    .getElementById("knowledge-base-drafts-label")
-    .setAttribute("value", api.loc("manager-drafts"));
   $("knowledge-base-views").setAttribute("aria-label", api.loc("manager-view"));
   for (const [view, options] of Object.entries(NOTE_VIEWS))
     setActionLabel("knowledge-base-view-" + view, options.label);
@@ -630,21 +623,6 @@ function bindEvents() {
   document
     .getElementById("knowledge-base-forward")
     .addEventListener("command", () => safeCall(navigateHistory, 1));
-  document
-    .getElementById("knowledge-base-restore-draft")
-    .addEventListener("command", () => {
-      const menu = /** @type {XULMenuListElement} */ (
-        /** @type {unknown} */ (
-          document.getElementById("knowledge-base-draft-list")
-        )
-      );
-      if (menu.value) {
-        if (args.embedded)
-          safeCall(() => showInlineEditor({ draftId: menu.value }));
-        else api.openEditor({ draftId: menu.value });
-      }
-    });
-  window.addEventListener("focus", () => safeCall(refreshDrafts));
   $("knowledge-base-list").addEventListener("keydown", (event) => {
     if (deleting) return;
     if (
@@ -1377,31 +1355,6 @@ async function navigateHistory(direction) {
   updateActions();
   await refresh();
   select(card.id, { record: false });
-}
-
-async function refreshDrafts() {
-  if (!api) return;
-  const drafts = await api.listEditorDrafts();
-  if (window.closed) return;
-  const popup = document.getElementById("knowledge-base-draft-menu");
-  popup.replaceChildren();
-  for (const draft of drafts) {
-    const item = document.createElementNS(
-      "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul",
-      "menuitem",
-    );
-    item.setAttribute("value", draft.draftId);
-    item.setAttribute("label", draft.title || api.loc("manager-untitled"));
-    popup.appendChild(item);
-  }
-  const menu = /** @type {XULMenuListElement} */ (
-    /** @type {unknown} */ (
-      document.getElementById("knowledge-base-draft-list")
-    )
-  );
-  menu.value = drafts[0]?.draftId || "";
-  document.getElementById("knowledge-base-drafts").hidden =
-    inTrash() || !drafts.length;
 }
 
 async function renderDetail(id) {
