@@ -236,26 +236,30 @@ export function noteSnippet(
   );
 }
 
-/** Show the paragraph that contains a real link, skipping literal code examples. */
-export function noteLinkContext(
+/** Show each distinct paragraph that contains a real link, skipping code. */
+export function noteLinkContexts(
   body: string,
   refs: string[],
   resolve?: (ref: string) => CardReference | undefined,
-): string {
+  limit = 3,
+): string[] {
   const targets = new Set(refs);
+  const contexts: string[] = [];
   for (const block of markdown.lexer(body)) {
     const link = parseCardLinks(block.raw).find((link) =>
       targets.has(link.ref),
     );
-    if (link)
-      return noteSnippet(
-        block.raw,
-        resolve?.(link.ref)?.title || link.display,
-        "∑",
-        resolve,
-      );
+    if (!link) continue;
+    const context = noteSnippet(
+      block.raw,
+      resolve?.(link.ref)?.title || link.display,
+      "∑",
+      resolve,
+    );
+    if (context && !contexts.includes(context)) contexts.push(context);
+    if (contexts.length >= limit) break;
   }
-  return "";
+  return contexts;
 }
 
 /** Actual image and link references, excluding examples in code blocks. */

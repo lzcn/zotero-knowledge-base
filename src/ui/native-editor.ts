@@ -121,6 +121,10 @@ export interface NativeEditorOptions {
     listener: (change: NativeNoteChange) => void,
   ): () => void;
   onOpenLink(href: string): void;
+  onLinkHover?(
+    href: string | null,
+    rect: { left: number; top: number; bottom: number } | null,
+  ): void;
   onShortcut(key: string): void;
   markdownLabel: string;
   onMarkdown(): void;
@@ -259,6 +263,7 @@ async function create(
       options.onNoteQuery(next?.query ?? null);
   };
   const scrollNoteQuery = () => {
+    options.onLinkHover?.(null, null);
     if (linkQuery) options.onNoteQuery(linkQuery.query);
   };
   const replaceNoteLink = async (
@@ -411,6 +416,37 @@ async function create(
     if (event.detail > 1) return;
     options.onOpenLink(href);
   };
+  const linkAt = (target: EventTarget | null) => {
+    const link = (target as Element | null)?.closest?.("a[href]");
+    const href = link?.getAttribute("href") || "";
+    return link?.closest(".primary-editor") && NOTE_LINK_URL.test(href)
+      ? { link, href }
+      : null;
+  };
+  const hoverLink = (event: MouseEvent) => {
+    if (!options.onLinkHover) return;
+    const found = linkAt(event.target);
+    if (!found) {
+      options.onLinkHover(null, null);
+      return;
+    }
+    const rect = found.link.getBoundingClientRect();
+    const host =
+      frame.frameElement?.getBoundingClientRect() ||
+      element.getBoundingClientRect();
+    options.onLinkHover(found.href, {
+      left: host.left + rect.left,
+      top: host.top + rect.top,
+      bottom: host.top + rect.bottom,
+    });
+  };
+  const leaveLink = (event: MouseEvent) => {
+    if (!options.onLinkHover) return;
+    const found = linkAt(event.target);
+    const related = event.relatedTarget as Node | null;
+    if (found && related && found.link.contains(related)) return;
+    if (found) options.onLinkHover(null, null);
+  };
   const stopEscape = (event: KeyboardEvent) => {
     if (event.key === "Escape") event.stopPropagation();
   };
@@ -440,6 +476,8 @@ async function create(
     frame.document.removeEventListener("keydown", keydown, true);
     frame.document.removeEventListener("keydown", stopEscape);
     frame.document.removeEventListener("click", click, true);
+    frame.document.removeEventListener("mouseover", hoverLink, true);
+    frame.document.removeEventListener("mouseout", leaveLink, true);
     frame.removeEventListener("message", message, true);
   };
   const attach = () => {
@@ -548,6 +586,8 @@ async function create(
     frame.document.addEventListener("keydown", keydown, true);
     frame.document.addEventListener("keydown", stopEscape);
     frame.document.addEventListener("click", click, true);
+    frame.document.addEventListener("mouseover", hoverLink, true);
+    frame.document.addEventListener("mouseout", leaveLink, true);
     frame.addEventListener("message", message, true);
     lastHTML = getHTML() || options.item.getNote();
   };
@@ -581,6 +621,7 @@ async function create(
     },
     flush,
     setSourceMode(value) {
+      options.onLinkHover?.(null, null);
       const instance = element.getCurrentInstance();
       if (value && !sourceMode) previousDisableSaving = instance._disableSaving;
       instance._disableSaving = value || previousDisableSaving;

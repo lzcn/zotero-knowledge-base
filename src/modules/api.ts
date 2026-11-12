@@ -117,6 +117,7 @@ import {
   getUnresolvedSources,
   getZettel,
   getZettelTitles,
+  getNotePreview as loadNotePreview,
   listByItem,
   listZettels,
   searchZettels,
@@ -509,6 +510,14 @@ export const api = {
   async getZettel(id: string): Promise<Zettel | null> {
     const note = await getZettel(id);
     return note ? (await withNoteReferences([note]))[0] : null;
+  },
+
+  async getNotePreview(ref: string) {
+    await getNoteLinkTargets();
+    const target =
+      getCachedNoteTarget(ref) ||
+      getCachedNoteTarget(cardRefFromURL(ref) || "");
+    return target ? loadNotePreview(target.id) : null;
   },
 
   async getZettelTitles(ids: string[]): Promise<Record<string, string>> {

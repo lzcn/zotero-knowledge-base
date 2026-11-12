@@ -2329,6 +2329,37 @@ summary {
   outline-offset: -1px;
   border-radius: 4px;
 }
+#knowledge-base-link-results .candidate-create {
+  padding: 8px 10px;
+  color: var(--accent);
+  cursor: pointer;
+}
+#knowledge-base-link-results .candidate-create:hover {
+  background: var(--hover);
+}
+.link-preview {
+  position: fixed;
+  z-index: 1000;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 14%);
+  pointer-events: none;
+}
+.link-preview-title {
+  color: var(--fg);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.link-preview-meta {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
 #knowledge-base-link-results .link-option-reference {
   display: block;
   color: var(--muted);

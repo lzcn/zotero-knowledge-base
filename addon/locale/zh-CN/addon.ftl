@@ -445,4 +445,7 @@ reader-create-literature-ctrl = Ctrl＋点击新建文献笔记。
 settings-enhancement = 增强
 
 editor-link-keys = ↑↓ 选择 · Enter 插入 · Esc 关闭
+editor-link-create = 新建实体“{ $title }”
+editor-link-create-hint = 没有匹配的笔记，可新建实体或继续输入。
+link-preview-backlinks = { $count } 条反向链接
 editor-discard-close = 丢弃修改并关闭

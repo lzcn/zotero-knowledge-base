@@ -18,6 +18,8 @@ let navigationVersion = 0;
 let managerLoaded = false;
 let activeView = "all";
 let viewVersion = 0;
+let linkPreviewTimer = null;
+let linkPreviewVersion = 0;
 /** @type {Record<string, { label: string; noteType?: import("../../src/modules/note-types").NoteType }>} */
 const NOTE_VIEWS = {
   all: { label: "manager-view-all" },
@@ -686,6 +688,21 @@ function bindEvents() {
   $("knowledge-base-btn-local-graph").addEventListener("click", () =>
     api.openGraph({ centerId: selectedId }),
   );
+  $("knowledge-base-preview").addEventListener("mouseover", (event) => {
+    const link = /** @type {Element | null} */ (event.target)?.closest?.(
+      "a[href]",
+    );
+    if (link) showLinkPreview(link);
+  });
+  $("knowledge-base-preview").addEventListener("mouseout", (event) => {
+    const link = /** @type {Element | null} */ (event.target)?.closest?.(
+      "a[href]",
+    );
+    const related = /** @type {Node | null} */ (event.relatedTarget);
+    if (link && related && link.contains(related)) return;
+    if (link) hideLinkPreview();
+  });
+  $("knowledge-base-preview").addEventListener("scroll", hideLinkPreview);
   $("knowledge-base-preview").addEventListener("click", (ev) => {
     const target = /** @type {Element} */ (ev.target);
     if (target.localName === "img") {
@@ -1296,6 +1313,7 @@ window.knowledgeBaseShowUnresolved = (ref) => {
 };
 
 function select(id, { record = true, mounted = false, reveal = true } = {}) {
+  hideLinkPreview();
   if (!mounted) navigationVersion++;
   if (args.embedded && !mounted)
     return safeCall(async () => {
@@ -1355,6 +1373,44 @@ async function navigateHistory(direction) {
   updateActions();
   await refresh();
   select(card.id, { record: false });
+}
+
+function hideLinkPreview() {
+  clearTimeout(linkPreviewTimer);
+  linkPreviewTimer = null;
+  linkPreviewVersion++;
+  $("knowledge-base-link-preview").hidden = true;
+}
+
+function showLinkPreview(anchor) {
+  hideLinkPreview();
+  const href = anchor.getAttribute("href");
+  if (!href) return;
+  const rect = anchor.getBoundingClientRect();
+  const version = linkPreviewVersion;
+  linkPreviewTimer = setTimeout(() => {
+    void api
+      .getNotePreview(href)
+      .then((preview) => {
+        if (window.closed || version !== linkPreviewVersion) return;
+        if (!preview) return hideLinkPreview();
+        const parts = [api.loc("note-type-" + preview.noteType)];
+        if (preview.parentTitle)
+          parts.push(
+            `${api.loc("editor-outline-parent")}: ${preview.parentTitle}`,
+          );
+        parts.push(
+          api.loc("link-preview-backlinks", { count: preview.backlinks }),
+        );
+        window.ZoteroKnowledgeBaseMarkdown.linkPreview(
+          $("knowledge-base-link-preview"),
+          rect,
+          preview.title || preview.id,
+          parts.join(" · "),
+        );
+      })
+      .catch(hideLinkPreview);
+  }, 180);
 }
 
 async function renderDetail(id) {
@@ -1481,21 +1537,24 @@ async function renderDetail(id) {
       b.sourceTitle || "",
       b.reference,
     );
-    if (b.context) {
+    if (b.contexts?.length) {
       button.classList.add("backlink-link");
-      const context = document.createElementNS(
-        "http://www.w3.org/1999/xhtml",
-        "span",
-      );
-      context.className = "backlink-context";
-      context.textContent = b.context;
-      button.append(context);
+      for (const text of b.contexts) {
+        const context = document.createElementNS(
+          "http://www.w3.org/1999/xhtml",
+          "span",
+        );
+        context.className = "backlink-context";
+        context.textContent = text;
+        button.append(context);
+      }
     }
     button.addEventListener("click", () => select(b.sourceId));
     li.appendChild(button);
     ul.appendChild(li);
   }
 
+  hideLinkPreview();
   window.ZoteroKnowledgeBaseMarkdown.render(
     $("knowledge-base-preview"),
     z.body,

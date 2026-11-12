@@ -496,6 +496,16 @@ if (currentSchema) {
     title: "Context target",
     body: "Target body",
   });
+  const contextParent = await zettel.saveZettel({
+    title: "Context parent",
+    body: "",
+  });
+  await zettel.saveZettel({
+    id: contextTarget,
+    title: "Context target",
+    body: "Target body",
+    parentId: contextParent,
+  });
   const contextSource = await zettel.saveZettel({
     title: "Context source",
     body:
@@ -503,19 +513,31 @@ if (currentSchema) {
       contextTarget +
       "]]` stays literal.\n\nUseful context before [[" +
       contextTarget +
-      "|chosen wording]] and [[Context target]] after.",
+      "|chosen wording]] and [[Context target]] after.\n\nAnother angle on [[" +
+      contextTarget +
+      "]] here.",
   });
   const contextLinks = (await zettel.getBacklinks(contextTarget)).filter(
     (link) => link.sourceId === contextSource,
   );
   check(
-    "Backlinks group multiple references from one note and show the referring paragraph",
+    "Backlinks group multiple references from one note and show every referring paragraph",
     contextLinks.length === 1 &&
-      contextLinks[0].context.includes(
+      contextLinks[0].contexts.length === 2 &&
+      contextLinks[0].contexts[0].includes(
         "Useful context before chosen wording",
       ) &&
-      !contextLinks[0].context.includes("Unrelated introduction") &&
-      !contextLinks[0].context.includes("literal"),
+      contextLinks[0].contexts[1].includes("Another angle") &&
+      !contextLinks[0].contexts.join(" ").includes("Unrelated introduction") &&
+      !contextLinks[0].contexts.join(" ").includes("literal"),
+  );
+  const preview = await zettel.getNotePreview(contextTarget);
+  check(
+    "Note previews expose title, type, parent and backlink count without the body",
+    preview?.title === "Context target" &&
+      preview?.noteType === "entity" &&
+      preview?.parentTitle === "Context parent" &&
+      preview?.backlinks === 1,
   );
   await zettel.saveZettel({
     id: contextSource,
@@ -526,10 +548,11 @@ if (currentSchema) {
     "Backlink context follows content edits without changing note identity",
     (await zettel.getBacklinks(contextTarget))
       .find((link) => link.sourceId === contextSource)
-      ?.context.includes("Updated surrounding context"),
+      ?.contexts[0]?.includes("Updated surrounding context"),
   );
   await zettel.deleteZettel(contextSource);
   await zettel.deleteZettel(contextTarget);
+  await zettel.deleteZettel(contextParent);
 
   const searchFixtures = [];
   for (let n = 0; n < 7; n++)
@@ -1691,6 +1714,12 @@ if (currentSchema) {
   zoteroStub.Items = priorItems;
   zoteroStub.ItemFields = priorFields;
   zoteroStub.Libraries = { userLibraryID: 1, getAll: () => [] };
+  const thoughtTarget = (await noteRefs.getNoteLinkTargets()).get(thought);
+  check(
+    "Regular note links display the current title while retaining their stable reference",
+    thoughtTarget?.label === "Survey edited" &&
+      thoughtTarget?.reference === thought,
+  );
   await db.exec(
     "INSERT INTO card_notes (card_id, note_key, library_id, original_body, external) VALUES (?, 'NOTE0001', 1, '', 1)",
     [literature],

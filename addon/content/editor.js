@@ -121,6 +121,7 @@ window.knowledgeBaseSaveBeforeStop = async () => {
   } while (dirty && !disposed);
 };
 window.knowledgeBaseStopEditor = () => {
+  hideLinkPreview();
   for (const cancel of annotationWaits) cancel();
   richEditor?.destroy();
   $("knowledge-base-editor-body").destroy?.();
@@ -154,6 +155,8 @@ let linkRange = null;
 let linkAlias = "";
 let cardIndex = 0;
 let previewTimer = null;
+let linkPreviewTimer = null;
+let linkPreviewVersion = 0;
 let relationsTimer = null;
 let relationsVersion = 0;
 /** @type {string | null} */
@@ -605,6 +608,7 @@ async function checkKey() {
 }
 function toggleParentPicker() {
   if (libraryReadOnly || unavailablePreview || noteUnavailable) return;
+  hideLinkPreview();
   const picker = $("knowledge-base-parent-picker");
   if (!picker.hidden) return closeParentPicker();
   $("knowledge-base-src-drop").hidden = true;
@@ -723,6 +727,42 @@ async function openNoteLink(href, event) {
       card.targetId ? { zettelId: card.targetId } : { prefillTitle: card.ref },
     );
   else await api.openLink(href);
+}
+
+function hideLinkPreview() {
+  clearTimeout(linkPreviewTimer);
+  linkPreviewTimer = null;
+  linkPreviewVersion++;
+  $("knowledge-base-link-preview").hidden = true;
+}
+
+function showLinkPreview(href, rect) {
+  hideLinkPreview();
+  if (!href || !rect || disposed) return;
+  const version = linkPreviewVersion;
+  linkPreviewTimer = setTimeout(() => {
+    void api
+      .getNotePreview(href)
+      .then((preview) => {
+        if (disposed || version !== linkPreviewVersion) return;
+        if (!preview) return hideLinkPreview();
+        const parts = [api.loc("note-type-" + preview.noteType)];
+        if (preview.parentTitle)
+          parts.push(
+            `${api.loc("editor-outline-parent")}: ${preview.parentTitle}`,
+          );
+        parts.push(
+          api.loc("link-preview-backlinks", { count: preview.backlinks }),
+        );
+        window.ZoteroKnowledgeBaseMarkdown.linkPreview(
+          $("knowledge-base-link-preview"),
+          rect,
+          preview.title || preview.id,
+          parts.join(" · "),
+        );
+      })
+      .catch(hideLinkPreview);
+  }, 180);
 }
 
 function closeEditor() {
@@ -1097,6 +1137,7 @@ function bindEvents() {
       run(() => searchCards(true));
   });
   window.addEventListener("resize", positionCardPicker);
+  window.addEventListener("blur", hideLinkPreview);
   $("knowledge-base-link-search").addEventListener("input", () => {
     clearTimeout(cardSearchTimer);
     cardSearchVersion++;
@@ -1506,6 +1547,10 @@ async function ensureRichEditor() {
         onOpenLink(href) {
           run(() => openNoteLink(href));
         },
+        onLinkHover(href, rect) {
+          if (href && rect) showLinkPreview(href, rect);
+          else hideLinkPreview();
+        },
         markdownLabel: api.loc("editor-format-markdown"),
         noteLinkLabel: api.loc("editor-link-pick"),
         onNoteLink: openCardPicker,
@@ -1542,6 +1587,7 @@ async function ensureRichEditor() {
 /** @param {"visual" | "source"} mode */
 async function setEditorMode(mode, focus = true) {
   closeCardPicker();
+  hideLinkPreview();
   const version = ++modeVersion;
   if (mode === "source") await ensureSourceEditor();
   if (disposed || version !== modeVersion) return;
@@ -1745,15 +1791,17 @@ async function refreshRelations() {
           : linkedTitles.get(targetId) || link.display,
         link.reference,
       );
-      if (inbound && link.context) {
+      if (inbound && link.contexts?.length) {
         button.classList.add("backlink-link");
-        const context = document.createElementNS(
-          "http://www.w3.org/1999/xhtml",
-          "span",
-        );
-        context.className = "backlink-context";
-        context.textContent = link.context;
-        button.append(context);
+        for (const text of link.contexts) {
+          const context = document.createElementNS(
+            "http://www.w3.org/1999/xhtml",
+            "span",
+          );
+          context.className = "backlink-context";
+          context.textContent = text;
+          button.append(context);
+        }
       }
       row.appendChild(button);
       row.classList.toggle("unresolved", !targetId);
@@ -1886,6 +1934,7 @@ function editKeydown(ev) {
 
 function openCardPicker() {
   if (libraryReadOnly || unavailablePreview) return;
+  hideLinkPreview();
   const body = $("knowledge-base-editor-body");
   linkRange = {
     start: body.selectionStart,
@@ -1972,6 +2021,79 @@ function selectCard(index) {
     rows[cardIndex].id,
   );
   rows[cardIndex].scrollIntoView?.({ block: "nearest" });
+}
+
+function insertCardTarget(card) {
+  const ref = (card.reference || card.id) + (linkAlias ? `|${linkAlias}` : "");
+  if (editorMode === "visual" && richEditor) {
+    run(async () => {
+      const inserted = await richEditor.insertNoteLink(ref);
+      if (disposed) return;
+      if (inserted) richEditor.focus();
+      closeCardPicker();
+    });
+    return;
+  }
+  const body = $("knowledge-base-editor-body");
+  if (
+    !linkRange ||
+    body.value !== linkRange.value ||
+    body.selectionStart !== linkRange.selectionStart ||
+    body.selectionEnd !== linkRange.selectionEnd
+  ) {
+    closeCardPicker();
+    return;
+  }
+  insertText(`[[${ref}]]`, linkRange);
+  closeCardPicker();
+}
+
+async function createCardLink() {
+  const title = $("knowledge-base-link-search").value.trim();
+  if (!title || cardLoading || disposed) return;
+  const body = $("knowledge-base-editor-body");
+  if (
+    editorMode !== "visual" &&
+    (!linkRange ||
+      body.value !== linkRange.value ||
+      body.selectionStart !== linkRange.selectionStart ||
+      body.selectionEnd !== linkRange.selectionEnd)
+  ) {
+    closeCardPicker();
+    return;
+  }
+  cardLoading = true;
+  $("knowledge-base-link-drop").setAttribute("aria-busy", "true");
+  try {
+    const id = await api.saveZettel({
+      title,
+      body: api.getNewNoteBody("entity"),
+      noteType: "entity",
+    });
+    if (!disposed) insertCardTarget({ id, reference: id, title });
+  } catch (error) {
+    if (!disposed)
+      $("knowledge-base-link-status").textContent =
+        api.loc("editor-save-failed") + " " + String(error.message || error);
+  } finally {
+    cardLoading = false;
+    $("knowledge-base-link-drop").setAttribute("aria-busy", "false");
+  }
+}
+
+function appendCreateCard(query, list) {
+  if (!query || list.children.length) return false;
+  const index = list.children.length;
+  const row = document.createElementNS("http://www.w3.org/1999/xhtml", "li");
+  row.id = "knowledge-base-link-option-create";
+  row.className = "candidate-create";
+  row.setAttribute("role", "option");
+  row.tabIndex = -1;
+  row.textContent = api.loc("editor-link-create", { title: query });
+  row.addEventListener("click", () => run(createCardLink));
+  row.addEventListener("mouseenter", () => selectCard(index));
+  list.append(row);
+  return true;
 }
 
 function cardPickerKeydown(event) {
@@ -2081,10 +2203,6 @@ async function searchCards(append = false) {
   cardCursor = page.cursor;
   cardLoading = false;
   $("knowledge-base-link-drop").setAttribute("aria-busy", "false");
-  $("knowledge-base-link-status").textContent =
-    page.items.length || ul.children.length
-      ? api.loc("editor-link-keys")
-      : api.loc("editor-link-empty");
   const existing = new Set(
     [...ul.children].map((row) => row.getAttribute("data-note-id")),
   );
@@ -2102,35 +2220,18 @@ async function searchCards(append = false) {
       api.loc("editor-outline-parent"),
     );
     li.tabIndex = -1;
-    const insert = () => {
-      const ref =
-        (card.reference || card.id) + (linkAlias ? `|${linkAlias}` : "");
-      if (editorMode === "visual" && richEditor) {
-        run(async () => {
-          const inserted = await richEditor.insertNoteLink(ref);
-          if (disposed) return;
-          if (inserted) richEditor.focus();
-          closeCardPicker();
-        });
-      } else {
-        const body = $("knowledge-base-editor-body");
-        if (
-          !linkRange ||
-          body.value !== linkRange.value ||
-          body.selectionStart !== linkRange.selectionStart ||
-          body.selectionEnd !== linkRange.selectionEnd
-        ) {
-          closeCardPicker();
-          return;
-        }
-        insertText(`[[${ref}]]`, linkRange);
-        closeCardPicker();
-      }
-    };
-    li.addEventListener("click", insert);
+    li.addEventListener("click", () => insertCardTarget(card));
     li.addEventListener("mouseenter", () => selectCard(index));
     ul.appendChild(li);
   }
+  const query = $("knowledge-base-link-search").value.trim();
+  const created =
+    !page.cursor && !ul.children.length && appendCreateCard(query, ul);
+  $("knowledge-base-link-status").textContent = created
+    ? api.loc("editor-link-create-hint")
+    : ul.children.length
+      ? api.loc("editor-link-keys")
+      : api.loc("editor-link-empty");
   if (!append) selectCard(0);
   positionCardPicker();
 }

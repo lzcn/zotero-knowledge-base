@@ -91,6 +91,12 @@ declare global {
         },
         parentLabel: string,
       ): void;
+      linkPreview(
+        container: HTMLElement,
+        rect: { left: number; top: number; bottom: number },
+        title: string,
+        meta: string,
+      ): void;
       reference(
         button: HTMLButtonElement,
         reference: string,
@@ -158,6 +164,7 @@ export interface EditorElements {
   "knowledge-base-link-search": HTMLElementTagNameMap["input"];
   "knowledge-base-link-status": HTMLElementTagNameMap["div"];
   "knowledge-base-link-results": HTMLElementTagNameMap["ul"];
+  "knowledge-base-link-preview": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-content": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-workspace": HTMLElementTagNameMap["div"];
   "knowledge-base-editor-body": import("../src/ui/markdown-source").MarkdownSource;
@@ -209,6 +216,7 @@ export interface ManagerElements {
   "knowledge-base-backlinks": HTMLElementTagNameMap["ul"];
   "knowledge-base-preview-head": HTMLElementTagNameMap["html"];
   "knowledge-base-preview": HTMLElementTagNameMap["div"];
+  "knowledge-base-link-preview": HTMLElementTagNameMap["div"];
   "knowledge-base-btn-edit": HTMLElementTagNameMap["button"];
   "knowledge-base-btn-local-graph": HTMLElementTagNameMap["button"];
   "knowledge-base-btn-delete": HTMLElementTagNameMap["button"];

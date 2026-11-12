@@ -129,10 +129,11 @@ export function getNoteLinkTargets(): Promise<Map<string, CardReference>> {
             id: string;
             title: string;
             custom_key: string | null;
+            source_note: number;
             note_key: string | null;
             note_library_id: number | null;
           }>(
-            "SELECT z.id, z.title, z.custom_key, n.note_key, n.library_id AS note_library_id FROM zettels z LEFT JOIN card_notes n ON n.card_id = z.id",
+            "SELECT z.id, z.title, z.custom_key, z.source_note, n.note_key, n.library_id AS note_library_id FROM zettels z LEFT JOIN card_notes n ON n.card_id = z.id",
           ),
           getNoteReferences(),
           getAll<{ ref: string; target_id: string }>(
@@ -163,7 +164,7 @@ export function getNoteLinkTargets(): Promise<Map<string, CardReference>> {
             row.custom_key ||
             literatureEntry?.label ||
             literatureEntry?.citationKey ||
-            row.id,
+            (row.source_note ? row.id : row.title || row.id),
           sourceTitle: literatureEntry?.sourceTitle || undefined,
           reference: byID.get(row.id) || row.id,
           href:

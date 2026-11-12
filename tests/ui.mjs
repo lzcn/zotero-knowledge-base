@@ -800,6 +800,28 @@ const panelDOM = new JSDOM("<main><aside></aside><div></div></main>", {
 });
 const panelWin = panelDOM.window;
 panelWin.eval(previewScript);
+check("Link hover cards show only a title and compact metadata", () => {
+  const popup = panelWin.document.createElement("div");
+  popup.hidden = true;
+  panelWin.document.body.append(popup);
+  panelWin.ZoteroKnowledgeBaseMarkdown.linkPreview(
+    popup,
+    { left: 20, top: 30, bottom: 42 },
+    "Target card",
+    "Entity · Parent: Concepts · 2 backlinks",
+  );
+  assert.equal(popup.hidden, false);
+  assert.equal(
+    popup.querySelector(".link-preview-title").textContent,
+    "Target card",
+  );
+  assert.equal(
+    popup.querySelector(".link-preview-meta").textContent,
+    "Entity · Parent: Concepts · 2 backlinks",
+  );
+  assert.equal(popup.querySelector(".candidate-snippet"), null);
+  popup.remove();
+});
 const panelHandle = panelWin.document.querySelector("main > div");
 const panelPane = panelWin.document.querySelector("aside");
 const panelValues = new Map();
@@ -1481,6 +1503,7 @@ async function editor(args = {}, overrides = {}) {
       markdown.renderMarkdown(body, htmlWindow, assets.resolveAssetURL),
     richTextToMarkdown: (html) => rich_text.richTextToMarkdown(html),
     getZettel: async () => null,
+    getNotePreview: async () => null,
     getZettelTitles: async (ids) =>
       Object.fromEntries(ids.map((id) => [id, "Target card"])),
     copyNoteReference: (reference) => calls.open.push(`[[${reference}]]`),
@@ -2100,6 +2123,47 @@ compositionWindow.document
 await wait();
 completionAPI.searchZettelSummaries = normalCompletionSearch;
 completionEditor.win.close();
+const createdNotes = [];
+const createEditor = await editor(
+  {},
+  {
+    getNoteEditorMode: () => "source",
+    listZettels: async () => [],
+    searchZettelSummaries: async () => ({ items: [], cursor: null }),
+    loc: (key, args) =>
+      key === "editor-link-create" ? `Create ${args.title}` : key,
+    saveZettel: async (input) => {
+      createdNotes.push(input);
+      return "NEWCONCEPT";
+    },
+  },
+);
+const createBody = createEditor.$("knowledge-base-editor-body");
+createBody.value = "Link [[Unwritten concept";
+createBody.setSelectionRange(createBody.value.length, createBody.value.length);
+createBody.dispatchEvent(
+  new createEditor.win.Event("input", { bubbles: true }),
+);
+await wait();
+const createRow = createEditor.$(
+  "knowledge-base-link-results",
+).firstElementChild;
+check("No-result link search offers creating an Entity", () => {
+  assert.equal(createRow.className, "candidate-create");
+  assert.match(createRow.textContent, /Unwritten concept/);
+});
+createRow.click();
+await wait();
+check("Creating from link search inserts its stable reference", () => {
+  assert.equal(
+    JSON.stringify(createdNotes),
+    JSON.stringify([
+      { title: "Unwritten concept", body: "", noteType: "entity" },
+    ]),
+  );
+  assert.equal(createBody.value, "Link [[NEWCONCEPT]]");
+});
+createEditor.win.close();
 check(
   "LaTeX blocks protect equals signs and underscores from heading styling",
   () => {
@@ -2229,7 +2293,10 @@ const relationEditor = await editor(
         sourceId: "INCOMING",
         sourceTitle: "Incoming idea",
         ref: "RELATION",
-        context: "Context that explains why this note is linked.",
+        contexts: [
+          "Context that explains why this note is linked.",
+          "Another paragraph that links here.",
+        ],
       },
     ],
     getDraftLinks: async () => [
@@ -2251,11 +2318,16 @@ check(
       false,
     );
     backlinks.click();
-    assert.equal(
-      relationEditor
-        .$("knowledge-base-editor-backlinks")
-        .querySelector(".backlink-context").textContent,
-      "Context that explains why this note is linked.",
+    assert.deepEqual(
+      [
+        ...relationEditor
+          .$("knowledge-base-editor-backlinks")
+          .querySelectorAll(".backlink-context"),
+      ].map((context) => context.textContent),
+      [
+        "Context that explains why this note is linked.",
+        "Another paragraph that links here.",
+      ],
     );
     assert.equal(relationEditor.$("knowledge-base-editor-family").hidden, true);
     assert.equal(

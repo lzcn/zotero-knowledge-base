@@ -471,4 +471,11 @@ reader-create-literature-ctrl = Ctrl-click to create a Literature Note.
 settings-enhancement = Enhancement
 
 editor-link-keys = ↑↓ Choose · Enter Insert · Esc Close
+editor-link-create = Create Entity “{ $title }”
+editor-link-create-hint = No matching note. Create an Entity or keep typing.
+link-preview-backlinks =
+    { $count ->
+        [one] { $count } backlink
+       *[other] { $count } backlinks
+    }
 editor-discard-close = Discard and close

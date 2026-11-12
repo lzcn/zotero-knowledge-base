@@ -489,13 +489,41 @@ export default async function linksHost({
       ),
     "Changing modes lost the alias",
   );
+  await pause(200);
+  const visualLink = visual.document.querySelector(
+    'a[title="[[LinkPrimary|my own wording]]"]',
+  );
+  assert(visualLink?.isConnected, "Hover target is detached");
+  const hoverHref = visualLink.getAttribute("href");
+  const hoverPreview = await api.getNotePreview(hoverHref);
+  assert(
+    hoverPreview?.title === "Token pruning",
+    "Link preview data is missing: " +
+      JSON.stringify({ href: hoverHref, preview: hoverPreview }),
+  );
+  visualLink.dispatchEvent(
+    new visual.MouseEvent("mouseover", { bubbles: true }),
+  );
+  const linkPreview = editor.document.getElementById(
+    "knowledge-base-link-preview",
+  );
+  await wait(() => !linkPreview.hidden, "Link hover preview is missing");
+  assert(
+    linkPreview.querySelector(".link-preview-title")?.textContent ===
+      "Token pruning",
+    "Link hover preview lost its title",
+  );
+  visualLink.dispatchEvent(
+    new visual.MouseEvent("mouseout", { bubbles: true }),
+  );
+  await wait(() => linkPreview.hidden, "Link hover preview did not close");
   const backlinks = (await api.getBacklinks(primary.id)).filter(
     (link) => link.sourceId === source.id,
   );
   assert(
     backlinks.length === 1 &&
-      backlinks[0].context &&
-      !backlinks[0].context.includes("[["),
+      backlinks[0].contexts?.length &&
+      backlinks[0].contexts.every((context) => !context.includes("[[")),
     "Backlinks did not group references or show prose context",
   );
   const target = await open(primary.id);
@@ -508,7 +536,7 @@ export default async function linksHost({
     () =>
       target.document.querySelector(
         "#knowledge-base-editor-backlinks .backlink-context",
-      )?.textContent === backlinks[0].context,
+      )?.textContent === backlinks[0].contexts[0],
     "Backlink context is not visible",
   );
   await shot(target, "backlinks");

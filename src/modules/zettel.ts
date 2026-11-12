@@ -4,7 +4,7 @@
 
 import { exec, getAll, getOne, transaction, type ZettelRow } from "./db";
 import { saveParent, removeParent } from "./hierarchy";
-import { parseCardLinks, noteLinkContext } from "./markdown";
+import { parseCardLinks, noteLinkContexts } from "./markdown";
 import { notifyDataChange, type DataField } from "./events";
 import { cleanupImagesAfterChange } from "./assets";
 import {
@@ -852,11 +852,19 @@ export interface Backlink {
   reference?: string;
   sourceTitle: string;
   ref: string;
-  context?: string;
+  contexts: string[];
+}
+
+export interface NotePreview {
+  id: string;
+  title: string;
+  noteType: NoteType;
+  parentTitle: string | null;
+  backlinks: number;
 }
 
 export async function getBacklinks(id: string): Promise<Backlink[]> {
-  const rows = await getAll<Backlink & { body: string }>(
+  const rows = await getAll<Omit<Backlink, "contexts"> & { body: string }>(
     `SELECT l.source_id AS sourceId, z.title AS sourceTitle, z.body, l.ref
      FROM links l JOIN zettels z ON z.id = l.source_id
      WHERE l.target_id = ? ORDER BY z.updated_at DESC, l.source_id, l.ref`,
@@ -864,7 +872,7 @@ export async function getBacklinks(id: string): Promise<Backlink[]> {
   );
   const notes = new Map<
     string,
-    { link: Backlink; refs: string[]; body: string }
+    { link: Omit<Backlink, "contexts">; refs: string[]; body: string }
   >();
   for (const row of rows) {
     const entry = notes.get(row.sourceId);
@@ -882,8 +890,36 @@ export async function getBacklinks(id: string): Promise<Backlink[]> {
   }
   return [...notes.values()].map(({ link, refs, body }) => ({
     ...link,
-    context: noteLinkContext(body, refs, getCachedNoteTarget),
+    contexts: noteLinkContexts(body, refs, getCachedNoteTarget),
   }));
+}
+
+/** Link hover cards need identity and counts without loading the note body. */
+export async function getNotePreview(id: string): Promise<NotePreview | null> {
+  const row = await getOne<{
+    id: string;
+    title: string;
+    note_type: NoteType;
+    parent_title: string | null;
+    backlinks: number;
+  }>(
+    `SELECT z.id, z.title, z.note_type, parent.title AS parent_title,
+       (SELECT COUNT(DISTINCT l.source_id) FROM links l WHERE l.target_id = z.id) AS backlinks
+     FROM zettels z
+     LEFT JOIN card_parents p ON p.card_id = z.id
+     LEFT JOIN zettels parent ON parent.id = p.parent_id
+     WHERE z.id = ?`,
+    [id],
+  );
+  return row
+    ? {
+        id: row.id,
+        title: row.title,
+        noteType: row.note_type,
+        parentTitle: row.parent_title,
+        backlinks: row.backlinks,
+      }
+    : null;
 }
 
 export interface UnresolvedReference {

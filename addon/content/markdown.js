@@ -163,6 +163,40 @@ window.ZoteroKnowledgeBaseMarkdown = {
     }
   },
 
+  /** Show a compact link hover card; callers own the fetched note data. */
+  linkPreview(container, rect, title, meta) {
+    container.replaceChildren();
+    const name = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    );
+    name.className = "link-preview-title";
+    name.textContent = title;
+    const details = document.createElementNS(
+      "http://www.w3.org/1999/xhtml",
+      "div",
+    );
+    details.className = "link-preview-meta";
+    details.textContent = meta;
+    container.append(name, details);
+    container.hidden = false;
+    const win = container.ownerDocument.defaultView;
+    const width = Math.min(300, (win?.innerWidth || 320) - 24);
+    const left = Math.max(
+      12,
+      Math.min(rect.left, (win?.innerWidth || width + 24) - width - 12),
+    );
+    const height = container.getBoundingClientRect().height || 58;
+    const below = rect.bottom + 6;
+    container.style.width = `${width}px`;
+    container.style.left = `${left}px`;
+    container.style.top = `${
+      below + height > (win?.innerHeight || 600) - 12
+        ? Math.max(12, rect.top - height - 6)
+        : below
+    }px`;
+  },
+
   /** @param {HTMLButtonElement} button @param {string} reference @param {import("../../src/modules/api").KnowledgeBaseAPI} api */
   reference(button, reference, api) {
     button.hidden = !reference;
