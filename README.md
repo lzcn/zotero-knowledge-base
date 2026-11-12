@@ -38,23 +38,6 @@ Find related papers locally; results load as you scroll. On macOS, semantic sear
 
 Minimal, Bear and Notes styles with light and dark colors. Closing a note with unsaved changes asks to save, cancel or discard.
 
-## Backup
-
-Note content uses Zotero sync. IDs, hierarchy and links live in `knowledge-base.sqlite` in the Zotero data directory. Quit Zotero before backing up.
-
-```text
-knowledge-base.sqlite
-knowledge-base/
-  assets/
-  cache/
-    similar-items/
-    coreml/minilm-l6-v2/
-  models/minilm-l6-v2/
-  runtime/onnx/
-```
-
-Images use `assets/`. Search and model caches use `cache/`; downloaded models and runtimes use `models/` and `runtime/`.
-
 ## License
 
 Copyright 2026 Zhi Lu. [AGPL-3.0-or-later](LICENSE). Developed with ChatGPT and DeepSeek.

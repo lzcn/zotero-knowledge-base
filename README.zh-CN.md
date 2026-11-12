@@ -38,23 +38,6 @@
 
 提供 Minimal、Bear 和备忘录，均支持浅色与深色。关闭仍有未保存内容的笔记时，可选择保存、取消或丢弃修改。
 
-## 备份
-
-正文通过 Zotero 同步。ID、层级和链接保存在 Zotero 数据目录的 `knowledge-base.sqlite` 中。备份前请退出 Zotero。
-
-```text
-knowledge-base.sqlite
-knowledge-base/
-  assets/
-  cache/
-    similar-items/
-    coreml/minilm-l6-v2/
-  models/minilm-l6-v2/
-  runtime/onnx/
-```
-
-图片使用 `assets/`。检索和模型缓存使用 `cache/`；下载的模型与运行时使用 `models/` 和 `runtime/`。
-
 ## 许可证
 
 Copyright 2026 Zhi Lu. [AGPL-3.0-or-later](LICENSE)。代码借助 ChatGPT 和 DeepSeek 开发。
